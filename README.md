@@ -19,6 +19,7 @@ Unity C# starter architecture for an economic simulation + SLG game.
 - Two readable mine types: pickaxe-marked industrial mines and coin-marked gold mines.
 - A Korean single-player final-result view that resets both simulation state and the map after confirmation.
 - An integrated world turn that moves factory inputs and outputs, warehouse stock, trade cash, operating costs, debt, and economic power through real domain objects.
+- Real-time map gameplay with a Korean action panel, player and AI units, horizontally wrapped land pathfinding, mine capture, ownership markers, and daily mine production.
 
 ## Open in Unity
 

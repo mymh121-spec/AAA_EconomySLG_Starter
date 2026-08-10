@@ -54,6 +54,101 @@ Check(wrappedMap.ManhattanDistance(
 Check(wrappedMap.Mines.All(x => wrappedMap.IsLand(x.Coordinate)),
     "광산은 육지에만 배치");
 
+var mapGameplay = new RealtimeMapGameplayService(
+    wrappedMap,
+    "player",
+    new[] { "ai_1", "ai_2", "ai_3" },
+    new MapGameplayTuning(
+        fixedStepsPerMove: 1,
+        fixedStepsToCapture: 2,
+        aiDecisionIntervalSteps: 100));
+Check(mapGameplay.TryCreateUnit(
+        "player",
+        out MapUnitState playerMapUnit,
+        out _),
+    "플레이어 지도 유닛 생성");
+GridCoordinate wrappedDestination = playerMapStart;
+for (int offset = 1; offset < wrappedMap.Width; offset++)
+{
+    GridCoordinate candidate = wrappedMap.Move(playerMapStart, -offset, 0);
+    if (wrappedMap.IsLand(candidate))
+    {
+        wrappedDestination = candidate;
+        break;
+    }
+}
+Check(!wrappedDestination.Equals(playerMapStart),
+    "플레이어 본사와 다른 육지 목적지 검색");
+Check(mapGameplay.TryIssueMove(
+        "player",
+        playerMapUnit.Id,
+        wrappedDestination,
+        out _),
+    "가로 래핑 지도 이동 명령");
+mapGameplay.AdvanceFixedSteps(wrappedMap.Width * wrappedMap.Height);
+Check(playerMapUnit.Coordinate.Equals(wrappedDestination),
+    "실시간 고정 스텝 유닛 이동");
+
+var captureTerrain = new GridTerrainKind[5 * 3];
+Array.Fill(captureTerrain, GridTerrainKind.Plains);
+var captureCoordinate = new GridCoordinate(4, 1);
+var captureLayout = new GridMapLayout(
+    5,
+    3,
+    77,
+    new GridCoordinate(0, 1),
+    Array.Empty<GridCoordinate>(),
+    new[] { new MinePlacement(captureCoordinate, MineKind.Normal) },
+    true,
+    captureTerrain);
+var captureGameplay = new RealtimeMapGameplayService(
+    captureLayout,
+    "player",
+    tuning: new MapGameplayTuning(
+        fixedStepsPerMove: 1,
+        fixedStepsToCapture: 2,
+        aiDecisionIntervalSteps: 100));
+Check(captureGameplay.TryCreateUnit(
+        "player",
+        out MapUnitState captureUnit,
+        out _),
+    "점령용 유닛 생성");
+Check(captureGameplay.TryIssueMove(
+        "player",
+        captureUnit.Id,
+        captureCoordinate,
+        out _),
+    "좌우 래핑 광산 이동 명령");
+captureGameplay.AdvanceFixedSteps(2);
+Check(captureGameplay.FindMine(captureCoordinate).OwnerFactionId == "player",
+    "광산 점령 및 소유권 변경");
+Check(captureGameplay.CreateDailyProduction()[0].IronAmount == 12m,
+    "점령 광산의 일일 생산량 반영");
+
+var aiCaptureTerrain = new GridTerrainKind[6 * 3];
+Array.Fill(aiCaptureTerrain, GridTerrainKind.Plains);
+var aiCaptureLayout = new GridMapLayout(
+    6,
+    3,
+    78,
+    new GridCoordinate(0, 1),
+    new[] { new GridCoordinate(5, 1) },
+    new[] { new MinePlacement(new GridCoordinate(4, 1), MineKind.Gold) },
+    true,
+    aiCaptureTerrain);
+var aiCaptureGameplay = new RealtimeMapGameplayService(
+    aiCaptureLayout,
+    "player",
+    new[] { "ai_1" },
+    new MapGameplayTuning(
+        fixedStepsPerMove: 1,
+        fixedStepsToCapture: 2,
+        aiDecisionIntervalSteps: 1));
+aiCaptureGameplay.AdvanceFixedSteps(2);
+Check(aiCaptureGameplay.FindMine(new GridCoordinate(4, 1)).OwnerFactionId ==
+      "ai_1",
+    "AI가 동일한 이동·점령 규칙 사용");
+
 var resources = new List<ResourceId>
 {
     new ResourceId("food"),

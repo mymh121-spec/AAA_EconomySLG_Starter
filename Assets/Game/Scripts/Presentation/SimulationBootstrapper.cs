@@ -88,6 +88,8 @@ namespace Game.Presentation
             _realtimeClock?.IsPaused ?? true;
 
         public event Action RealtimeStateChanged;
+        public event Action<int> RealtimeFixedStepsAdvanced;
+        public event Action RealtimeDayBoundaryReached;
         public event Action<TurnReport> RealtimeDayResolved;
 
         private void Awake()
@@ -109,10 +111,13 @@ namespace Game.Presentation
             if (advance.FixedStepCount <= 0)
                 return;
 
+            RealtimeFixedStepsAdvanced?.Invoke(advance.FixedStepCount);
+
             for (int i = 0;
                  i < advance.CompletedGameDays && !IsCampaignFinished;
                  i++)
             {
+                RealtimeDayBoundaryReached?.Invoke();
                 TurnReport report = ResolveCurrentTurn(false);
                 RealtimeDayResolved?.Invoke(report);
             }
@@ -239,6 +244,52 @@ namespace Game.Presentation
         {
             return _simulation != null &&
                 _simulation.TryCancelLastPlayerCommand();
+        }
+
+        public bool TryReserveMapAction(
+            string displayName,
+            int actionPointCost,
+            out string reason)
+        {
+            if (_simulation == null)
+                BuildSimulation();
+
+            return _simulation.TryQueuePlayerCommand(
+                new MapActionReservationTurnCommand(
+                    _playerCampaignState.Company.Id,
+                    displayName,
+                    actionPointCost),
+                out reason);
+        }
+
+        public void ApplyMapMineProduction(
+            IReadOnlyList<MapMineProductionRecord> production)
+        {
+            if (_worldEconomy == null || production == null)
+                return;
+
+            for (int i = 0; i < production.Count; i++)
+            {
+                MapMineProductionRecord record = production[i];
+                if (!_worldEconomy.TryGetCompany(
+                    new CompanyId(record.OwnerFactionId),
+                    out CompanyEconomyRuntime company))
+                {
+                    continue;
+                }
+
+                if (record.IronAmount > 0m &&
+                    _catalog.TryGet("iron", out ResourceDefinition iron))
+                {
+                    company.PrimaryWarehouse.TryAdd(
+                        iron.Id,
+                        record.IronAmount,
+                        iron.StorageVolume);
+                }
+
+                if (record.CashAmount > 0m)
+                    company.Company.Receive(record.CashAmount);
+            }
         }
 
         public bool TryQueueWorldIntervention(

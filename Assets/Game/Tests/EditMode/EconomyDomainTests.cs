@@ -149,6 +149,92 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_MovesAcrossWrapAndCapturesMine()
+        {
+            var terrain = new GridTerrainKind[5 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var mineCoordinate = new GridCoordinate(4, 1);
+            var layout = new GridMapLayout(
+                5,
+                3,
+                7,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new[] { new MinePlacement(mineCoordinate, MineKind.Normal) },
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCapture: 2,
+                    aiDecisionIntervalSteps: 100));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    mineCoordinate,
+                    out _),
+                Is.True);
+
+            service.AdvanceFixedSteps(2);
+
+            Assert.That(unit.Coordinate, Is.EqualTo(mineCoordinate));
+            Assert.That(
+                service.FindMine(mineCoordinate).OwnerFactionId,
+                Is.EqualTo("player"));
+            IReadOnlyList<MapMineProductionRecord> production =
+                service.CreateDailyProduction();
+            Assert.That(production.Count, Is.EqualTo(1));
+            Assert.That(production[0].NormalMineCount, Is.EqualTo(1));
+            Assert.That(production[0].IronAmount, Is.EqualTo(12m));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_AiUsesSameMoveAndCaptureRules()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var mineCoordinate = new GridCoordinate(4, 1);
+            var layout = new GridMapLayout(
+                6,
+                3,
+                11,
+                new GridCoordinate(0, 1),
+                new[] { new GridCoordinate(5, 1) },
+                new[] { new MinePlacement(mineCoordinate, MineKind.Gold) },
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCapture: 2,
+                    aiDecisionIntervalSteps: 1));
+
+            service.AdvanceFixedSteps(2);
+
+            Assert.That(service.Units.Count, Is.EqualTo(1));
+            Assert.That(service.Units[0].OwnerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(service.Units[0].Coordinate, Is.EqualTo(mineCoordinate));
+            Assert.That(
+                service.FindMine(mineCoordinate).OwnerFactionId,
+                Is.EqualTo("ai_1"));
+            Assert.That(
+                service.CreateDailyProduction()[0].CashAmount,
+                Is.EqualTo(1500m));
+        }
+
+        [Test]
         public void GameModeSelection_AllowsOneModeUntilCleared()
         {
             var selection = new GameModeSelection();

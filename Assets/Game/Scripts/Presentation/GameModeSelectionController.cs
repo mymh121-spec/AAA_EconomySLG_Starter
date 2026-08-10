@@ -2,6 +2,8 @@ using System;
 using System.Text;
 using System.Threading.Tasks;
 using Game.Application.Session;
+using Game.Application.World;
+using Game.Domain.World;
 using UnityEngine;
 using UnityEngine.UIElements;
 
@@ -34,6 +36,12 @@ namespace Game.Presentation
         private Label _connectionStatus;
         private Label _singlePlayerStatus;
         private Label _singleMapSelectionStatus;
+        private VisualElement _singleMapActionPanel;
+        private Label _singleMapActionTitle;
+        private Label _singleMapActionFeedback;
+        private Button _createUnitButton;
+        private Button _selectUnitButton;
+        private Button _moveUnitButton;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
@@ -122,6 +130,10 @@ namespace Game.Presentation
 
             singlePlayerSimulation.RealtimeStateChanged +=
                 HandleSinglePlayerRealtimeStateChanged;
+            singlePlayerSimulation.RealtimeFixedStepsAdvanced +=
+                HandleRealtimeFixedStepsAdvanced;
+            singlePlayerSimulation.RealtimeDayBoundaryReached +=
+                HandleRealtimeDayBoundaryReached;
             _singlePlayerEventsBound = true;
         }
 
@@ -161,6 +173,7 @@ namespace Game.Presentation
             }
 
             SetServiceActive(gameplayMap, true);
+            gameplayMap.PointerSelectionBlocked = false;
             gameplayMap.Initialize();
             BindMapEvents();
         }
@@ -171,6 +184,8 @@ namespace Game.Presentation
                 return;
 
             gameplayMap.CellSelected += HandleMapCellSelected;
+            gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
+            gameplayMap.MineCaptured += HandleMineCaptured;
             _mapEventsBound = true;
         }
 
@@ -235,12 +250,14 @@ namespace Game.Presentation
             _singleMapSelectionStatus = AddStatus(_singlePlayerView);
             _singleMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
+            BuildSinglePlayerMapActionPanel(_singlePlayerView);
             AddDescription(
                 _singlePlayerView,
                 "시간 진행: 일시정지 또는 1~5배속을 선택하세요. 경제는 게임 내 자정마다 정산됩니다.");
             AddRealtimeSpeedControls(_singlePlayerView);
             AddButton(_singlePlayerView, "모드 선택으로", ShowModeSelection);
             StyleGameplayHud(_singlePlayerView);
+            RegisterMapInputGuard(_singlePlayerView);
 
             _singlePlayerResultView = CreateCard(
                 _uiRoot,
@@ -265,6 +282,7 @@ namespace Game.Presentation
             AddButton(_multiplayerView, "서버 상태 새로고침", RefreshMultiplayer);
             AddButton(_multiplayerView, "연결 종료 후 모드 선택", ShowModeSelection);
             StyleGameplayHud(_multiplayerView);
+            RegisterMapInputGuard(_multiplayerView);
         }
 
         private void SelectSinglePlayer()
@@ -612,6 +630,197 @@ namespace Game.Presentation
                 _singleMapSelectionStatus.text = description;
             if (_multiplayerMapSelectionStatus != null)
                 _multiplayerMapSelectionStatus.text = description;
+
+            RefreshSinglePlayerMapActions(selection);
+        }
+
+        private void HandleMapGameplayStateChanged()
+        {
+            if (!_selection.IsSinglePlayer || gameplayMap == null)
+                return;
+
+            if (gameplayMap.CurrentSelection.HasValue)
+                RefreshSinglePlayerMapActions(gameplayMap.CurrentSelection.Value);
+        }
+
+        private void HandleMineCaptured(MapMineCaptureRecord record)
+        {
+            if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+                return;
+
+            string owner = string.Equals(
+                record.NewOwnerFactionId,
+                "player",
+                StringComparison.Ordinal)
+                ? "플레이어"
+                : "경쟁 기업";
+            _singleMapActionFeedback.text =
+                $"{owner}이(가) {record.Coordinate} 광산을 점령했습니다.";
+        }
+
+        private void HandleRealtimeFixedStepsAdvanced(int fixedStepCount)
+        {
+            if (_selection.IsSinglePlayer)
+                gameplayMap?.AdvanceGameplayFixedSteps(fixedStepCount);
+        }
+
+        private void HandleRealtimeDayBoundaryReached()
+        {
+            if (!_selection.IsSinglePlayer ||
+                gameplayMap == null ||
+                singlePlayerSimulation == null)
+            {
+                return;
+            }
+
+            singlePlayerSimulation.ApplyMapMineProduction(
+                gameplayMap.CreateDailyMineProduction());
+        }
+
+        private void CreatePlayerUnit()
+        {
+            if (gameplayMap == null || singlePlayerSimulation == null)
+                return;
+
+            if (!gameplayMap.CanCreatePlayerUnit(out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!singlePlayerSimulation.TryReserveMapAction(
+                "본사 유닛 창설",
+                2,
+                out reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!gameplayMap.TryCreatePlayerUnit(out reason))
+            {
+                singlePlayerSimulation.CancelLastCommand();
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback("유닛을 창설하고 자동으로 선택했습니다.");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void SelectPlayerUnit()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            if (!gameplayMap.TrySelectPlayerUnitAt(
+                gameplayMap.CurrentSelection.Value.Coordinate,
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(
+                $"{gameplayMap.SelectedPlayerUnitId}을(를) 선택했습니다. " +
+                "목적지 칸을 클릭하세요.");
+            RefreshSelectedMapActions();
+        }
+
+        private void MoveSelectedPlayerUnit()
+        {
+            if (gameplayMap == null ||
+                singlePlayerSimulation == null ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                return;
+            }
+
+            GridCoordinate destination =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            if (!gameplayMap.CanMoveSelectedPlayerUnit(
+                destination,
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!singlePlayerSimulation.TryReserveMapAction(
+                $"유닛 이동 {destination}",
+                1,
+                out reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!gameplayMap.TryMoveSelectedPlayerUnit(destination, out reason))
+            {
+                singlePlayerSimulation.CancelLastCommand();
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            bool isMine = selection.Content == MapCellContent.NormalMine ||
+                          selection.Content == MapCellContent.GoldMine;
+            SetMapActionFeedback(isMine
+                ? $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
+                : $"{destination}(으)로 이동 명령을 내렸습니다.");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void RefreshSelectedMapActions()
+        {
+            if (gameplayMap != null && gameplayMap.CurrentSelection.HasValue)
+                RefreshSinglePlayerMapActions(gameplayMap.CurrentSelection.Value);
+        }
+
+        private void RefreshSinglePlayerMapActions(MapCellSelection selection)
+        {
+            if (_singleMapActionPanel == null)
+                return;
+
+            bool singlePlayer = _selection.IsSinglePlayer;
+            SetVisible(_singleMapActionPanel, singlePlayer);
+            if (!singlePlayer || gameplayMap == null)
+                return;
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            _singleMapActionTitle.text = selectedUnit == null
+                ? "지도 행동 · 선택된 유닛 없음"
+                : $"지도 행동 · {selectedUnit.Id} {selectedUnit.Coordinate}";
+
+            bool atPlayerBase = selection.Content == MapCellContent.PlayerBase;
+            bool canCreate = atPlayerBase &&
+                gameplayMap.CanCreatePlayerUnit(out _);
+            bool canSelect = gameplayMap.CanSelectPlayerUnitAt(
+                selection.Coordinate,
+                out _);
+            bool canMove = gameplayMap.CanMoveSelectedPlayerUnit(
+                selection.Coordinate,
+                out _);
+
+            SetVisible(_createUnitButton, atPlayerBase);
+            _createUnitButton.SetEnabled(canCreate);
+            SetVisible(_selectUnitButton, canSelect);
+            _selectUnitButton.SetEnabled(canSelect);
+            SetVisible(_moveUnitButton, selectedUnit != null && !canSelect);
+            _moveUnitButton.SetEnabled(canMove);
+            bool isMine = selection.Content == MapCellContent.NormalMine ||
+                          selection.Content == MapCellContent.GoldMine;
+            _moveUnitButton.text = isMine
+                ? "이동 후 광산 점령 · 행동력 1"
+                : "이 칸으로 이동 · 행동력 1";
+        }
+
+        private void SetMapActionFeedback(string message)
+        {
+            if (_singleMapActionFeedback != null)
+                _singleMapActionFeedback.text = message ?? string.Empty;
         }
 
         private void HandleMultiplayerError(string message)
@@ -719,6 +928,68 @@ namespace Game.Presentation
             parent.Add(button);
         }
 
+        private void BuildSinglePlayerMapActionPanel(VisualElement parent)
+        {
+            _singleMapActionPanel = new VisualElement();
+            _singleMapActionPanel.style.paddingLeft = 12;
+            _singleMapActionPanel.style.paddingRight = 12;
+            _singleMapActionPanel.style.paddingTop = 10;
+            _singleMapActionPanel.style.paddingBottom = 10;
+            _singleMapActionPanel.style.marginBottom = 12;
+            _singleMapActionPanel.style.backgroundColor =
+                new Color(0.08f, 0.13f, 0.20f, 0.96f);
+
+            _singleMapActionTitle = new Label("지도 행동 · 선택된 유닛 없음");
+            _singleMapActionTitle.style.fontSize = 15;
+            _singleMapActionTitle.style.unityFontStyleAndWeight =
+                FontStyle.Bold;
+            _singleMapActionTitle.style.color = Color.white;
+            _singleMapActionTitle.style.marginBottom = 6;
+            _singleMapActionPanel.Add(_singleMapActionTitle);
+
+            _createUnitButton = CreateMapActionButton(
+                "본사에서 유닛 창설 · 행동력 2",
+                CreatePlayerUnit);
+            _selectUnitButton = CreateMapActionButton(
+                "이 칸의 아군 유닛 선택",
+                SelectPlayerUnit);
+            _moveUnitButton = CreateMapActionButton(
+                "이 칸으로 이동 · 행동력 1",
+                MoveSelectedPlayerUnit);
+            _singleMapActionPanel.Add(_createUnitButton);
+            _singleMapActionPanel.Add(_selectUnitButton);
+            _singleMapActionPanel.Add(_moveUnitButton);
+
+            _singleMapActionFeedback = new Label(
+                "본사를 선택해 첫 유닛을 창설하세요.");
+            _singleMapActionFeedback.style.fontSize = 13;
+            _singleMapActionFeedback.style.color =
+                new Color(0.70f, 0.80f, 0.92f);
+            _singleMapActionFeedback.style.whiteSpace = WhiteSpace.Normal;
+            _singleMapActionFeedback.style.marginTop = 7;
+            _singleMapActionPanel.Add(_singleMapActionFeedback);
+            parent.Add(_singleMapActionPanel);
+
+            SetVisible(_createUnitButton, false);
+            SetVisible(_selectUnitButton, false);
+            SetVisible(_moveUnitButton, false);
+        }
+
+        private static Button CreateMapActionButton(
+            string text,
+            Action clicked)
+        {
+            var button = new Button(clicked) { text = text };
+            button.style.height = 38;
+            button.style.marginTop = 3;
+            button.style.marginBottom = 3;
+            button.style.fontSize = 14;
+            button.style.unityFontStyleAndWeight = FontStyle.Bold;
+            button.style.backgroundColor = new Color(0.18f, 0.42f, 0.70f);
+            button.style.color = Color.white;
+            return button;
+        }
+
         private void AddRealtimeSpeedControls(VisualElement parent)
         {
             var row = new VisualElement();
@@ -769,6 +1040,22 @@ namespace Game.Presentation
             card.style.marginTop = 20;
             card.style.backgroundColor =
                 new Color(0.07f, 0.095f, 0.14f, 0.92f);
+        }
+
+        private void RegisterMapInputGuard(VisualElement element)
+        {
+            element.RegisterCallback<PointerEnterEvent>(
+                _ =>
+                {
+                    if (gameplayMap != null)
+                        gameplayMap.PointerSelectionBlocked = true;
+                });
+            element.RegisterCallback<PointerLeaveEvent>(
+                _ =>
+                {
+                    if (gameplayMap != null)
+                        gameplayMap.PointerSelectionBlocked = false;
+                });
         }
 
         private static void AddDescription(VisualElement parent, string text)
@@ -826,6 +1113,10 @@ namespace Game.Presentation
             {
                 singlePlayerSimulation.RealtimeStateChanged -=
                     HandleSinglePlayerRealtimeStateChanged;
+                singlePlayerSimulation.RealtimeFixedStepsAdvanced -=
+                    HandleRealtimeFixedStepsAdvanced;
+                singlePlayerSimulation.RealtimeDayBoundaryReached -=
+                    HandleRealtimeDayBoundaryReached;
                 _singlePlayerEventsBound = false;
             }
             if (multiplayerSession != null && _multiplayerEventsBound)
@@ -838,6 +1129,8 @@ namespace Game.Presentation
             if (gameplayMap != null && _mapEventsBound)
             {
                 gameplayMap.CellSelected -= HandleMapCellSelected;
+                gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;
+                gameplayMap.MineCaptured -= HandleMineCaptured;
                 _mapEventsBound = false;
             }
             if (_panelSettings != null)

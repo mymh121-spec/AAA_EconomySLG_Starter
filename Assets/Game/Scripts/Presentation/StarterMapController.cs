@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Game.Application.World;
 using Game.Domain.World;
 using UnityEngine;
 
@@ -20,17 +21,35 @@ namespace Game.Presentation
         public MapCellContent Content { get; }
         public string DisplayName { get; }
         public string InteractionHint { get; }
+        public string UnitId { get; }
+        public string UnitOwnerFactionId { get; }
+        public string MineOwnerFactionId { get; }
+        public string CapturingFactionId { get; }
+        public int CaptureProgress { get; }
+        public int CaptureRequired { get; }
 
         public MapCellSelection(
             GridCoordinate coordinate,
             MapCellContent content,
             string displayName,
-            string interactionHint)
+            string interactionHint,
+            string unitId = "",
+            string unitOwnerFactionId = "",
+            string mineOwnerFactionId = "",
+            string capturingFactionId = "",
+            int captureProgress = 0,
+            int captureRequired = 0)
         {
             Coordinate = coordinate;
             Content = content;
             DisplayName = displayName ?? string.Empty;
             InteractionHint = interactionHint ?? string.Empty;
+            UnitId = unitId ?? string.Empty;
+            UnitOwnerFactionId = unitOwnerFactionId ?? string.Empty;
+            MineOwnerFactionId = mineOwnerFactionId ?? string.Empty;
+            CapturingFactionId = capturingFactionId ?? string.Empty;
+            CaptureProgress = Math.Max(0, captureProgress);
+            CaptureRequired = Math.Max(0, captureRequired);
         }
 
         public override string ToString() =>
@@ -86,6 +105,7 @@ namespace Game.Presentation
             new List<Transform>();
 
         private Transform _generatedRoot;
+        private Transform _gameplayMarkerRoot;
         private Camera _mapCamera;
         private Sprite _normalMineSprite;
         private Sprite _goldMineSprite;
@@ -94,10 +114,19 @@ namespace Game.Presentation
         private Mesh _mapMesh;
         private Vector3 _cameraFocus;
         private int _generationSequence;
+        private RealtimeMapGameplayService _gameplayService;
+        private string _selectedPlayerUnitId = string.Empty;
 
         public GridMapLayout CurrentLayout { get; private set; }
         public MapCellSelection? CurrentSelection { get; private set; }
+        public RealtimeMapGameplayService GameplayService => _gameplayService;
+        public string SelectedPlayerUnitId => _selectedPlayerUnitId;
+        public bool PointerSelectionBlocked { get; set; }
+        public MapUnitState SelectedPlayerUnit =>
+            _gameplayService?.FindUnit(_selectedPlayerUnitId);
         public event Action<MapCellSelection> CellSelected;
+        public event Action GameplayStateChanged;
+        public event Action<MapMineCaptureRecord> MineCaptured;
 
         public void Initialize()
         {
@@ -150,6 +179,120 @@ namespace Game.Presentation
             return true;
         }
 
+        public bool CanCreatePlayerUnit(out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.CanCreateUnit(
+                _gameplayService.PlayerFactionId,
+                out reason);
+        }
+
+        public bool TryCreatePlayerUnit(out string reason)
+        {
+            if (!CanCreatePlayerUnit(out reason))
+                return false;
+
+            if (!_gameplayService.TryCreateUnit(
+                _gameplayService.PlayerFactionId,
+                out MapUnitState unit,
+                out reason))
+            {
+                return false;
+            }
+
+            _selectedPlayerUnitId = unit.Id;
+            RefreshGameplayMarkers();
+            RefreshCurrentSelection();
+            return true;
+        }
+
+        public bool CanSelectPlayerUnitAt(
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            MapUnitState unit = _gameplayService.FindOwnedUnitAt(
+                _gameplayService.PlayerFactionId,
+                coordinate);
+            if (unit == null)
+            {
+                reason = "이 칸에 선택할 수 있는 아군 유닛이 없습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TrySelectPlayerUnitAt(
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (!CanSelectPlayerUnitAt(coordinate, out reason))
+                return false;
+
+            MapUnitState unit = _gameplayService.FindOwnedUnitAt(
+                _gameplayService.PlayerFactionId,
+                coordinate);
+            _selectedPlayerUnitId = unit.Id;
+            RefreshGameplayMarkers();
+            RefreshCurrentSelection();
+            return true;
+        }
+
+        public bool CanMoveSelectedPlayerUnit(
+            GridCoordinate destination,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 아군 유닛을 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanIssueMove(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                destination,
+                out _,
+                out reason);
+        }
+
+        public bool TryMoveSelectedPlayerUnit(
+            GridCoordinate destination,
+            out string reason)
+        {
+            if (!CanMoveSelectedPlayerUnit(destination, out reason))
+                return false;
+
+            return _gameplayService.TryIssueMove(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                destination,
+                out reason);
+        }
+
+        public void AdvanceGameplayFixedSteps(int fixedStepCount)
+        {
+            _gameplayService?.AdvanceFixedSteps(fixedStepCount);
+        }
+
+        public IReadOnlyList<MapMineProductionRecord> CreateDailyMineProduction()
+        {
+            return _gameplayService?.CreateDailyProduction() ??
+                Array.Empty<MapMineProductionRecord>();
+        }
+
         private void GenerateNewMap()
         {
             int width = Mathf.Clamp(mapWidth, 40, 160);
@@ -180,11 +323,13 @@ namespace Game.Presentation
             rootObject.transform.SetParent(transform, false);
             _generatedRoot = rootObject.transform;
 
+            CreateGameplayService(CurrentLayout);
             LoadMapIcons();
             BuildFlatMapCopies(CurrentLayout);
             BuildPlayerStart(CurrentLayout.PlayerStart);
             BuildOpponentStarts(CurrentLayout.OpponentStarts);
             BuildMines(CurrentLayout);
+            RefreshGameplayMarkers();
             FocusCameraOn(CurrentLayout.PlayerStart);
         }
 
@@ -217,6 +362,34 @@ namespace Game.Presentation
             }
 
             return opponents;
+        }
+
+        private void CreateGameplayService(GridMapLayout layout)
+        {
+            DetachGameplayService();
+            var aiFactionIds = new List<string>(layout.OpponentStarts.Count);
+            for (int i = 0; i < layout.OpponentStarts.Count; i++)
+                aiFactionIds.Add($"ai_{i + 1}");
+
+            _gameplayService = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                aiFactionIds);
+            _gameplayService.StateChanged += HandleGameplayStateChanged;
+            _gameplayService.MineCaptured += HandleMineCaptured;
+            _selectedPlayerUnitId = string.Empty;
+        }
+
+        private void DetachGameplayService()
+        {
+            if (_gameplayService != null)
+            {
+                _gameplayService.StateChanged -= HandleGameplayStateChanged;
+                _gameplayService.MineCaptured -= HandleMineCaptured;
+            }
+
+            _gameplayService = null;
+            _selectedPlayerUnitId = string.Empty;
         }
 
         private void BuildFlatMapCopies(GridMapLayout layout)
@@ -391,13 +564,13 @@ namespace Game.Presentation
             return material;
         }
 
-        private static MapCellSelection DescribeCell(
+        private MapCellSelection DescribeCell(
             GridMapLayout layout,
             GridCoordinate coordinate)
         {
             if (coordinate.Equals(layout.PlayerStart))
             {
-                return new MapCellSelection(
+                return CreateSelection(
                     coordinate,
                     MapCellContent.PlayerBase,
                     "플레이어 본사",
@@ -408,7 +581,7 @@ namespace Game.Presentation
             {
                 if (coordinate.Equals(layout.OpponentStarts[i]))
                 {
-                    return new MapCellSelection(
+                    return CreateSelection(
                         coordinate,
                         MapCellContent.EnemyBase,
                         $"경쟁 기업 {i + 1} 본사",
@@ -423,12 +596,12 @@ namespace Game.Presentation
                     continue;
 
                 return mine.Kind == MineKind.Gold
-                    ? new MapCellSelection(
+                    ? CreateSelection(
                         coordinate,
                         MapCellContent.GoldMine,
                         "금광",
                         "점령 후 금을 채굴하거나 적의 수송로를 습격할 수 있습니다.")
-                    : new MapCellSelection(
+                    : CreateSelection(
                         coordinate,
                         MapCellContent.NormalMine,
                         "일반 광산",
@@ -436,13 +609,84 @@ namespace Game.Presentation
             }
 
             GridTerrainKind terrain = layout.GetTerrain(coordinate);
-            return new MapCellSelection(
+            return CreateSelection(
                 coordinate,
                 MapCellContent.Empty,
                 GetTerrainName(terrain),
                 terrain == GridTerrainKind.Ocean
                     ? "해상 운송과 해상 임무용 지역입니다. 지상 시설은 건설할 수 없습니다."
                     : "공장, 창고, 전초기지 건설 후보지입니다.");
+        }
+
+        private MapCellSelection CreateSelection(
+            GridCoordinate coordinate,
+            MapCellContent content,
+            string displayName,
+            string interactionHint)
+        {
+            MapUnitState unit = null;
+            MapMineControlState mine = null;
+            if (_gameplayService != null)
+            {
+                unit = _gameplayService.FindOwnedUnitAt(
+                    _gameplayService.PlayerFactionId,
+                    coordinate);
+                if (unit == null)
+                {
+                    for (int i = 0; i < _gameplayService.Units.Count; i++)
+                    {
+                        if (_gameplayService.Units[i].Coordinate.Equals(coordinate))
+                        {
+                            unit = _gameplayService.Units[i];
+                            break;
+                        }
+                    }
+                }
+                mine = _gameplayService.FindMine(coordinate);
+            }
+
+            string detail = interactionHint;
+            if (unit != null)
+            {
+                string ownerName = GetFactionDisplayName(unit.OwnerFactionId);
+                detail += $"\n{ownerName} 유닛 {unit.Id}";
+                if (unit.Destination.HasValue)
+                    detail += $" · 이동 중 → {unit.Destination.Value}";
+            }
+            if (mine != null)
+            {
+                string ownerName = string.IsNullOrEmpty(mine.OwnerFactionId)
+                    ? "미점령"
+                    : GetFactionDisplayName(mine.OwnerFactionId) + " 소유";
+                detail += "\n광산 상태: " + ownerName;
+                if (!string.IsNullOrEmpty(mine.CapturingFactionId))
+                {
+                    detail += $" · {GetFactionDisplayName(mine.CapturingFactionId)} " +
+                              $"점령 {mine.CaptureProgress}/" +
+                              _gameplayService.FixedStepsToCapture;
+                }
+            }
+
+            return new MapCellSelection(
+                coordinate,
+                content,
+                displayName,
+                detail,
+                unit?.Id,
+                unit?.OwnerFactionId,
+                mine?.OwnerFactionId,
+                mine?.CapturingFactionId,
+                mine?.CaptureProgress ?? 0,
+                _gameplayService?.FixedStepsToCapture ?? 0);
+        }
+
+        private static string GetFactionDisplayName(string factionId)
+        {
+            if (string.Equals(factionId, "player", StringComparison.Ordinal))
+                return "플레이어";
+            if (factionId != null && factionId.StartsWith("ai_", StringComparison.Ordinal))
+                return "경쟁 기업 " + factionId.Substring(3);
+            return string.IsNullOrWhiteSpace(factionId) ? "중립" : factionId;
         }
 
         private static string GetTerrainName(GridTerrainKind terrain)
@@ -538,6 +782,119 @@ namespace Game.Presentation
                         isGold ? _goldMineSprite : _normalMineSprite);
                 });
             }
+        }
+
+        private void RefreshGameplayMarkers()
+        {
+            if (_generatedRoot == null || _gameplayService == null)
+                return;
+
+            if (_gameplayMarkerRoot != null)
+            {
+                GameObject previous = _gameplayMarkerRoot.gameObject;
+                _gameplayMarkerRoot = null;
+                if (UnityEngine.Application.isPlaying)
+                    Destroy(previous);
+                else
+                    DestroyImmediate(previous);
+            }
+
+            var markerRoot = new GameObject("실시간 유닛과 점령 표식");
+            markerRoot.transform.SetParent(_generatedRoot, false);
+            _gameplayMarkerRoot = markerRoot.transform;
+
+            for (int i = 0; i < _gameplayService.Mines.Count; i++)
+            {
+                MapMineControlState mine = _gameplayService.Mines[i];
+                if (string.IsNullOrEmpty(mine.OwnerFactionId))
+                    continue;
+
+                Color color = GetFactionColor(mine.OwnerFactionId);
+                ForEachSurfaceCopy(xOffset => CreateBlock(
+                    $"광산 소유권_{mine.Coordinate.X}_{mine.Coordinate.Y}",
+                    ToWorldPosition(mine.Coordinate, xOffset) +
+                    new Vector3(0f, 0.52f, 0f),
+                    new Vector3(
+                        tileSize * 0.24f,
+                        0.20f,
+                        tileSize * 0.24f),
+                    color,
+                    _gameplayMarkerRoot,
+                    false));
+            }
+
+            for (int i = 0; i < _gameplayService.Units.Count; i++)
+            {
+                MapUnitState unit = _gameplayService.Units[i];
+                Color color = GetFactionColor(unit.OwnerFactionId);
+                bool selected = string.Equals(
+                    unit.Id,
+                    _selectedPlayerUnitId,
+                    StringComparison.Ordinal);
+                ForEachSurfaceCopy(xOffset =>
+                {
+                    Vector3 position = ToWorldPosition(unit.Coordinate, xOffset);
+                    CreateBlock(
+                        $"{unit.Id}_부대",
+                        position + new Vector3(0f, 0.76f, 0f),
+                        new Vector3(
+                            tileSize * (selected ? 0.48f : 0.38f),
+                            selected ? 0.66f : 0.52f,
+                            tileSize * (selected ? 0.48f : 0.38f)),
+                        color,
+                        _gameplayMarkerRoot,
+                        false);
+                    CreateBlock(
+                        $"{unit.Id}_방향표식",
+                        position + new Vector3(0f, 1.15f, 0f),
+                        new Vector3(
+                            tileSize * 0.16f,
+                            0.16f,
+                            tileSize * 0.16f),
+                        selected ? Color.white : color,
+                        _gameplayMarkerRoot,
+                        false);
+                });
+            }
+        }
+
+        private static Color GetFactionColor(string factionId)
+        {
+            if (string.Equals(factionId, "player", StringComparison.Ordinal))
+                return PlayerStartColor;
+            if (string.Equals(factionId, "ai_1", StringComparison.Ordinal))
+                return EnemyColors[0];
+            if (string.Equals(factionId, "ai_2", StringComparison.Ordinal))
+                return EnemyColors[1];
+            if (string.Equals(factionId, "ai_3", StringComparison.Ordinal))
+                return EnemyColors[2];
+            return new Color(0.72f, 0.72f, 0.72f);
+        }
+
+        private void HandleGameplayStateChanged()
+        {
+            if (SelectedPlayerUnit == null)
+                _selectedPlayerUnitId = string.Empty;
+            RefreshGameplayMarkers();
+            RefreshCurrentSelection();
+            GameplayStateChanged?.Invoke();
+        }
+
+        private void HandleMineCaptured(MapMineCaptureRecord record)
+        {
+            MineCaptured?.Invoke(record);
+        }
+
+        private void RefreshCurrentSelection()
+        {
+            if (!CurrentSelection.HasValue || CurrentLayout == null)
+                return;
+
+            MapCellSelection selection = DescribeCell(
+                CurrentLayout,
+                CurrentSelection.Value.Coordinate);
+            CurrentSelection = selection;
+            CellSelected?.Invoke(selection);
         }
 
         private void ForEachSurfaceCopy(Action<float> action)
@@ -686,7 +1043,8 @@ namespace Game.Presentation
 
         private void HandleSelectionInput()
         {
-            if (!UnityEngine.Input.GetMouseButtonDown(0))
+            if (PointerSelectionBlocked ||
+                !UnityEngine.Input.GetMouseButtonDown(0))
                 return;
 
             Camera camera = _mapCamera != null ? _mapCamera : Camera.main;
@@ -765,6 +1123,7 @@ namespace Game.Presentation
 
         private void RemoveGeneratedMap()
         {
+            DetachGameplayService();
             if (_generatedRoot != null)
             {
                 GameObject generatedObject = _generatedRoot.gameObject;
@@ -777,6 +1136,7 @@ namespace Game.Presentation
 
             CurrentLayout = null;
             CurrentSelection = null;
+            _gameplayMarkerRoot = null;
             _mapSurfaceColliders.Clear();
             _iconBillboards.Clear();
             DestroyRuntimeAsset(_mapMaterial);
@@ -851,6 +1211,7 @@ namespace Game.Presentation
 
         private void OnDestroy()
         {
+            DetachGameplayService();
             DestroyRuntimeAsset(_normalMineSprite);
             DestroyRuntimeAsset(_goldMineSprite);
             DestroyRuntimeAsset(_mapMaterial);
