@@ -25,6 +25,10 @@ MonoBehaviour:
   turnsPerFrame: 4
   aiCompaniesPerBatch: 100
   aiActionsPerCompany: 2
+  realSecondsPerGameDay: 60
+  fixedRealtimeStepSeconds: 0.1
+  initialGameSpeed: 1
+  maxRealtimeStepsPerFrame: 16
   maxCampaignTurns: 30
   dominanceCheckStartTurn: 15
   dominanceMultiplier: 3

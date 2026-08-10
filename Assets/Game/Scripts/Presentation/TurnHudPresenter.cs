@@ -1,7 +1,5 @@
 using UnityEngine;
 using UnityEngine.UI;
-using Game.Application.Turn;
-using Game.Domain.Localization;
 
 namespace Game.Presentation
 {
@@ -14,26 +12,35 @@ namespace Game.Presentation
         [SerializeField] private Text commandCountLabel;
         [SerializeField] private Text campaignResultLabel;
 
-        private void Start()
+        private void OnEnable()
         {
+            if (simulation != null)
+                simulation.RealtimeStateChanged += Refresh;
             Refresh();
         }
 
-        // Unity UI Button.onClick에 연결한다.
-        public void OnEndTurnPressed()
+        private void OnDisable()
+        {
+            if (simulation != null)
+                simulation.RealtimeStateChanged -= Refresh;
+        }
+
+        // 기존 씬의 턴 종료 버튼 연결을 유지하면서 동작은 일시정지로 전환한다.
+        public void OnEndTurnPressed() => OnPausePressed();
+
+        public void OnPausePressed()
         {
             if (simulation == null)
                 return;
-
-            if (simulation.IsCampaignFinished)
-            {
-                Refresh();
-                return;
-            }
-
-            simulation.ResolveCurrentTurn();
+            simulation.ToggleRealtimePause();
             Refresh();
         }
+
+        public void OnSpeed1Pressed() => SetSpeed(1);
+        public void OnSpeed2Pressed() => SetSpeed(2);
+        public void OnSpeed3Pressed() => SetSpeed(3);
+        public void OnSpeed4Pressed() => SetSpeed(4);
+        public void OnSpeed5Pressed() => SetSpeed(5);
 
         public void OnCancelLastCommandPressed()
         {
@@ -52,19 +59,24 @@ namespace Game.Presentation
             if (turnLabel != null)
             {
                 turnLabel.text =
-                    $"{KoreanFormat.Turn(simulation.CurrentTurn)} / " +
-                    $"{simulation.MaxCampaignTurns}턴";
+                    $"{simulation.RealtimeDayNumber}일 " +
+                    $"{simulation.RealtimeHour:D2}:" +
+                    $"{simulation.RealtimeMinute:D2} / " +
+                    $"총 {simulation.MaxCampaignTurns}일";
             }
 
             if (actionPointLabel != null)
             {
                 actionPointLabel.text =
-                    $"남은 행동력 {simulation.RemainingActionPoints}";
+                    $"남은 일일 행동력 {simulation.RemainingActionPoints}";
             }
 
             if (phaseLabel != null)
-                phaseLabel.text = GetPhaseName(
-                    simulation.CurrentPhase);
+            {
+                phaseLabel.text = simulation.IsRealtimePaused
+                    ? "일시정지"
+                    : $"{simulation.RealtimeSpeedMultiplier}배속 진행 중";
+            }
 
             if (commandCountLabel != null)
             {
@@ -80,27 +92,12 @@ namespace Game.Presentation
             }
         }
 
-        private static string GetPhaseName(TurnPhase phase)
+        private void SetSpeed(int speedMultiplier)
         {
-            switch (phase)
-            {
-                case TurnPhase.PlayerPlanning:
-                    return "계획 단계";
-                case TurnPhase.PlayerResolution:
-                    return "플레이어 명령 처리";
-                case TurnPhase.AIResolution:
-                    return "AI 행동 처리";
-                case TurnPhase.WorldResolution:
-                    return "세계 정산";
-                case TurnPhase.CampaignResolution:
-                    return "승패 판정";
-                case TurnPhase.Report:
-                    return "결과 보고";
-                case TurnPhase.Completed:
-                    return "턴 완료";
-                default:
-                    return "알 수 없음";
-            }
+            if (simulation == null)
+                return;
+            simulation.SetRealtimeSpeed(speedMultiplier);
+            Refresh();
         }
     }
 }

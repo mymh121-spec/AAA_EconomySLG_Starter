@@ -1,5 +1,6 @@
 using System.Text;
 using Game.Application.World;
+using Game.Application.Turn;
 using Game.Domain.Campaign;
 using Game.Domain.Common;
 using Game.Domain.Market;
@@ -8,6 +9,23 @@ using Game.Domain.Resources;
 using Game.Domain.World;
 
 Console.OutputEncoding = Encoding.UTF8;
+
+var realtimeClock = new RealtimeSimulationClock(
+    realSecondsPerGameDay: 60d,
+    fixedRealStepSeconds: 1d,
+    maxStepsPerAdvance: 100,
+    initialSpeedMultiplier: 5);
+RealtimeAdvanceResult realtimeDay = realtimeClock.Advance(12d);
+Check(realtimeDay.CompletedGameDays == 1,
+    "5배속에서 현실 12초마다 게임 하루 진행");
+Check(realtimeClock.CurrentDayNumber == 2,
+    "실시간 날짜 증가");
+realtimeClock.TogglePause();
+Check(realtimeClock.Advance(60d).FixedStepCount == 0,
+    "일시정지 중 게임 시간 고정");
+realtimeClock.TogglePause();
+Check(realtimeClock.SpeedMultiplier == 5,
+    "일시정지 해제 시 기존 배속 복원");
 
 var gridGenerator = new GridMapLayoutGenerator();
 var playerMapStart = new GridCoordinate(4, 24);

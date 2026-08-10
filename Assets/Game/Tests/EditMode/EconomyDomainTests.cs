@@ -24,6 +24,55 @@ namespace Game.Tests
     public sealed class EconomyDomainTests
     {
         [Test]
+        public void RealtimeClock_SupportsPauseAndOneToFiveTimesSpeed()
+        {
+            var clock = new RealtimeSimulationClock(
+                realSecondsPerGameDay: 60d,
+                fixedRealStepSeconds: 1d,
+                maxStepsPerAdvance: 100,
+                initialSpeedMultiplier: 1);
+
+            RealtimeAdvanceResult normal = clock.Advance(60d);
+
+            Assert.That(normal.CompletedGameDays, Is.EqualTo(1));
+            Assert.That(clock.CurrentDayNumber, Is.EqualTo(2));
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(1));
+
+            Assert.That(clock.SetSpeed(5), Is.True);
+            RealtimeAdvanceResult fiveTimes = clock.Advance(12d);
+
+            Assert.That(fiveTimes.CompletedGameDays, Is.EqualTo(1));
+            Assert.That(clock.CurrentDayNumber, Is.EqualTo(3));
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
+
+            Assert.That(clock.TogglePause(), Is.True);
+            Assert.That(clock.IsPaused, Is.True);
+            Assert.That(clock.Advance(60d).FixedStepCount, Is.EqualTo(0));
+            Assert.That(clock.CurrentDayNumber, Is.EqualTo(3));
+
+            Assert.That(clock.TogglePause(), Is.True);
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
+            Assert.That(clock.SetSpeed(9), Is.False);
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void RealtimeClock_DropsExcessCatchUpWork()
+        {
+            var clock = new RealtimeSimulationClock(
+                realSecondsPerGameDay: 60d,
+                fixedRealStepSeconds: 0.1d,
+                maxStepsPerAdvance: 16,
+                initialSpeedMultiplier: 5);
+
+            RealtimeAdvanceResult result = clock.Advance(10d);
+
+            Assert.That(result.FixedStepCount, Is.EqualTo(16));
+            Assert.That(result.DroppedRealSeconds, Is.GreaterThan(8d));
+            Assert.That(result.CompletedGameDays, Is.EqualTo(0));
+        }
+
+        [Test]
         public void GridMapLayout_UsesLargeWrappedWorldAndProtectsCompanyStarts()
         {
             var generator = new GridMapLayoutGenerator();

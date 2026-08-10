@@ -54,6 +54,8 @@ namespace Game.Presentation
         private WorldEconomyState _worldEconomy;
         private AutonomousWorldState _autonomousWorldState;
         private IAutonomousWorldTurnService _autonomousWorldService;
+        private RealtimeSimulationClock _realtimeClock;
+        private int _lastRealtimeMinuteStamp = -1;
 
         public TurnNumber CurrentTurn =>
             _simulation?.CurrentTurn ?? new TurnNumber(1);
@@ -76,10 +78,75 @@ namespace Game.Presentation
         public int MaxCampaignTurns => simulationSettings != null
             ? simulationSettings.MaxCampaignTurns
             : 30;
+        public int RealtimeDayNumber =>
+            _realtimeClock?.CurrentDayNumber ?? CurrentTurn.Value;
+        public int RealtimeHour => _realtimeClock?.HourOfDay ?? 0;
+        public int RealtimeMinute => _realtimeClock?.MinuteOfHour ?? 0;
+        public int RealtimeSpeedMultiplier =>
+            _realtimeClock?.SpeedMultiplier ?? 0;
+        public bool IsRealtimePaused =>
+            _realtimeClock?.IsPaused ?? true;
+
+        public event Action RealtimeStateChanged;
+        public event Action<TurnReport> RealtimeDayResolved;
 
         private void Awake()
         {
             BuildSimulation();
+        }
+
+        private void Update()
+        {
+            if (_realtimeClock == null ||
+                _simulation == null ||
+                IsCampaignFinished)
+            {
+                return;
+            }
+
+            RealtimeAdvanceResult advance = _realtimeClock.Advance(
+                Time.unscaledDeltaTime);
+            if (advance.FixedStepCount <= 0)
+                return;
+
+            for (int i = 0;
+                 i < advance.CompletedGameDays && !IsCampaignFinished;
+                 i++)
+            {
+                TurnReport report = ResolveCurrentTurn(false);
+                RealtimeDayResolved?.Invoke(report);
+            }
+
+            if (IsCampaignFinished)
+                _realtimeClock.SetSpeed(0);
+
+            NotifyRealtimeStateWhenMinuteChanged();
+        }
+
+        public bool SetRealtimeSpeed(int speedMultiplier)
+        {
+            if (_realtimeClock == null)
+                BuildRealtimeClock();
+            if (IsCampaignFinished && speedMultiplier > 0)
+                return false;
+
+            bool changed = _realtimeClock.SetSpeed(speedMultiplier);
+            if (changed)
+                RealtimeStateChanged?.Invoke();
+            return changed;
+        }
+
+        public bool ToggleRealtimePause()
+        {
+            if (_realtimeClock == null)
+                BuildRealtimeClock();
+            if (IsCampaignFinished)
+                return false;
+
+            bool changed = _realtimeClock.TogglePause();
+            if (changed)
+                RealtimeStateChanged?.Invoke();
+            return changed;
         }
 
         // Unity UI의 "턴 종료" 버튼에 연결한다.
@@ -121,8 +188,11 @@ namespace Game.Presentation
             _autonomousWorldState = null;
             _autonomousWorldService = null;
             _campaignRules = null;
+            _realtimeClock = null;
+            _lastRealtimeMinuteStamp = -1;
             _turnFlowBuffer.Clear();
             BuildSimulation();
+            RealtimeStateChanged?.Invoke();
         }
 
         public bool TryQueueMarketOrder(
@@ -317,6 +387,38 @@ namespace Game.Presentation
                 new GameDay(0),
                 aiResolution: aiTurnService,
                 campaignSession: _campaignSession);
+            BuildRealtimeClock();
+        }
+
+        private void BuildRealtimeClock()
+        {
+            _realtimeClock = new RealtimeSimulationClock(
+                simulationSettings != null
+                    ? simulationSettings.RealSecondsPerGameDay
+                    : 60d,
+                simulationSettings != null
+                    ? simulationSettings.FixedRealtimeStepSeconds
+                    : 0.1d,
+                simulationSettings != null
+                    ? simulationSettings.MaxRealtimeStepsPerFrame
+                    : 16,
+                simulationSettings != null
+                    ? simulationSettings.InitialGameSpeed
+                    : 1);
+            _lastRealtimeMinuteStamp = 0;
+        }
+
+        private void NotifyRealtimeStateWhenMinuteChanged()
+        {
+            int minuteStamp =
+                (RealtimeDayNumber - 1) * 24 * 60 +
+                RealtimeHour * 60 +
+                RealtimeMinute;
+            if (minuteStamp == _lastRealtimeMinuteStamp)
+                return;
+
+            _lastRealtimeMinuteStamp = minuteStamp;
+            RealtimeStateChanged?.Invoke();
         }
 
         private void LoadRuntimeSettings()

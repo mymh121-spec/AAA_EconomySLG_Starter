@@ -37,6 +37,7 @@ namespace Game.Presentation
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
+        private bool _singlePlayerEventsBound;
         private bool _multiplayerEventsBound;
         private bool _mapEventsBound;
 
@@ -91,6 +92,7 @@ namespace Game.Presentation
                     FindObjectsInactive.Include);
             }
 
+            BindSinglePlayerEvents();
             BindMultiplayerEvents();
             BindMapEvents();
         }
@@ -98,7 +100,10 @@ namespace Game.Presentation
         private SimulationBootstrapper EnsureSinglePlayerSimulation()
         {
             if (singlePlayerSimulation != null)
+            {
+                BindSinglePlayerEvents();
                 return singlePlayerSimulation;
+            }
 
             var localRoot = new GameObject("1인 플레이 시뮬레이션");
             localRoot.SetActive(false);
@@ -106,7 +111,18 @@ namespace Game.Presentation
                 localRoot.transform.SetParent(transform, false);
             singlePlayerSimulation =
                 localRoot.AddComponent<SimulationBootstrapper>();
+            BindSinglePlayerEvents();
             return singlePlayerSimulation;
+        }
+
+        private void BindSinglePlayerEvents()
+        {
+            if (singlePlayerSimulation == null || _singlePlayerEventsBound)
+                return;
+
+            singlePlayerSimulation.RealtimeStateChanged +=
+                HandleSinglePlayerRealtimeStateChanged;
+            _singlePlayerEventsBound = true;
         }
 
         private PvpOnlineSessionController EnsureMultiplayerSession()
@@ -219,7 +235,10 @@ namespace Game.Presentation
             _singleMapSelectionStatus = AddStatus(_singlePlayerView);
             _singleMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
-            AddButton(_singlePlayerView, "턴 종료", EndSinglePlayerTurn);
+            AddDescription(
+                _singlePlayerView,
+                "시간 진행: 일시정지 또는 1~5배속을 선택하세요. 경제는 게임 내 자정마다 정산됩니다.");
+            AddRealtimeSpeedControls(_singlePlayerView);
             AddButton(_singlePlayerView, "모드 선택으로", ShowModeSelection);
             StyleGameplayHud(_singlePlayerView);
 
@@ -334,7 +353,7 @@ namespace Game.Presentation
             }
         }
 
-        private void EndSinglePlayerTurn()
+        private void ToggleSinglePlayerPause()
         {
             if (singlePlayerSimulation.IsCampaignFinished)
             {
@@ -342,10 +361,18 @@ namespace Game.Presentation
                 return;
             }
 
-            singlePlayerSimulation.ResolveCurrentTurn(false);
-            RefreshSinglePlayerStatus();
+            singlePlayerSimulation.ToggleRealtimePause();
+        }
+
+        private void SetSinglePlayerSpeed(int speedMultiplier)
+        {
             if (singlePlayerSimulation.IsCampaignFinished)
+            {
                 ShowSinglePlayerResult();
+                return;
+            }
+
+            singlePlayerSimulation.SetRealtimeSpeed(speedMultiplier);
         }
 
         private void ShowSinglePlayerResult()
@@ -531,12 +558,22 @@ namespace Game.Presentation
             if (_singlePlayerStatus == null || singlePlayerSimulation == null)
                 return;
 
-            var builder = new StringBuilder(160);
+            var builder = new StringBuilder(220);
             builder.Append("현재 ")
+                .Append(singlePlayerSimulation.RealtimeDayNumber)
+                .Append("일 ")
+                .Append(singlePlayerSimulation.RealtimeHour.ToString("D2"))
+                .Append(':')
+                .Append(singlePlayerSimulation.RealtimeMinute.ToString("D2"))
+                .Append(" · ")
+                .Append(singlePlayerSimulation.IsRealtimePaused
+                    ? "일시정지"
+                    : singlePlayerSimulation.RealtimeSpeedMultiplier + "배속")
+                .Append("\n다음 경제 정산 ")
                 .Append(singlePlayerSimulation.CurrentTurn.Value)
-                .Append("턴 / ")
+                .Append("일 / 총 ")
                 .Append(singlePlayerSimulation.MaxCampaignTurns)
-                .Append("턴\n남은 행동력 ")
+                .Append("일\n남은 일일 행동력 ")
                 .Append(singlePlayerSimulation.RemainingActionPoints)
                 .Append(" · 예약 명령 ")
                 .Append(singlePlayerSimulation.QueuedCommandCount)
@@ -544,6 +581,19 @@ namespace Game.Presentation
                 .Append(CampaignResultKoreanFormatter.Format(
                     singlePlayerSimulation.CampaignResult));
             _singlePlayerStatus.text = builder.ToString();
+        }
+
+        private void HandleSinglePlayerRealtimeStateChanged()
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            RefreshSinglePlayerStatus();
+            if (singlePlayerSimulation != null &&
+                singlePlayerSimulation.IsCampaignFinished)
+            {
+                ShowSinglePlayerResult();
+            }
         }
 
         private void HandleMultiplayerStateChanged(PvpReconnectDto state)
@@ -669,6 +719,44 @@ namespace Game.Presentation
             parent.Add(button);
         }
 
+        private void AddRealtimeSpeedControls(VisualElement parent)
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.Wrap;
+            row.style.marginBottom = 8;
+            AddSpeedButton(row, "일시정지", ToggleSinglePlayerPause);
+            for (int speed = 1; speed <= 5; speed++)
+            {
+                int capturedSpeed = speed;
+                AddSpeedButton(
+                    row,
+                    capturedSpeed + "배",
+                    () => SetSinglePlayerSpeed(capturedSpeed));
+            }
+            parent.Add(row);
+        }
+
+        private static void AddSpeedButton(
+            VisualElement parent,
+            string text,
+            Action clicked)
+        {
+            var button = new Button(clicked) { text = text };
+            button.style.height = 42;
+            button.style.minWidth = 58;
+            button.style.flexGrow = 1;
+            button.style.marginLeft = 3;
+            button.style.marginRight = 3;
+            button.style.marginTop = 3;
+            button.style.marginBottom = 3;
+            button.style.fontSize = 14;
+            button.style.unityFontStyleAndWeight = FontStyle.Bold;
+            button.style.backgroundColor = new Color(0.12f, 0.32f, 0.56f);
+            button.style.color = Color.white;
+            parent.Add(button);
+        }
+
         private static void StyleGameplayHud(VisualElement card)
         {
             card.style.width = 420;
@@ -734,6 +822,12 @@ namespace Game.Presentation
 
         private void OnDestroy()
         {
+            if (singlePlayerSimulation != null && _singlePlayerEventsBound)
+            {
+                singlePlayerSimulation.RealtimeStateChanged -=
+                    HandleSinglePlayerRealtimeStateChanged;
+                _singlePlayerEventsBound = false;
+            }
             if (multiplayerSession != null && _multiplayerEventsBound)
             {
                 multiplayerSession.StateChanged -= HandleMultiplayerStateChanged;

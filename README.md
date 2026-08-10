@@ -65,6 +65,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - See `UNITY_6_3_MIGRATION_KO.md` for the editor migration status and validation procedure.
 - See `PERFORMANCE_GUIDE_KO.md` for scale targets and profiling rules.
 - See `WORLD_MAP_RULES_KO.md` for the 80×48 flat-world, horizontal wrapping, controls, and PvP coordinate rules.
+- See `REALTIME_GAME_CONTINUATION_README_KO.md` for the pause/1–5× realtime handoff state and the copy-ready continuation prompt.
 
 ## Architecture
 
