@@ -15,6 +15,9 @@ namespace Game.Domain.Market
         public decimal Supply { get; private set; }
         public decimal Demand { get; private set; }
         public decimal MarketStockChange { get; private set; }
+        public decimal PhysicalSupply { get; private set; }
+        public decimal PhysicalDemand { get; private set; }
+        public decimal OpeningStock { get; private set; }
 
         public LedgerEntry(
             RegionId regionId,
@@ -28,6 +31,7 @@ namespace Game.Domain.Market
             Definition = definition;
             State = state;
             _tuning = tuning;
+            OpeningStock = state.MarketStock;
         }
 
         public void BeginDay()
@@ -35,6 +39,9 @@ namespace Game.Domain.Market
             Supply = 0;
             Demand = 0;
             MarketStockChange = 0;
+            PhysicalSupply = 0;
+            PhysicalDemand = 0;
+            OpeningStock = State.MarketStock;
             State.BeginDay();
         }
 
@@ -42,6 +49,8 @@ namespace Game.Domain.Market
         {
             Supply += flow.Supply;
             Demand += flow.Demand;
+            PhysicalSupply += flow.Supply;
+            PhysicalDemand += flow.Demand;
             MarketStockChange += flow.MarketStockChange;
             State.RecordSupply(flow.Supply);
             State.RecordDemand(flow.Demand);
@@ -67,8 +76,21 @@ namespace Game.Domain.Market
 
         public void FinalizeDay()
         {
-            State.RecordUnmetDemand(
-                System.Math.Max(0m, Demand - Supply));
+            // 주문은 가격 발견용 의사 표현이고, 실제 지역 재고는
+            // 생산·소비·운송으로 구성된 PhysicalFlow만 변경한다.
+            State.AddMarketStock(PhysicalSupply);
+            decimal physicallyConsumed = System.Math.Min(
+                PhysicalDemand,
+                State.MarketStock);
+            if (physicallyConsumed > 0m)
+                State.TryRemoveMarketStock(physicallyConsumed);
+
+            decimal availableForDemand = System.Math.Max(
+                0m,
+                OpeningStock + Supply + MarketStockChange);
+            State.RecordUnmetDemand(System.Math.Max(
+                0m,
+                Demand - availableForDemand));
         }
 
         public PriceInput ToPriceInput()

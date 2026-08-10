@@ -2,7 +2,9 @@ using UnityEngine;
 using Game.Domain.Campaign;
 using Game.Domain.Economy;
 using Game.Domain.Market;
+using Game.Domain.Military;
 using Game.Domain.Resources;
+using Game.Domain.World;
 
 namespace Game.Data
 {
@@ -61,6 +63,43 @@ namespace Game.Data
             "oil"
         };
 
+        [Header("시드 기반 랜덤 세계")]
+        [SerializeField] private int worldSeed = 12345;
+        [SerializeField, Min(2)] private int generatedRegionCount = 6;
+        [SerializeField, Min(2)] private int generatedFactionCount = 3;
+        [SerializeField, Min(2)] private int generatedSettlementCount = 5;
+        [SerializeField, Min(2)] private int generatedNpcCount = 12;
+        [SerializeField, Min(1)] private int initialResourceSiteCount = 8;
+        [SerializeField, Min(100)] private int minimumRegionPopulation = 800;
+        [SerializeField, Min(100)] private int maximumRegionPopulation = 8000;
+        [SerializeField, Min(100f)] private float initialResourceReserve = 12000f;
+        [SerializeField, Min(0.1f)] private float generatedSiteOutput = 85f;
+        [SerializeField, Min(0.1f)] private float generatedSiteMinimumOutput = 12f;
+        [SerializeField, Range(0f, 0.5f)] private float generatedSiteDeclineRate = 0.015f;
+
+        [Header("자율 세계 이벤트와 개입")]
+        [SerializeField, Range(0f, 1f)] private float randomEventChancePerTurn = 0.28f;
+        [SerializeField, Range(0.01f, 1f)] private float causalShortageThreshold = 0.20f;
+        [SerializeField, Min(1)] private int npcAutoResolveDelayTurns = 3;
+        [SerializeField, Range(0f, 1f)] private float npcBaseSuccessChance = 0.35f;
+        [SerializeField, Range(0f, 1f)] private float playerInterventionEfficiency = 0.20f;
+        [SerializeField, Min(0f)] private float playerBaseMissionReward = 2500f;
+        [SerializeField, Min(0f)] private float playerReputationReward = 3f;
+        [SerializeField, Range(0.05f, 1f)] private float eventProductionPenalty = 0.55f;
+        [SerializeField, Range(1f, 3f)] private float bountifulProductionBonus = 1.30f;
+        [SerializeField, Min(0f)] private float newVeinReserveBonus = 3000f;
+        [SerializeField, Min(1)] private int maxCausalEventsPerTurn = 3;
+        [SerializeField, Min(1)] private int repeatEventCooldownTurns = 3;
+
+        [Header("군대와 군수 수요")]
+        [SerializeField, Min(10)] private int initialArmySoldiersPerFaction = 180;
+        [SerializeField, Min(0f)] private float soldierDailyWage = 0.8f;
+        [SerializeField, Min(0f)] private float mobilizationCostPerSoldier = 0.5f;
+        [SerializeField, Min(0f)] private float distanceSupplyCostPerSoldier = 0.02f;
+        [SerializeField, Min(0f)] private float militaryFoodDemandPerSoldier = 0.03f;
+        [SerializeField, Min(0f)] private float militaryEquipmentDemandPerSoldier = 0.004f;
+        [SerializeField, Min(0f)] private float militaryMedicineDemandPerSoldier = 0.001f;
+
         public decimal InitialMarketStock => (decimal)initialMarketStock;
         public int MaxOrdersPerTurn => maxOrdersPerTurn;
         public int MaxActionPoints => maxActionPoints;
@@ -70,6 +109,7 @@ namespace Game.Data
         public int AIActionsPerCompany => aiActionsPerCompany;
         public int MaxCampaignTurns => maxCampaignTurns;
         public int DominanceCheckStartTurn => dominanceCheckStartTurn;
+        public int WorldSeed => worldSeed;
         public decimal FactoryAssetValue => (decimal)factoryAssetValue;
         public decimal WarehouseAssetValue => (decimal)warehouseAssetValue;
         public decimal VehicleAssetValue => (decimal)vehicleAssetValue;
@@ -114,6 +154,49 @@ namespace Game.Data
                 (decimal)resourceSiteMinimumOutput,
                 (decimal)resourceSiteDeclineRatePerTurn,
                 resourceSiteResourceIds);
+        }
+
+        public WorldGenerationSettings CreateWorldGenerationSettings()
+        {
+            return new WorldGenerationSettings(
+                generatedRegionCount,
+                generatedFactionCount,
+                generatedSettlementCount,
+                generatedNpcCount,
+                initialResourceSiteCount,
+                minimumRegionPopulation,
+                maximumRegionPopulation,
+                (decimal)initialResourceReserve,
+                (decimal)generatedSiteOutput,
+                (decimal)generatedSiteMinimumOutput,
+                (decimal)generatedSiteDeclineRate);
+        }
+
+        public AutonomousWorldTuning CreateAutonomousWorldTuning()
+        {
+            var military = new MilitaryLogisticsTuning(
+                (decimal)soldierDailyWage,
+                (decimal)mobilizationCostPerSoldier,
+                (decimal)distanceSupplyCostPerSoldier,
+                (decimal)militaryFoodDemandPerSoldier,
+                (decimal)militaryEquipmentDemandPerSoldier,
+                (decimal)militaryMedicineDemandPerSoldier);
+
+            return new AutonomousWorldTuning(
+                (decimal)randomEventChancePerTurn,
+                (decimal)causalShortageThreshold,
+                npcAutoResolveDelayTurns,
+                (decimal)npcBaseSuccessChance,
+                (decimal)playerInterventionEfficiency,
+                (decimal)playerBaseMissionReward,
+                (decimal)playerReputationReward,
+                (decimal)eventProductionPenalty,
+                (decimal)bountifulProductionBonus,
+                (decimal)newVeinReserveBonus,
+                initialArmySoldiersPerFaction,
+                military,
+                maxCausalEventsPerTurn,
+                repeatEventCooldownTurns);
         }
     }
 }

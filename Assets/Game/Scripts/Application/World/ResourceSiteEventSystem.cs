@@ -89,7 +89,7 @@ namespace Game.Application.World
             for (int i = 0; i < _world.ResourceSites.Count; i++)
             {
                 ResourceExtractionSite site = _world.ResourceSites[i];
-                decimal output = site.GetOutput(turn);
+                decimal output = site.Extract(turn);
                 if (output <= 0m)
                     continue;
 
@@ -145,7 +145,13 @@ namespace Game.Application.World
                 turn,
                 _settings.InitialOutput,
                 _settings.MinimumOutput,
-                _settings.DeclineRatePerTurn);
+                _settings.DeclineRatePerTurn,
+                _settings.InitialOutput * 180m,
+                1m,
+                100m,
+                100m,
+                string.Empty,
+                ExtractionMethod.Surface);
 
             if (_world.RegisterResourceSite(site))
                 spawned.Add(new ResourceSiteSpawnRecord(site));

@@ -24,6 +24,8 @@
 /Server/**/obj/
 /Server/**/data/
 /Server/**/logs/
+/Validation/**/bin/
+/Validation/**/obj/
 /outputs/
 /.verification/
 /_codex_backup-*/

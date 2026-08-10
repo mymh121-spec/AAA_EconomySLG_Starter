@@ -34,7 +34,7 @@ TurnReport.Performance에서 다음 값을 확인한다.
 
 ## 설정 에셋
 
-Assets/Game/Data/Settings/simulation_settings.asset에서 다음을 조정한다.
+Assets/Game/Resources/SimulationSettings.asset에서 다음을 조정한다.
 
 - 목표 시장 재고 일수
 - 가격 탄력성

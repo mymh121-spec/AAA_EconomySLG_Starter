@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Assets\Game\Scripts\Domain\**\*.cs"
+             Link="Shared\Domain\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Game\Scripts\Application\**\*.cs"
+             Link="Shared\Application\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Game\Scripts\Data\**\*.cs"
+             Link="Shared\Data\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\SimulationBootstrapper.cs"
+             Link="Shared\Presentation\SimulationBootstrapper.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\TurnReportKoreanFormatter.cs"
+             Link="Shared\Presentation\TurnReportKoreanFormatter.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\CampaignResultKoreanFormatter.cs"
+             Link="Shared\Presentation\CampaignResultKoreanFormatter.cs" />
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

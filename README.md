@@ -53,7 +53,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - `TechnologyState` tracks prerequisites, research progress, and completed effects.
 - `CompanyFinanceSystem` processes wages, maintenance, interest, debt, and bankruptcy.
 - `TurnBatchRunner` spreads multi-turn simulation across frames.
-- `simulation_settings.asset` controls market volatility, target stock, order limits, batching, and operating costs.
+- `Assets/Game/Resources/SimulationSettings.asset` controls market volatility, target stock, world generation, events, military logistics, order limits, batching, and operating costs.
 - `CampaignVictoryEvaluator` checks the 3x combined-opponent economic dominance rule from turn 15 and ends the campaign at turn 30.
 - `WorldEconomyTurnService` resolves production, logistics arrivals, market settlement, company finance, and asset valuation before campaign evaluation.
 - `AICompanyTurnService` submits deterministic buy and sell orders from prior market shortages and surpluses while respecting company cash, stock, and warehouse capacity.

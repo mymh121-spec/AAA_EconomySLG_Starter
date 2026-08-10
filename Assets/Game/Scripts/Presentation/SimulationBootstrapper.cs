@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Game.Application;
@@ -11,8 +12,11 @@ using Game.Domain.Common;
 using Game.Domain.Economy;
 using Game.Domain.Market;
 using Game.Domain.Inventory;
+using Game.Domain.Logistics;
+using Game.Domain.Military;
 using Game.Domain.Production;
 using Game.Domain.Resources;
+using Game.Domain.World;
 
 namespace Game.Presentation
 {
@@ -21,6 +25,7 @@ namespace Game.Presentation
         [SerializeField] private ResourceDefinitionAsset[] resourceAssets;
         [SerializeField] private RecipeDefinitionAsset[] recipeAssets;
         [SerializeField] private SimulationSettingsAsset simulationSettings;
+        [SerializeField] private MilitaryBalanceAsset militaryBalance;
         [SerializeField] private string regionId = "starter_region";
         [SerializeField] private float initialMarketStock = 1000f;
 
@@ -40,8 +45,6 @@ namespace Game.Presentation
         [SerializeField, Min(0)] private int starterVehicles = 1;
 
         private SimulationEngine _simulation;
-        private readonly Dictionary<ResourceId, ResourceMarketState> _states =
-            new Dictionary<ResourceId, ResourceMarketState>();
         private readonly List<PhysicalFlow> _turnFlowBuffer =
             new List<PhysicalFlow>(16);
         private ResourceCatalog _catalog;
@@ -49,6 +52,8 @@ namespace Game.Presentation
         private CampaignSession _campaignSession;
         private CampaignRuleSet _campaignRules;
         private WorldEconomyState _worldEconomy;
+        private AutonomousWorldState _autonomousWorldState;
+        private IAutonomousWorldTurnService _autonomousWorldService;
 
         public TurnNumber CurrentTurn =>
             _simulation?.CurrentTurn ?? new TurnNumber(1);
@@ -66,6 +71,8 @@ namespace Game.Presentation
             _campaignSession?.State;
         public WorldEconomyState CurrentWorldEconomy =>
             _worldEconomy;
+        public AutonomousWorldState CurrentAutonomousWorld =>
+            _autonomousWorldState;
         public int MaxCampaignTurns => simulationSettings != null
             ? simulationSettings.MaxCampaignTurns
             : 30;
@@ -111,6 +118,8 @@ namespace Game.Presentation
             _campaignSession = null;
             _playerCampaignState = null;
             _worldEconomy = null;
+            _autonomousWorldState = null;
+            _autonomousWorldService = null;
             _campaignRules = null;
             _turnFlowBuffer.Clear();
             BuildSimulation();
@@ -162,6 +171,44 @@ namespace Game.Presentation
                 _simulation.TryCancelLastPlayerCommand();
         }
 
+        public bool TryQueueWorldIntervention(
+            string opportunityId,
+            decimal playerCapability,
+            out string reason)
+        {
+            if (_simulation == null)
+                BuildSimulation();
+            if (_autonomousWorldService == null)
+            {
+                reason = "자율 세계 시뮬레이션이 준비되지 않았습니다.";
+                return false;
+            }
+
+            WorldOpportunity opportunity =
+                _autonomousWorldState?.FindOpportunity(opportunityId);
+            string displayName = opportunity == null
+                ? "세계 사건 개입"
+                : opportunity.DisplayName;
+            return _simulation.TryQueuePlayerCommand(
+                new InterveneWorldOpportunityTurnCommand(
+                    _autonomousWorldService,
+                    opportunityId,
+                    _playerCampaignState.Company.Id,
+                    playerCapability,
+                    displayName),
+                out reason);
+        }
+
+        public bool TryQueueWorldIntervention(
+            string opportunityId,
+            out string reason)
+        {
+            return TryQueueWorldIntervention(
+                opportunityId,
+                playerCapability: 0m,
+                out reason);
+        }
+
         public void DestroyPlayerCapital()
         {
             _playerCampaignState?.DestroyCapital();
@@ -197,8 +244,8 @@ namespace Game.Presentation
 
         private void BuildSimulation()
         {
+            LoadRuntimeSettings();
             _catalog = new ResourceCatalog();
-            _states.Clear();
 
             ResourceDefinitionAsset[] configuredResources = resourceAssets;
             if (configuredResources == null || configuredResources.Length == 0)
@@ -209,6 +256,7 @@ namespace Game.Presentation
             }
 
             int resourceCount = configuredResources?.Length ?? 0;
+            int registeredResourceCount = 0;
             for (int i = 0; i < resourceCount; i++)
             {
                 var asset = configuredResources[i];
@@ -217,15 +265,11 @@ namespace Game.Presentation
 
                 var definition = asset.ToDomain();
                 _catalog.Register(definition);
-                decimal stock = simulationSettings != null
-                    ? simulationSettings.InitialMarketStock
-                    : (decimal)initialMarketStock;
-
-                _states[definition.Id] = new ResourceMarketState(
-                    definition.Id,
-                    definition.BasePrice,
-                    stock);
+                registeredResourceCount++;
             }
+
+            if (registeredResourceCount == 0)
+                RegisterFallbackResources();
 
             var marketTuning = simulationSettings != null
                 ? simulationSettings.CreateMarketTuning()
@@ -275,6 +319,64 @@ namespace Game.Presentation
                 campaignSession: _campaignSession);
         }
 
+        private void LoadRuntimeSettings()
+        {
+            if (simulationSettings == null)
+            {
+                SimulationSettingsAsset[] settings =
+                    UnityEngine.Resources.LoadAll<SimulationSettingsAsset>(
+                        string.Empty);
+                if (settings.Length > 0)
+                    simulationSettings = settings[0];
+            }
+
+            if (militaryBalance == null)
+            {
+                MilitaryBalanceAsset[] balances =
+                    UnityEngine.Resources.LoadAll<MilitaryBalanceAsset>(
+                        string.Empty);
+                if (balances.Length > 0)
+                    militaryBalance = balances[0];
+            }
+        }
+
+        private void RegisterFallbackResources()
+        {
+            RegisterFallbackResource(
+                "iron", "철광석", 100m, ResourceRarity.Common, false);
+            RegisterFallbackResource(
+                "coal", "석탄", 80m, ResourceRarity.Common, false);
+            RegisterFallbackResource(
+                "wood", "목재", 60m, ResourceRarity.Common, false);
+            RegisterFallbackResource(
+                "food", "식량", 40m, ResourceRarity.Common, true);
+            RegisterFallbackResource(
+                "steel", "강철", 220m, ResourceRarity.Uncommon, false);
+            RegisterFallbackResource(
+                "machinery", "기계", 600m, ResourceRarity.Rare, false);
+            RegisterFallbackResource(
+                "medicine", "의약품", 450m, ResourceRarity.Rare, true);
+            RegisterFallbackResource(
+                "semiconductor", "반도체", 1200m,
+                ResourceRarity.Strategic, false);
+        }
+
+        private void RegisterFallbackResource(
+            string id,
+            string displayName,
+            decimal basePrice,
+            ResourceRarity rarity,
+            bool isPerishable)
+        {
+            _catalog.Register(new ResourceDefinition(
+                new ResourceId(id),
+                displayName,
+                basePrice,
+                rarity,
+                storageVolume: 1m,
+                isPerishable: isPerishable));
+        }
+
         private CampaignSession BuildCampaign(
             CampaignRuleSet campaignRules)
         {
@@ -311,24 +413,65 @@ namespace Game.Presentation
             CampaignRuleSet campaignRules)
         {
             _worldEconomy = new WorldEconomyState();
-            var region = new RegionId(regionId);
+            var availableResources = new List<ResourceId>();
+            foreach (ResourceDefinition definition in _catalog.GetAll())
+                availableResources.Add(definition.Id);
 
-            foreach (var definition in _catalog.GetAll())
+            WorldGenerationSettings generationSettings =
+                simulationSettings != null
+                    ? simulationSettings.CreateWorldGenerationSettings()
+                    : new WorldGenerationSettings();
+            int seed = simulationSettings != null
+                ? simulationSettings.WorldSeed
+                : 12345;
+            ProceduralWorldState generatedWorld =
+                new ProceduralWorldGenerator().Generate(
+                    seed,
+                    regionId,
+                    generationSettings,
+                    availableResources);
+            _autonomousWorldState = new AutonomousWorldState(
+                generatedWorld,
+                new PlayerCharacterState(
+                    "player_agent",
+                    "플레이어",
+                    _playerCampaignState.Company.Id,
+                    generatedWorld.Regions[0].Id));
+
+            decimal defaultStock = simulationSettings != null
+                ? simulationSettings.InitialMarketStock
+                : (decimal)initialMarketStock;
+            for (int i = 0; i < generatedWorld.EconomySeeds.Count; i++)
             {
-                decimal baseDemand = definition.Id.Value == "food"
-                    ? 100m
-                    : 60m;
-                decimal baseSupply = definition.Id.Value == "iron"
-                    ? 80m
-                    : 70m;
+                RegionalEconomySeed economy =
+                    generatedWorld.EconomySeeds[i];
+                if (!_catalog.TryGet(economy.ResourceId, out var definition))
+                    continue;
 
+                decimal baselineSupply = definition.Id.Value == "food"
+                    ? 22m
+                    : 14m;
+                decimal baselineDemand = definition.Id.Value == "food"
+                    ? 32m
+                    : 18m;
+                decimal initialPrice = definition.BasePrice * Math.Clamp(
+                    economy.DemandMultiplier /
+                    Math.Max(0.10m, economy.SupplyMultiplier),
+                    0.75m,
+                    1.35m);
+                var marketState = new ResourceMarketState(
+                    definition.Id,
+                    initialPrice,
+                    defaultStock * economy.StockMultiplier);
                 _worldEconomy.RegisterMarket(new MarketRuntimeState(
-                    region,
+                    economy.RegionId,
                     definition,
-                    _states[definition.Id],
-                    baseSupply,
-                    baseDemand));
+                    marketState,
+                    baselineSupply * economy.SupplyMultiplier,
+                    baselineDemand * economy.DemandMultiplier));
             }
+
+            RegisterGeneratedTradeRoutes(generatedWorld);
 
             RecipeDefinition starterRecipe = CreateStarterRecipe();
 
@@ -338,10 +481,12 @@ namespace Game.Presentation
             {
                 CampaignParticipantState participant =
                     _campaignSession.State.Participants[i];
+                RegionId companyRegion = generatedWorld.Regions[
+                    i % generatedWorld.Regions.Count].Id;
                 var warehouse = new Warehouse(
                     new WarehouseId($"warehouse_{participant.Company.Id.Value}"),
                     participant.Company.Id,
-                    region,
+                    companyRegion,
                     (decimal)starterWarehouseCapacity);
 
                 AddStarterInventory(
@@ -371,7 +516,7 @@ namespace Game.Presentation
                         new FactoryId(
                             $"factory_{participant.Company.Id.Value}"),
                         participant.Company.Id,
-                        region,
+                        companyRegion,
                         starterRecipe));
                 }
 
@@ -387,6 +532,18 @@ namespace Game.Presentation
                     5m,
                     0.001m,
                     100000m);
+
+            MilitaryBalanceCatalog balance = militaryBalance != null
+                ? militaryBalance.ToDomain()
+                : MilitaryBalanceCatalog.CreatePrototypeDefaults();
+            _autonomousWorldService =
+                new AutonomousWorldSimulationService(
+                    _autonomousWorldState,
+                    _worldEconomy,
+                    simulationSettings != null
+                        ? simulationSettings.CreateAutonomousWorldTuning()
+                        : new AutonomousWorldTuning(),
+                    balance);
 
             return new WorldEconomyTurnService(
                 _worldEconomy,
@@ -404,7 +561,27 @@ namespace Game.Presentation
                 campaignRules,
                 simulationSettings != null
                     ? simulationSettings.CreateResourceSiteEventSettings()
-                    : new ResourceSiteEventSettings());
+                    : new ResourceSiteEventSettings(),
+                _autonomousWorldService);
+        }
+
+        private void RegisterGeneratedTradeRoutes(
+            ProceduralWorldState world)
+        {
+            for (int i = 0; i < world.Regions.Count; i++)
+            {
+                RegionId origin = world.Regions[i].Id;
+                RegionId destination = world.Regions[
+                    (i + 1) % world.Regions.Count].Id;
+                _worldEconomy.RegisterRoute(new TradeRoute(
+                    $"route_{origin.Value}_{destination.Value}",
+                    origin,
+                    destination,
+                    travelDays: 1 + i % 3,
+                    dailyCapacity: 250m,
+                    baseLossRate: 0.01m + i % 3 * 0.01m,
+                    tollPerUnit: 0.25m));
+            }
         }
 
         private RecipeDefinition CreateStarterRecipe()
@@ -459,30 +636,10 @@ namespace Game.Presentation
         private IReadOnlyList<PhysicalFlow> BuildTurnFlows(
             TurnNumber turn)
         {
+            // 실제 흐름은 WorldEconomyTurnService.PrepareTurn에서 생산,
+            // 자원지, 군대, 이벤트를 모두 합산한다. 이 공급자는 월드
+            // 서비스가 없는 테스트 구성과 인터페이스 호환을 위해 둔다.
             _turnFlowBuffer.Clear();
-            var region = new RegionId(regionId);
-
-            foreach (var definition in _catalog.GetAll())
-            {
-                var state = _states[definition.Id];
-                decimal baseDemand = definition.Id.Value == "food"
-                    ? 100m
-                    : 60m;
-
-                decimal baseSupply = definition.Id.Value == "iron"
-                    ? 80m
-                    : 70m;
-
-                _turnFlowBuffer.Add(new PhysicalFlow(
-                    region,
-                    definition.Id,
-                    definition,
-                    state,
-                    baseSupply,
-                    baseDemand,
-                    0));
-            }
-
             return _turnFlowBuffer;
         }
     }

@@ -1,0 +1,135 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d73746228b3f4cf79d75070281d14b49, type: 3}
+  m_Name: 기본 병종 밸런스
+  m_EditorClassIdentifier:
+  units:
+  - archetype: 0
+    displayName: 검병
+    attack: 1
+    defense: 1
+    mobility: 1
+    morale: 1
+    rangedApproachAttacks: 0
+    rangedAccuracy: 0
+    meleePenalty: 1
+    chargePower: 0.05
+    antiCavalry: 0
+    formationPressure: 0.22
+    formationReliance: 0.1
+    dailyUpkeep: 1
+    rangedSlash: 0
+    rangedPierce: 0
+    rangedBlunt: 0
+    meleeSlash: 0.72
+    meleePierce: 0.22
+    meleeBlunt: 0.06
+  - archetype: 1
+    displayName: 창병
+    attack: 0.9
+    defense: 1.08
+    mobility: 0.88
+    morale: 1.05
+    rangedApproachAttacks: 0
+    rangedAccuracy: 0
+    meleePenalty: 1
+    chargePower: 0.02
+    antiCavalry: 0.75
+    formationPressure: 0.02
+    formationReliance: 0.48
+    dailyUpkeep: 0.95
+    rangedSlash: 0
+    rangedPierce: 0
+    rangedBlunt: 0
+    meleeSlash: 0.12
+    meleePierce: 0.84
+    meleeBlunt: 0.04
+  - archetype: 2
+    displayName: 둔기병
+    attack: 0.92
+    defense: 0.98
+    mobility: 0.82
+    morale: 0.96
+    rangedApproachAttacks: 0
+    rangedAccuracy: 0
+    meleePenalty: 1
+    chargePower: 0.04
+    antiCavalry: 0
+    formationPressure: 0.08
+    formationReliance: 0.08
+    dailyUpkeep: 1.08
+    rangedSlash: 0
+    rangedPierce: 0
+    rangedBlunt: 0
+    meleeSlash: 0.08
+    meleePierce: 0.1
+    meleeBlunt: 0.82
+  - archetype: 3
+    displayName: 궁병
+    attack: 0.9
+    defense: 0.58
+    mobility: 0.92
+    morale: 0.82
+    rangedApproachAttacks: 2
+    rangedAccuracy: 0.72
+    meleePenalty: 0.32
+    chargePower: 0
+    antiCavalry: 0
+    formationPressure: 0
+    formationReliance: 0
+    dailyUpkeep: 1.1
+    rangedSlash: 0.08
+    rangedPierce: 0.88
+    rangedBlunt: 0.04
+    meleeSlash: 0.48
+    meleePierce: 0.42
+    meleeBlunt: 0.1
+  - archetype: 4
+    displayName: 돌팔매병
+    attack: 0.82
+    defense: 0.55
+    mobility: 0.98
+    morale: 0.8
+    rangedApproachAttacks: 1
+    rangedAccuracy: 0.62
+    meleePenalty: 0.38
+    chargePower: 0
+    antiCavalry: 0
+    formationPressure: 0
+    formationReliance: 0
+    dailyUpkeep: 0.82
+    rangedSlash: 0.04
+    rangedPierce: 0.08
+    rangedBlunt: 0.88
+    meleeSlash: 0.12
+    meleePierce: 0.08
+    meleeBlunt: 0.8
+  - archetype: 5
+    displayName: 기마병
+    attack: 1.04
+    defense: 0.9
+    mobility: 1.75
+    morale: 1.05
+    rangedApproachAttacks: 0
+    rangedAccuracy: 0
+    meleePenalty: 1
+    chargePower: 0.9
+    antiCavalry: 0
+    formationPressure: 0.12
+    formationReliance: 0.04
+    dailyUpkeep: 2.1
+    rangedSlash: 0
+    rangedPierce: 0
+    rangedBlunt: 0
+    meleeSlash: 0.48
+    meleePierce: 0.38
+    meleeBlunt: 0.14

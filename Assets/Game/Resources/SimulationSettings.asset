@@ -1,0 +1,81 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 20c316dfcf034261b848d84d45a9a601, type: 3}
+  m_Name: 기본 시뮬레이션 설정
+  m_EditorClassIdentifier:
+  initialMarketStock: 1000
+  targetStockDays: 14
+  priceElasticity: 0.5
+  stockWeight: 0.2
+  tradeWeight: 0.1
+  meanReversion: 0.05
+  maxDailyPriceChange: 0.15
+  maxOrdersPerTurn: 10000
+  maxActionPoints: 5
+  daysPerTurn: 1
+  turnsPerFrame: 4
+  aiCompaniesPerBatch: 100
+  aiActionsPerCompany: 2
+  maxCampaignTurns: 30
+  dominanceCheckStartTurn: 15
+  dominanceMultiplier: 3
+  dominanceRequiredTurns: 2
+  recentProfitMultiplier: 5
+  factoryAssetValue: 10000
+  warehouseAssetValue: 5000
+  vehicleAssetValue: 2000
+  factoryDailyCost: 100
+  warehouseDailyCost: 30
+  vehicleDailyCost: 20
+  employeeDailyWage: 5
+  dailyInterestRate: 0.001
+  bankruptcyDebtLimit: 100000
+  resourceSiteSpawnIntervalTurns: 5
+  resourceSiteInitialOutput: 100
+  resourceSiteMinimumOutput: 20
+  resourceSiteDeclineRatePerTurn: 0.1
+  resourceSiteResourceIds:
+  - iron
+  - coal
+  - wood
+  - oil
+  worldSeed: 12345
+  generatedRegionCount: 6
+  generatedFactionCount: 3
+  generatedSettlementCount: 5
+  generatedNpcCount: 12
+  initialResourceSiteCount: 8
+  minimumRegionPopulation: 800
+  maximumRegionPopulation: 8000
+  initialResourceReserve: 12000
+  generatedSiteOutput: 85
+  generatedSiteMinimumOutput: 12
+  generatedSiteDeclineRate: 0.015
+  randomEventChancePerTurn: 0.28
+  causalShortageThreshold: 0.2
+  npcAutoResolveDelayTurns: 3
+  npcBaseSuccessChance: 0.35
+  playerInterventionEfficiency: 0.2
+  playerBaseMissionReward: 2500
+  playerReputationReward: 3
+  eventProductionPenalty: 0.55
+  bountifulProductionBonus: 1.3
+  newVeinReserveBonus: 3000
+  maxCausalEventsPerTurn: 3
+  repeatEventCooldownTurns: 3
+  initialArmySoldiersPerFaction: 180
+  soldierDailyWage: 0.8
+  mobilizationCostPerSoldier: 0.5
+  distanceSupplyCostPerSoldier: 0.02
+  militaryFoodDemandPerSoldier: 0.03
+  militaryEquipmentDemandPerSoldier: 0.004
+  militaryMedicineDemandPerSoldier: 0.001

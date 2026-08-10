@@ -12,6 +12,7 @@ using Game.Domain.Common;
 using Game.Domain.Economy;
 using Game.Domain.Logistics;
 using Game.Domain.Market;
+using Game.Domain.Military;
 using Game.Domain.Inventory;
 using Game.Domain.Production;
 using Game.Domain.Resources;
@@ -789,6 +790,51 @@ namespace Game.Tests
         }
 
         [Test]
+        public void Market_PhysicalFlowChangesStockAndRecordsRealShortage()
+        {
+            var region = new RegionId("region");
+            ResourceDefinition iron = CreateResource("iron", 100m);
+            var state = new ResourceMarketState(iron.Id, 100m, 10m);
+            var market = new MarketManager(
+                new SupplyDemandLedger(new MarketTuning()),
+                new PriceCalculator());
+
+            market.ProcessMarketPhase(
+                new GameDay(0),
+                new[]
+                {
+                    new PhysicalFlow(
+                        region,
+                        iron.Id,
+                        iron,
+                        state,
+                        supply: 5m,
+                        demand: 12m,
+                        marketStockChange: 0m)
+                });
+
+            Assert.That(state.MarketStock, Is.EqualTo(3m));
+            Assert.That(state.UnmetDemand, Is.EqualTo(0m));
+
+            market.ProcessMarketPhase(
+                new GameDay(1),
+                new[]
+                {
+                    new PhysicalFlow(
+                        region,
+                        iron.Id,
+                        iron,
+                        state,
+                        supply: 0m,
+                        demand: 10m,
+                        marketStockChange: 0m)
+                });
+
+            Assert.That(state.MarketStock, Is.EqualTo(0m));
+            Assert.That(state.UnmetDemand, Is.EqualTo(7m));
+        }
+
+        [Test]
         public void CompanyAI_SubmitsDeterministicSellOrderFromMarketSurplus()
         {
             var region = new RegionId("region");
@@ -1216,6 +1262,143 @@ namespace Game.Tests
             Assert.That(site.GetOutput(new TurnNumber(7)), Is.EqualTo(25m));
             Assert.That(site.GetOutput(new TurnNumber(8)), Is.EqualTo(20m));
             Assert.That(site.GetOutput(new TurnNumber(30)), Is.EqualTo(20m));
+        }
+
+        [Test]
+        public void ProceduralWorld_SameSeedRecreatesInitialConditions()
+        {
+            var resources = new[]
+            {
+                new ResourceId("food"),
+                new ResourceId("wood"),
+                new ResourceId("iron"),
+                new ResourceId("coal")
+            };
+            var settings = new WorldGenerationSettings(
+                regionCount: 6,
+                factionCount: 3,
+                settlementCount: 5,
+                npcCount: 12,
+                initialResourceSiteCount: 8);
+            var generator = new ProceduralWorldGenerator();
+
+            ProceduralWorldState first = generator.Generate(
+                12345,
+                "world",
+                settings,
+                resources);
+            ProceduralWorldState second = generator.Generate(
+                12345,
+                "world",
+                settings,
+                resources);
+
+            Assert.That(first.Regions.Count, Is.EqualTo(6));
+            Assert.That(first.Factions.Count, Is.EqualTo(3));
+            Assert.That(first.Npcs.Count, Is.EqualTo(12));
+            Assert.That(first.ResourceSiteSeeds.Count, Is.EqualTo(8));
+            Assert.That(first.Regions[0].Terrain,
+                Is.EqualTo(second.Regions[0].Terrain));
+            Assert.That(first.Relations[0].Score,
+                Is.EqualTo(second.Relations[0].Score));
+        }
+
+        [Test]
+        public void ResourceExtraction_UsesReserveAndSupportsDeepDevelopment()
+        {
+            var site = new ResourceExtractionSite(
+                "deep_iron",
+                new RegionId("mountain"),
+                new ResourceId("iron"),
+                new TurnNumber(1),
+                100m,
+                20m,
+                0.10m,
+                1000m,
+                1m,
+                100m,
+                100m,
+                "faction",
+                ExtractionMethod.Surface);
+
+            decimal initialReserve = site.RemainingReserve;
+            site.Extract(new TurnNumber(1));
+            Assert.That(site.RemainingReserve, Is.LessThan(initialReserve));
+
+            decimal depletedReserve = site.RemainingReserve;
+            site.DevelopDeepLayer(500m, 0.15m);
+            Assert.That(site.RemainingReserve,
+                Is.EqualTo(depletedReserve + 500m));
+            Assert.That(site.Method, Is.EqualTo(ExtractionMethod.DeepMining));
+            Assert.That(site.ExtractionEfficiency, Is.EqualTo(1.15m));
+        }
+
+        [Test]
+        public void Military_RangedApproachArmorAndRecruitDilutionAreApplied()
+        {
+            var catalog = MilitaryBalanceCatalog.CreatePrototypeDefaults();
+            var archer = new MilitaryUnit(
+                "archer",
+                "attacker",
+                catalog.Get(UnitArchetype.Archer),
+                new EquipmentLoadout(
+                    "light",
+                    "경장비",
+                    ArmorProfile.Light),
+                100,
+                averageExperience: 80m);
+            decimal experiencedAverage = archer.AverageExperience;
+            archer.Recruit(100);
+
+            Assert.That(
+                archer.AverageExperience,
+                Is.LessThan(experiencedAverage));
+            Assert.That(
+                new DamageProfile(0m, 0m, 1m)
+                    .ResolveAgainst(ArmorProfile.Heavy),
+                Is.GreaterThan(
+                    new DamageProfile(1m, 0m, 0m)
+                        .ResolveAgainst(ArmorProfile.Heavy)));
+            var logistics = new MilitaryLogisticsTuning();
+            Assert.That(
+                logistics.GetReplacementSpeed(1m),
+                Is.GreaterThan(logistics.GetReplacementSpeed(0m)));
+
+            var attackers = new ArmyState(
+                "attackers",
+                "attacker",
+                new RegionId("field"));
+            attackers.AddUnit(archer);
+            var defenders = new ArmyState(
+                "defenders",
+                "defender",
+                new RegionId("field"));
+            defenders.AddUnit(new MilitaryUnit(
+                "spear",
+                "defender",
+                catalog.Get(UnitArchetype.Spearman),
+                new EquipmentLoadout(
+                    "heavy",
+                    "중장비",
+                    ArmorProfile.Heavy),
+                180));
+
+            BattleReport report = new BattleResolver(
+                logistics).Resolve(
+                    attackers,
+                    defenders,
+                    77);
+            bool sawRangedApproach = false;
+            bool sawMelee = false;
+            for (int i = 0; i < report.Phases.Count; i++)
+            {
+                sawRangedApproach |= report.Phases[i].Phase ==
+                    BattlePhase.RangedApproach;
+                sawMelee |= report.Phases[i].Phase == BattlePhase.Melee;
+            }
+
+            Assert.That(sawRangedApproach, Is.True);
+            Assert.That(sawMelee, Is.True);
         }
 
         [Test]

@@ -8,6 +8,7 @@ using Game.Domain.Logistics;
 using Game.Domain.Market;
 using Game.Domain.Production;
 using Game.Domain.Resources;
+using Game.Domain.World;
 
 namespace Game.Application.World
 {
@@ -65,6 +66,7 @@ namespace Game.Application.World
         public decimal AvailablePower { get; set; }
         internal decimal StartingCash { get; set; }
         internal decimal StartingDebt { get; set; }
+        internal int OperatingFactoryCountThisTurn { get; set; }
 
         public CompanyEconomyRuntime(
             CampaignParticipantState campaignState,
@@ -289,13 +291,15 @@ namespace Game.Application.World
         public IReadOnlyList<TradeSettlementRecord> Trades { get; }
         public IReadOnlyList<CompanyFinanceTurnRecord> Finances { get; }
         public ResourceSiteTurnReport ResourceSites { get; }
+        public AutonomousWorldTurnReport AutonomousWorld { get; }
 
         public WorldTurnReport(
             IReadOnlyList<FactoryTurnRecord> production,
             IReadOnlyList<ShipmentArrival> arrivals,
             IReadOnlyList<TradeSettlementRecord> trades,
             IReadOnlyList<CompanyFinanceTurnRecord> finances,
-            ResourceSiteTurnReport resourceSites = null)
+            ResourceSiteTurnReport resourceSites = null,
+            AutonomousWorldTurnReport autonomousWorld = null)
         {
             Production = production ?? Array.Empty<FactoryTurnRecord>();
             Arrivals = arrivals ?? Array.Empty<ShipmentArrival>();
@@ -303,6 +307,8 @@ namespace Game.Application.World
             Finances = finances ??
                 Array.Empty<CompanyFinanceTurnRecord>();
             ResourceSites = resourceSites ?? ResourceSiteTurnReport.Empty;
+            AutonomousWorld = autonomousWorld ??
+                AutonomousWorldTurnReport.Empty;
         }
     }
 
@@ -324,6 +330,7 @@ namespace Game.Application.World
             new EconomicPowerCalculator();
         private readonly CampaignRuleSet _campaignRules;
         private readonly ResourceSiteEventSystem _resourceSiteEvents;
+        private readonly IAutonomousWorldTurnService _autonomousWorld;
         private readonly Dictionary<(RegionId, ResourceId), FlowAccumulator>
             _flowByMarket =
                 new Dictionary<(RegionId, ResourceId), FlowAccumulator>();
@@ -340,12 +347,15 @@ namespace Game.Application.World
         private bool _turnPrepared;
         private ResourceSiteTurnReport _resourceSiteReport =
             ResourceSiteTurnReport.Empty;
+        private AutonomousWorldTurnReport _autonomousWorldReport =
+            AutonomousWorldTurnReport.Empty;
 
         public WorldEconomyTurnService(
             WorldEconomyState world,
             WorldEconomyTuning tuning,
             CampaignRuleSet campaignRules,
-            ResourceSiteEventSettings resourceSiteSettings = null)
+            ResourceSiteEventSettings resourceSiteSettings = null,
+            IAutonomousWorldTurnService autonomousWorld = null)
         {
             _world = world ??
                 throw new ArgumentNullException(nameof(world));
@@ -356,6 +366,7 @@ namespace Game.Application.World
             _resourceSiteEvents = new ResourceSiteEventSystem(
                 _world,
                 resourceSiteSettings ?? new ResourceSiteEventSettings());
+            _autonomousWorld = autonomousWorld;
         }
 
         public IReadOnlyList<PhysicalFlow> PrepareTurn(
@@ -375,7 +386,12 @@ namespace Game.Application.World
             _tradeBuffer.Clear();
             _financeBuffer.Clear();
             BuildBaseFlows();
+            _autonomousWorldReport = _autonomousWorld?.PrepareTurn(
+                turn,
+                calendarDay) ?? AutonomousWorldTurnReport.Empty;
+            AddAutonomousWorldFlows(_autonomousWorldReport);
             _resourceSiteReport = _resourceSiteEvents.ProcessTurn(turn);
+            _autonomousWorld?.SynchronizeResourceSites();
             AddResourceSiteSupply(_resourceSiteReport);
 
             for (int i = 0; i < _world.Companies.Count; i++)
@@ -383,6 +399,7 @@ namespace Game.Application.World
                 var company = _world.Companies[i];
                 company.StartingCash = company.Company.Cash;
                 company.StartingDebt = company.Company.Debt;
+                company.OperatingFactoryCountThisTurn = 0;
 
                 if (company.CampaignState.IsEliminated)
                     continue;
@@ -417,6 +434,11 @@ namespace Game.Application.World
             for (int i = 0; i < _world.Routes.Count; i++)
                 _world.Routes[i].BeginDay();
 
+            _autonomousWorld?.CompleteTurn(
+                turn,
+                calendarDay,
+                marketReport);
+
             _turnPrepared = false;
 
             return new WorldTurnReport(
@@ -424,7 +446,27 @@ namespace Game.Application.World
                 new List<ShipmentArrival>(_arrivalBuffer),
                 new List<TradeSettlementRecord>(_tradeBuffer),
                 new List<CompanyFinanceTurnRecord>(_financeBuffer),
-                _resourceSiteReport);
+                _resourceSiteReport,
+                _autonomousWorldReport);
+        }
+
+        private void AddAutonomousWorldFlows(
+            AutonomousWorldTurnReport report)
+        {
+            for (int i = 0; i < report.Flows.Count; i++)
+            {
+                WorldFlowContribution contribution = report.Flows[i];
+                if (!_flowByMarket.TryGetValue(
+                    (contribution.RegionId, contribution.ResourceId),
+                    out var flow))
+                {
+                    continue;
+                }
+
+                flow.Supply += contribution.Supply;
+                flow.Demand += contribution.Demand;
+                flow.StockChange += contribution.MarketStockChange;
+            }
         }
 
         private void AddResourceSiteSupply(
@@ -477,6 +519,8 @@ namespace Game.Application.World
 
                 if (!result.Produced)
                     continue;
+
+                company.OperatingFactoryCountThisTurn++;
 
                 decimal cycles = factory.Efficiency /
                     factory.Recipe.DaysPerCycle;
@@ -673,7 +717,7 @@ namespace Game.Application.World
                 return;
 
             var counts = new DailyOperatingCosts(
-                runtime.Factories.Count,
+                runtime.OperatingFactoryCountThisTurn,
                 1,
                 runtime.VehicleCount,
                 runtime.EmployeeCount);
