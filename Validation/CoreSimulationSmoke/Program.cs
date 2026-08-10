@@ -9,6 +9,33 @@ using Game.Domain.World;
 
 Console.OutputEncoding = Encoding.UTF8;
 
+var gridGenerator = new GridMapLayoutGenerator();
+var playerMapStart = new GridCoordinate(4, 24);
+GridMapLayout wrappedMap = gridGenerator.Generate(
+    80,
+    48,
+    160,
+    12345,
+    playerMapStart,
+    new[]
+    {
+        new GridCoordinate(44, 23),
+        new GridCoordinate(30, 32),
+        new GridCoordinate(57, 16)
+    },
+    true);
+Check(wrappedMap.Width == 80 && wrappedMap.Height == 48,
+    "대형 80×48 월드 생성");
+Check(wrappedMap.Move(new GridCoordinate(79, 10), 1, 0).Equals(
+      new GridCoordinate(0, 10)),
+    "동쪽 끝에서 서쪽 끝으로 래핑");
+Check(wrappedMap.ManhattanDistance(
+          new GridCoordinate(0, 10),
+          new GridCoordinate(79, 10)) == 1,
+    "가로 래핑 최단 거리");
+Check(wrappedMap.Mines.All(x => wrappedMap.IsLand(x.Coordinate)),
+    "광산은 육지에만 배치");
+
 var resources = new List<ResourceId>
 {
     new ResourceId("food"),

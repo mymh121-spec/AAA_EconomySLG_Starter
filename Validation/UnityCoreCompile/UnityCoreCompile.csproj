@@ -4,6 +4,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>ENABLE_LEGACY_INPUT_MANAGER</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\Assets\Game\Scripts\Domain\**\*.cs"
@@ -18,8 +19,18 @@
              Link="Shared\Presentation\TurnReportKoreanFormatter.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\CampaignResultKoreanFormatter.cs"
              Link="Shared\Presentation\CampaignResultKoreanFormatter.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\StarterMapController.cs"
+             Link="Shared\Presentation\StarterMapController.cs" />
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

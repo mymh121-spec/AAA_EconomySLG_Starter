@@ -519,7 +519,7 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
-            // 게임 중에는 전체 화면 UI를 투명하게 하여 15x15 지도가
+            // 게임 중에는 전체 화면 UI를 투명하게 하여 대형 평면 월드가
             // 그대로 보이고, 조작 카드만 좌측 상단 HUD로 남는다.
             _uiRoot.style.backgroundColor = Color.clear;
             _uiRoot.style.alignItems = Align.FlexStart;

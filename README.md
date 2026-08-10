@@ -15,7 +15,7 @@ Unity C# starter architecture for an economic simulation + SLG game.
 - Shipment routes, technology research, company operating costs, and turn performance metrics.
 - A simulation settings asset and EditMode tests for core economic invariants.
 - A 30-turn campaign with bankruptcy, capital destruction, economic dominance, and final ranking outcomes.
-- A deterministic 15×15 starter battlefield with one player base, three AI opponent bases, and protected company start tiles.
+- A Civilization-scale 80×48 flat world with horizontal globe wrapping, one player base, three AI opponent bases, biomes, and protected company start tiles.
 - Two readable mine types: pickaxe-marked industrial mines and coin-marked gold mines.
 - A Korean single-player final-result view that resets both simulation state and the map after confirmation.
 - An integrated world turn that moves factory inputs and outputs, warehouse stock, trade cash, operating costs, debt, and economic power through real domain objects.
@@ -41,7 +41,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - Entering Play Mode opens a Korean `1인이서 하기` / `여러 명이서 하기` selection screen before the map or mode-specific assets are created.
 - The common map and selected mode service are created only after the player chooses a mode.
 - Single-player activates the local simulation and AI companies without a server.
-- Single-player creates a 15×15 map after selection. The player starts at `(0,0)` and three AI opponents occupy the other corners.
+- Single-player creates an 80×48 flat world after selection. Use WASD or arrow keys to pan and the mouse wheel to zoom; moving east or west continuously wraps around the world while the polar north/south edges remain bounded.
 - Clicking a map tile reports its coordinates, content, and available interaction category in the Korean HUD.
 - Multiplayer asks for a server endpoint and runtime access token, then uses the authoritative PvP server.
 - Returning to mode selection disconnects multiplayer and prevents both simulation paths from running together.
@@ -64,6 +64,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - See `PVP_PREPARATION_KO.md` for the authoritative-server protocol and remaining network work.
 - See `UNITY_6_3_MIGRATION_KO.md` for the editor migration status and validation procedure.
 - See `PERFORMANCE_GUIDE_KO.md` for scale targets and profiling rules.
+- See `WORLD_MAP_RULES_KO.md` for the 80×48 flat-world, horizontal wrapping, controls, and PvP coordinate rules.
 
 ## Architecture
 

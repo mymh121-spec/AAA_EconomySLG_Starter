@@ -24,27 +24,32 @@ namespace Game.Tests
     public sealed class EconomyDomainTests
     {
         [Test]
-        public void GridMapLayout_UsesFifteenByFifteenAndProtectsCompanyStarts()
+        public void GridMapLayout_UsesLargeWrappedWorldAndProtectsCompanyStarts()
         {
             var generator = new GridMapLayoutGenerator();
-            var playerStart = new GridCoordinate(0, 0);
+            var playerStart = new GridCoordinate(4, 24);
             var opponentStarts = new[]
             {
-                new GridCoordinate(14, 14),
-                new GridCoordinate(0, 14),
-                new GridCoordinate(14, 0)
+                new GridCoordinate(44, 23),
+                new GridCoordinate(30, 32),
+                new GridCoordinate(57, 16)
             };
             GridMapLayout layout = generator.Generate(
-                15,
-                28,
+                80,
+                48,
+                160,
                 12345,
                 playerStart,
-                opponentStarts);
+                opponentStarts,
+                true);
 
-            Assert.That(layout.Size, Is.EqualTo(15));
+            Assert.That(layout.Width, Is.EqualTo(80));
+            Assert.That(layout.Height, Is.EqualTo(48));
+            Assert.That(layout.WrapHorizontally, Is.True);
+            Assert.That(layout.Terrain.Count, Is.EqualTo(80 * 48));
             Assert.That(layout.PlayerStart, Is.EqualTo(playerStart));
             Assert.That(layout.OpponentStarts.Count, Is.EqualTo(3));
-            Assert.That(layout.Mines.Count, Is.EqualTo(28));
+            Assert.That(layout.Mines.Count, Is.EqualTo(160));
 
             var uniqueCoordinates = new HashSet<GridCoordinate>();
             for (int i = 0; i < layout.Mines.Count; i++)
@@ -66,26 +71,32 @@ namespace Game.Tests
                 Assert.That(
                     layout.Mines[i].Kind,
                     Is.AnyOf(MineKind.Normal, MineKind.Gold));
+                Assert.That(
+                    layout.GetTerrain(layout.Mines[i].Coordinate),
+                    Is.Not.EqualTo(GridTerrainKind.Ocean));
             }
 
-            GridMapLayout allAvailableTiles = generator.Generate(
-                15,
-                221,
-                54321,
-                playerStart,
-                opponentStarts);
-            bool centerCanContainMine = false;
-            for (int i = 0; i < allAvailableTiles.Mines.Count; i++)
-            {
-                if (allAvailableTiles.Mines[i].Coordinate.Equals(
-                    new GridCoordinate(7, 7)))
-                {
-                    centerCanContainMine = true;
-                    break;
-                }
-            }
-
-            Assert.That(centerCanContainMine, Is.True);
+            Assert.That(layout.IsLand(playerStart), Is.True);
+            Assert.That(layout.Move(new GridCoordinate(79, 10), 1, 0),
+                Is.EqualTo(new GridCoordinate(0, 10)));
+            Assert.That(layout.Move(new GridCoordinate(0, 10), -1, 0),
+                Is.EqualTo(new GridCoordinate(79, 10)));
+            Assert.That(
+                layout.ManhattanDistance(
+                    new GridCoordinate(0, 10),
+                    new GridCoordinate(79, 10)),
+                Is.EqualTo(1));
+            Assert.That(
+                layout.TryNormalize(
+                    new GridCoordinate(80, 10),
+                    out GridCoordinate wrapped),
+                Is.True);
+            Assert.That(wrapped, Is.EqualTo(new GridCoordinate(0, 10)));
+            Assert.That(
+                layout.TryNormalize(
+                    new GridCoordinate(10, -1),
+                    out _),
+                Is.False);
         }
 
         [Test]
