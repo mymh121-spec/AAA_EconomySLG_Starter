@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Assets\Game\Scripts\Domain\**\*.cs"
+             Link="Shared\Domain\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Game\Scripts\Application\**\*.cs"
+             Link="Shared\Application\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

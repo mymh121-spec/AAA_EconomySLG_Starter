@@ -1,0 +1,180 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e23b9c0c0ce4f26a2c11bd4c2d1e501, type: 3}
+  m_Name: 한국어 문자열
+  m_EditorClassIdentifier:
+  entries:
+  - key: ui.next_day
+    korean: 다음 날
+    english: Next Day
+  - key: ui.end_turn
+    korean: 턴 종료
+    english: End Turn
+  - key: ui.turn_format
+    korean: '{0}턴'
+    english: 'Turn {0}'
+  - key: ui.action_points
+    korean: 행동력
+    english: Action Points
+  - key: ui.remaining_action_points
+    korean: 남은 행동력
+    english: Remaining Action Points
+  - key: ui.planning_phase
+    korean: 계획 단계
+    english: Planning Phase
+  - key: ui.resolution_phase
+    korean: 정산 단계
+    english: Resolution Phase
+  - key: ui.cancel_last_action
+    korean: 마지막 행동 취소
+    english: Cancel Last Action
+  - key: ui.market
+    korean: 시장
+    english: Market
+  - key: ui.market_price
+    korean: 시장 가격
+    english: Market Price
+  - key: ui.supply
+    korean: 공급
+    english: Supply
+  - key: ui.demand
+    korean: 수요
+    english: Demand
+  - key: ui.market_stock
+    korean: 시장 재고
+    english: Market Stock
+  - key: ui.buy
+    korean: 구매
+    english: Buy
+  - key: ui.sell
+    korean: 판매
+    english: Sell
+  - key: ui.company
+    korean: 회사
+    english: Company
+  - key: ui.factory
+    korean: 공장
+    english: Factory
+  - key: ui.warehouse
+    korean: 창고
+    english: Warehouse
+  - key: ui.production
+    korean: 생산
+    english: Production
+  - key: ui.consumption
+    korean: 소비
+    english: Consumption
+  - key: ui.transport
+    korean: 운송
+    english: Transport
+  - key: ui.mission
+    korean: 미션
+    english: Mission
+  - key: ui.research
+    korean: 연구
+    english: Research
+  - key: ui.cash
+    korean: 보유금
+    english: Cash
+  - key: ui.success
+    korean: 성공
+    english: Success
+  - key: ui.failed
+    korean: 실패
+    english: Failed
+  - key: ui.shortage
+    korean: 자원 부족
+    english: Shortage
+  - key: ui.operating
+    korean: 가동 중
+    english: Operating
+  - key: ui.day_format
+    korean: '{0}일차'
+    english: 'Day {0}'
+  - key: ui.logistics
+    korean: 물류
+    english: Logistics
+  - key: ui.shipment
+    korean: 운송 화물
+    english: Shipment
+  - key: ui.in_transit
+    korean: 운송 중
+    english: In Transit
+  - key: ui.arrived
+    korean: 도착
+    english: Arrived
+  - key: ui.technology
+    korean: 기술
+    english: Technology
+  - key: ui.research_progress
+    korean: 연구 진행도
+    english: Research Progress
+  - key: ui.operating_cost
+    korean: 운영비
+    english: Operating Cost
+  - key: ui.debt
+    korean: 부채
+    english: Debt
+  - key: ui.bankrupt
+    korean: 파산
+    english: Bankrupt
+  - key: ui.tick_time
+    korean: 처리 시간
+    english: Tick Time
+  - key: ui.turn_time
+    korean: 턴 처리 시간
+    english: Turn Processing Time
+  - key: ui.campaign
+    korean: 캠페인
+    english: Campaign
+  - key: ui.economic_power
+    korean: 경제력
+    english: Economic Power
+  - key: ui.economic_dominance
+    korean: 경제 패권
+    english: Economic Dominance
+  - key: ui.victory
+    korean: 승리
+    english: Victory
+  - key: ui.defeat
+    korean: 패배
+    english: Defeat
+  - key: ui.draw
+    korean: 무승부
+    english: Draw
+  - key: ui.capital_destroyed
+    korean: 수도 멸망
+    english: Capital Destroyed
+  - key: ui.campaign_finished
+    korean: 캠페인 종료
+    english: Campaign Finished
+  - key: ui.victory_evaluation
+    korean: 승패 판정
+    english: Victory Evaluation
+  - key: ui.pvp
+    korean: 온라인 대전
+    english: Online Match
+  - key: ui.pvp_planning
+    korean: 대전 명령 계획
+    english: Match Planning
+  - key: ui.pvp_ready
+    korean: 준비 완료
+    english: Ready
+  - key: ui.pvp_waiting_opponent
+    korean: 상대 준비 대기 중
+    english: Waiting for Opponent
+  - key: ui.pvp_reconnecting
+    korean: 대전 재접속 중
+    english: Reconnecting
+  - key: ui.pvp_resolving
+    korean: 서버 턴 정산 중
+    english: Server Resolving Turn

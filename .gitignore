@@ -1,0 +1,45 @@
+# Unity generated project data
+/Library/
+/Temp/
+/Logs/
+/UserSettings/
+/MemoryCaptures/
+/Recordings/
+/Build/
+/Builds/
+/obj/
+/*.csproj
+/*.sln
+/*.slnx
+/*.userprefs
+
+# Unity package and editor caches
+/.vs/
+/.vscode/
+/.idea/
+/sysinfo.txt
+
+# Generated server binaries and local runtime state
+/Server/**/bin/
+/Server/**/obj/
+/Server/**/data/
+/Server/**/logs/
+/outputs/
+/.verification/
+/_codex_backup-*/
+
+# Local operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local secrets and machine-specific files
+*.env
+*.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.user
+*.suo
