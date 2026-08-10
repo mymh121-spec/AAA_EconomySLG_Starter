@@ -118,8 +118,9 @@ namespace Game.Tests
                     uniqueCoordinates.Add(layout.Mines[i].Coordinate),
                     Is.True);
                 Assert.That(
-                    layout.Mines[i].Kind,
-                    Is.AnyOf(MineKind.Normal, MineKind.Gold));
+                    layout.Mines[i].Kind == MineKind.Normal ||
+                    layout.Mines[i].Kind == MineKind.Gold,
+                    Is.True);
                 Assert.That(
                     layout.GetTerrain(layout.Mines[i].Coordinate),
                     Is.Not.EqualTo(GridTerrainKind.Ocean));
@@ -194,6 +195,61 @@ namespace Game.Tests
             Assert.That(production.Count, Is.EqualTo(1));
             Assert.That(production[0].NormalMineCount, Is.EqualTo(1));
             Assert.That(production[0].IronAmount, Is.EqualTo(12m));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
+        {
+            var terrain = new GridTerrainKind[3 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                3,
+                2,
+                19,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 100,
+                    maxUnitStamina: 2,
+                    moveStaminaCost: 1,
+                    staminaRecoveryIntervalSteps: 2));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(unit.Archetype, Is.EqualTo(UnitArchetype.Swordsman));
+            Assert.That(unit.ArchetypeDisplayName, Is.EqualTo("검병"));
+            Assert.That(unit.Stamina, Is.EqualTo(2));
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(1, 0),
+                    out _),
+                Is.True);
+            Assert.That(unit.Stamina, Is.EqualTo(1));
+
+            service.AdvanceFixedSteps(1);
+            Assert.That(unit.Stamina, Is.EqualTo(1));
+            service.AdvanceFixedSteps(1);
+            Assert.That(unit.Stamina, Is.EqualTo(2));
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out MapUnitState cavalry,
+                    out _),
+                Is.True);
+            Assert.That(cavalry.ArchetypeDisplayName, Is.EqualTo("기마병"));
         }
 
         [Test]

@@ -42,8 +42,11 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - Entering Play Mode opens a Korean `1인이서 하기` / `여러 명이서 하기` selection screen before the map or mode-specific assets are created.
 - The common map and selected mode service are created only after the player chooses a mode.
 - Single-player activates the local simulation and AI companies without a server.
-- Single-player creates an 80×48 flat world after selection. Use WASD or arrow keys to pan and the mouse wheel to zoom; moving east or west continuously wraps around the world while the polar north/south edges remain bounded.
-- Clicking a map tile reports its coordinates, content, and available interaction category in the Korean HUD.
+- Single-player creates an 80×48 flat world with visible faction castles. Use WASD/arrow keys or drag with the middle mouse button to pan, use the mouse wheel to zoom, press `L` to return to the player faction center, and press `Space` to pause or resume; east/west wraps while north/south remains bounded.
+- A new single-player game starts with 500,000 won and one player unit already selected at headquarters.
+- Map play is real-time: a unit has 10 stamina, movement costs 1 stamina, and 1 stamina regenerates every six in-game hours. Speed buttons affect the clock, movement, capture, AI, and stamina recovery together.
+- Units use the existing six military archetypes: swordsman, spearman, maceman, archer, slinger, and cavalry. The headquarters panel lets the player cycle the unit type before recruitment.
+- Left-clicking selects a tile. Right-clicking opens context actions for troop inspection, missions, movement, mining, and capture. Speed is selected with the on-screen 1–5× buttons, while pause/resume also supports `Space`.
 - Multiplayer asks for a server endpoint and runtime access token, then uses the authoritative PvP server.
 - Returning to mode selection disconnects multiplayer and prevents both simulation paths from running together.
 - See `GAME_MODE_SELECTION_KO.md` for the player flow and setup details.
@@ -72,9 +75,9 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 
 `Game.Domain` contains no Unity API. `Game.Application` orchestrates turn resolution. `Game.Data` adapts ScriptableObjects into domain definitions. `Game.Presentation` is intentionally small and should contain the Unity-facing composition root and views.
 
-## Turn flow
+## Real-time flow
 
-The MVP is player-driven turn-based SLG: plan commands, spend action points, press `턴 종료`, resolve player commands, resolve AI, settle production and markets, then show a report. One turn advances one internal calendar day by default. See `TURN_PIPELINE_KO.md` for the rules and extension points.
+The playable map runs continuously. Player and AI map actions use regenerating per-unit stamina rather than daily action points. Production, markets, finance, events, and victory checks are resolved automatically at each in-game midnight, preserving deterministic daily settlement without requiring a turn-end button.
 
 ## Important rule
 

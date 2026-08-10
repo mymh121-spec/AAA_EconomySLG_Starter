@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Game.Application.Session;
 using Game.Application.World;
+using Game.Domain.Military;
 using Game.Domain.World;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -40,14 +41,26 @@ namespace Game.Presentation
         private Label _singleMapActionTitle;
         private Label _singleMapActionFeedback;
         private Button _createUnitButton;
+        private Button _unitTypeButton;
         private Button _selectUnitButton;
+        private Button _inspectUnitButton;
         private Button _moveUnitButton;
+        private VisualElement _mapContextMenu;
+        private Label _mapContextTitle;
+        private Label _mapContextHint;
+        private Button _contextCreateUnitButton;
+        private Button _contextUnitTypeButton;
+        private Button _contextSelectUnitButton;
+        private Button _contextInspectUnitButton;
+        private Button _contextMoveUnitButton;
+        private Button _contextMissionButton;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
         private bool _singlePlayerEventsBound;
         private bool _multiplayerEventsBound;
         private bool _mapEventsBound;
+        private UnitArchetype _pendingUnitArchetype = UnitArchetype.Swordsman;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -78,6 +91,18 @@ namespace Game.Presentation
         {
             BuildUserInterface();
             ShowModeSelection();
+        }
+
+        private void Update()
+        {
+#if ENABLE_LEGACY_INPUT_MANAGER
+            if (_selection.IsSinglePlayer &&
+                singlePlayerSimulation != null &&
+                UnityEngine.Input.GetKeyDown(KeyCode.Space))
+            {
+                ToggleSinglePlayerPause();
+            }
+#endif
         }
 
         private void CaptureExistingModeServices()
@@ -184,6 +209,8 @@ namespace Game.Presentation
                 return;
 
             gameplayMap.CellSelected += HandleMapCellSelected;
+            gameplayMap.PrimaryCellSelected += HideMapContextMenu;
+            gameplayMap.CellActionRequested += HandleMapActionRequested;
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
             gameplayMap.MineCaptured += HandleMineCaptured;
             _mapEventsBound = true;
@@ -253,7 +280,11 @@ namespace Game.Presentation
             BuildSinglePlayerMapActionPanel(_singlePlayerView);
             AddDescription(
                 _singlePlayerView,
-                "시간 진행: 일시정지 또는 1~5배속을 선택하세요. 경제는 게임 내 자정마다 정산됩니다.");
+                "배속은 아래 버튼으로 변경하고 Space로 일시정지/재개합니다. " +
+                "L: 내 세력 중앙, " +
+                "WASD/방향키 또는 가운데 버튼 드래그: 지도 이동, " +
+                "우클릭: 부대 확인·미션·이동·채광/점령 행동. " +
+                "경제는 자정마다 정산됩니다.");
             AddRealtimeSpeedControls(_singlePlayerView);
             AddButton(_singlePlayerView, "모드 선택으로", ShowModeSelection);
             StyleGameplayHud(_singlePlayerView);
@@ -283,6 +314,7 @@ namespace Game.Presentation
             AddButton(_multiplayerView, "연결 종료 후 모드 선택", ShowModeSelection);
             StyleGameplayHud(_multiplayerView);
             RegisterMapInputGuard(_multiplayerView);
+            BuildMapContextMenu(_uiRoot);
         }
 
         private void SelectSinglePlayer()
@@ -512,6 +544,7 @@ namespace Game.Presentation
 
         private void ShowModeSelection()
         {
+            HideMapContextMenu();
             multiplayerSession?.Disconnect();
             SetServiceActive(singlePlayerSimulation, false);
             SetServiceActive(multiplayerSession, false);
@@ -591,11 +624,21 @@ namespace Game.Presentation
                 .Append(singlePlayerSimulation.CurrentTurn.Value)
                 .Append("일 / 총 ")
                 .Append(singlePlayerSimulation.MaxCampaignTurns)
-                .Append("일\n남은 일일 행동력 ")
-                .Append(singlePlayerSimulation.RemainingActionPoints)
-                .Append(" · 예약 명령 ")
-                .Append(singlePlayerSimulation.QueuedCommandCount)
-                .Append("개\n")
+                .Append("일\n보유 자금 ")
+                .Append(singlePlayerSimulation.PlayerCash.ToString("N0"))
+                .Append("원");
+
+            MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+            if (selectedUnit != null)
+            {
+                builder.Append("\n선택 유닛 체력 ")
+                    .Append(selectedUnit.Stamina)
+                    .Append('/')
+                    .Append(selectedUnit.MaxStamina)
+                    .Append(" · 게임 시간 6시간마다 1 회복");
+            }
+
+            builder.Append('\n')
                 .Append(CampaignResultKoreanFormatter.Format(
                     singlePlayerSimulation.CampaignResult));
             _singlePlayerStatus.text = builder.ToString();
@@ -634,11 +677,43 @@ namespace Game.Presentation
             RefreshSinglePlayerMapActions(selection);
         }
 
+        private void HandleMapActionRequested(
+            MapCellSelection selection,
+            Vector2 screenPosition)
+        {
+            if (!_selection.IsSinglePlayer || _mapContextMenu == null)
+                return;
+
+            _mapContextTitle.text =
+                $"{selection.DisplayName} ({selection.Coordinate.X}, " +
+                $"{selection.Coordinate.Y})";
+            _mapContextHint.text = selection.InteractionHint;
+            ConfigureMapActionButtons(
+                selection,
+                _contextCreateUnitButton,
+                _contextSelectUnitButton,
+                _contextMoveUnitButton);
+            SetVisible(
+                _contextUnitTypeButton,
+                selection.Content == MapCellContent.PlayerBase);
+            SetVisible(
+                _contextInspectUnitButton,
+                !string.IsNullOrEmpty(selection.UnitId));
+
+            bool missionTarget = selection.Content == MapCellContent.EnemyBase;
+            SetVisible(_contextMissionButton, missionTarget);
+            _contextMissionButton.SetEnabled(missionTarget);
+
+            PositionMapContextMenu(screenPosition);
+            SetVisible(_mapContextMenu, true);
+        }
+
         private void HandleMapGameplayStateChanged()
         {
             if (!_selection.IsSinglePlayer || gameplayMap == null)
                 return;
 
+            RefreshSinglePlayerStatus();
             if (gameplayMap.CurrentSelection.HasValue)
                 RefreshSinglePlayerMapActions(gameplayMap.CurrentSelection.Value);
         }
@@ -688,25 +763,83 @@ namespace Game.Presentation
                 return;
             }
 
-            if (!singlePlayerSimulation.TryReserveMapAction(
-                "본사 유닛 창설",
-                2,
+            if (!gameplayMap.TryCreatePlayerUnit(
+                _pendingUnitArchetype,
                 out reason))
             {
                 SetMapActionFeedback(reason);
                 return;
             }
 
-            if (!gameplayMap.TryCreatePlayerUnit(out reason))
+            SetMapActionFeedback(
+                $"{MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype)} " +
+                "부대를 창설하고 자동으로 선택했습니다.");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void CyclePendingUnitArchetype()
+        {
+            UnitArchetype[] order =
             {
-                singlePlayerSimulation.CancelLastCommand();
-                SetMapActionFeedback(reason);
+                UnitArchetype.Swordsman,
+                UnitArchetype.Spearman,
+                UnitArchetype.Maceman,
+                UnitArchetype.Archer,
+                UnitArchetype.Slinger,
+                UnitArchetype.Cavalry
+            };
+            int next = 0;
+            for (int i = 0; i < order.Length; i++)
+            {
+                if (order[i] == _pendingUnitArchetype)
+                {
+                    next = (i + 1) % order.Length;
+                    break;
+                }
+            }
+
+            _pendingUnitArchetype = order[next];
+            RefreshUnitTypeButtonLabels();
+        }
+
+        private void RefreshUnitTypeButtonLabels()
+        {
+            string label = "창설 병종: " +
+                MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype) +
+                " · 클릭해 변경";
+            if (_unitTypeButton != null)
+                _unitTypeButton.text = label;
+            if (_contextUnitTypeButton != null)
+                _contextUnitTypeButton.text = label;
+        }
+
+        private void InspectUnitAtCurrentSelection()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            MapUnitState unit = gameplayMap.FindUnitAt(
+                gameplayMap.CurrentSelection.Value.Coordinate);
+            if (unit == null)
+            {
+                SetMapActionFeedback("이 칸에는 확인할 부대가 없습니다.");
                 return;
             }
 
-            SetMapActionFeedback("유닛을 창설하고 자동으로 선택했습니다.");
-            RefreshSinglePlayerStatus();
-            RefreshSelectedMapActions();
+            string owner = string.Equals(
+                unit.OwnerFactionId,
+                "player",
+                StringComparison.Ordinal)
+                ? "플레이어"
+                : "경쟁 세력 " + unit.OwnerFactionId;
+            string movement = unit.Destination.HasValue
+                ? $"이동 중 → {unit.Destination.Value}"
+                : "대기 중";
+            SetMapActionFeedback(
+                $"부대 정보 | {owner} | {unit.ArchetypeDisplayName} | " +
+                $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
+                $"위치 {unit.Coordinate} | {movement}");
         }
 
         private void SelectPlayerUnit()
@@ -747,18 +880,8 @@ namespace Game.Presentation
                 return;
             }
 
-            if (!singlePlayerSimulation.TryReserveMapAction(
-                $"유닛 이동 {destination}",
-                1,
-                out reason))
-            {
-                SetMapActionFeedback(reason);
-                return;
-            }
-
             if (!gameplayMap.TryMoveSelectedPlayerUnit(destination, out reason))
             {
-                singlePlayerSimulation.CancelLastCommand();
                 SetMapActionFeedback(reason);
                 return;
             }
@@ -792,7 +915,45 @@ namespace Game.Presentation
             MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
             _singleMapActionTitle.text = selectedUnit == null
                 ? "지도 행동 · 선택된 유닛 없음"
-                : $"지도 행동 · {selectedUnit.Id} {selectedUnit.Coordinate}";
+                : $"지도 행동 · {selectedUnit.ArchetypeDisplayName} " +
+                  $"{selectedUnit.Id} {selectedUnit.Coordinate} · " +
+                  $"체력 {selectedUnit.Stamina}/{selectedUnit.MaxStamina}";
+
+            ConfigureMapActionButtons(
+                selection,
+                _createUnitButton,
+                _selectUnitButton,
+                _moveUnitButton);
+            bool atPlayerBase =
+                selection.Content == MapCellContent.PlayerBase;
+            bool hasUnit = !string.IsNullOrEmpty(selection.UnitId);
+            SetVisible(_unitTypeButton, atPlayerBase);
+            SetVisible(_inspectUnitButton, hasUnit);
+
+            if (_mapContextMenu != null &&
+                _mapContextMenu.resolvedStyle.display == DisplayStyle.Flex)
+            {
+                ConfigureMapActionButtons(
+                    selection,
+                    _contextCreateUnitButton,
+                    _contextSelectUnitButton,
+                    _contextMoveUnitButton);
+                SetVisible(_contextUnitTypeButton, atPlayerBase);
+                SetVisible(_contextInspectUnitButton, hasUnit);
+            }
+        }
+
+        private void ConfigureMapActionButtons(
+            MapCellSelection selection,
+            Button createButton,
+            Button selectButton,
+            Button moveButton)
+        {
+            if (gameplayMap == null || createButton == null ||
+                selectButton == null || moveButton == null)
+            {
+                return;
+            }
 
             bool atPlayerBase = selection.Content == MapCellContent.PlayerBase;
             bool canCreate = atPlayerBase &&
@@ -803,18 +964,35 @@ namespace Game.Presentation
             bool canMove = gameplayMap.CanMoveSelectedPlayerUnit(
                 selection.Coordinate,
                 out _);
-
-            SetVisible(_createUnitButton, atPlayerBase);
-            _createUnitButton.SetEnabled(canCreate);
-            SetVisible(_selectUnitButton, canSelect);
-            _selectUnitButton.SetEnabled(canSelect);
-            SetVisible(_moveUnitButton, selectedUnit != null && !canSelect);
-            _moveUnitButton.SetEnabled(canMove);
+            bool hasSelectedUnit = gameplayMap.SelectedPlayerUnit != null;
             bool isMine = selection.Content == MapCellContent.NormalMine ||
                           selection.Content == MapCellContent.GoldMine;
-            _moveUnitButton.text = isMine
-                ? "이동 후 광산 점령 · 행동력 1"
-                : "이 칸으로 이동 · 행동력 1";
+
+            SetVisible(createButton, atPlayerBase);
+            createButton.SetEnabled(canCreate);
+            SetVisible(selectButton, canSelect);
+            selectButton.SetEnabled(canSelect);
+            SetVisible(moveButton, hasSelectedUnit && !canSelect);
+            moveButton.SetEnabled(canMove);
+            moveButton.text = isMine
+                ? "채광·점령하러 이동 · 체력 1"
+                : "이 칸으로 이동 · 체력 1";
+        }
+
+        private void ShowSelectedMissionInformation()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            SetMapActionFeedback(
+                $"{selection.DisplayName}: 정찰·봉쇄·공격 미션 대상입니다. " +
+                "유닛을 선택한 뒤 우클릭 메뉴에서 목표 위치로 이동하세요.");
+            if (_mapContextHint != null)
+            {
+                _mapContextHint.text =
+                    "미션 준비: 유닛 선택 → 목표로 이동 → 도착 후 임무 수행";
+            }
         }
 
         private void SetMapActionFeedback(string message)
@@ -918,6 +1096,7 @@ namespace Game.Presentation
             Action clicked)
         {
             var button = new Button(clicked) { text = text };
+            button.focusable = false;
             button.style.height = 52;
             button.style.marginTop = 6;
             button.style.marginBottom = 6;
@@ -948,16 +1127,24 @@ namespace Game.Presentation
             _singleMapActionPanel.Add(_singleMapActionTitle);
 
             _createUnitButton = CreateMapActionButton(
-                "본사에서 유닛 창설 · 행동력 2",
+                "본사에서 유닛 추가 창설",
                 CreatePlayerUnit);
+            _unitTypeButton = CreateMapActionButton(
+                "창설 병종: 검병 · 클릭해 변경",
+                CyclePendingUnitArchetype);
             _selectUnitButton = CreateMapActionButton(
                 "이 칸의 아군 유닛 선택",
                 SelectPlayerUnit);
+            _inspectUnitButton = CreateMapActionButton(
+                "이 칸의 부대 정보 확인",
+                InspectUnitAtCurrentSelection);
             _moveUnitButton = CreateMapActionButton(
-                "이 칸으로 이동 · 행동력 1",
+                "이 칸으로 이동 · 체력 1",
                 MoveSelectedPlayerUnit);
+            _singleMapActionPanel.Add(_unitTypeButton);
             _singleMapActionPanel.Add(_createUnitButton);
             _singleMapActionPanel.Add(_selectUnitButton);
+            _singleMapActionPanel.Add(_inspectUnitButton);
             _singleMapActionPanel.Add(_moveUnitButton);
 
             _singleMapActionFeedback = new Label(
@@ -971,8 +1158,132 @@ namespace Game.Presentation
             parent.Add(_singleMapActionPanel);
 
             SetVisible(_createUnitButton, false);
+            SetVisible(_unitTypeButton, false);
             SetVisible(_selectUnitButton, false);
+            SetVisible(_inspectUnitButton, false);
             SetVisible(_moveUnitButton, false);
+        }
+
+        private void BuildMapContextMenu(VisualElement root)
+        {
+            _mapContextMenu = new VisualElement();
+            _mapContextMenu.name = "map-context-menu";
+            _mapContextMenu.style.position = Position.Absolute;
+            _mapContextMenu.style.width = 320;
+            _mapContextMenu.style.paddingLeft = 14;
+            _mapContextMenu.style.paddingRight = 14;
+            _mapContextMenu.style.paddingTop = 12;
+            _mapContextMenu.style.paddingBottom = 12;
+            _mapContextMenu.style.backgroundColor =
+                new Color(0.035f, 0.065f, 0.105f, 0.98f);
+            _mapContextMenu.style.borderTopWidth = 1;
+            _mapContextMenu.style.borderBottomWidth = 1;
+            _mapContextMenu.style.borderLeftWidth = 1;
+            _mapContextMenu.style.borderRightWidth = 1;
+            Color borderColor = new Color(0.24f, 0.50f, 0.82f, 1f);
+            _mapContextMenu.style.borderTopColor = borderColor;
+            _mapContextMenu.style.borderBottomColor = borderColor;
+            _mapContextMenu.style.borderLeftColor = borderColor;
+            _mapContextMenu.style.borderRightColor = borderColor;
+
+            _mapContextTitle = new Label("지도 행동");
+            _mapContextTitle.style.fontSize = 16;
+            _mapContextTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            _mapContextTitle.style.color = Color.white;
+            _mapContextTitle.style.marginBottom = 5;
+            _mapContextMenu.Add(_mapContextTitle);
+
+            _mapContextHint = new Label();
+            _mapContextHint.style.fontSize = 13;
+            _mapContextHint.style.color = new Color(0.72f, 0.82f, 0.94f);
+            _mapContextHint.style.whiteSpace = WhiteSpace.Normal;
+            _mapContextHint.style.marginBottom = 8;
+            _mapContextMenu.Add(_mapContextHint);
+
+            _contextCreateUnitButton = CreateMapActionButton(
+                "본사에서 유닛 추가 창설",
+                () =>
+                {
+                    CreatePlayerUnit();
+                    HideMapContextMenu();
+                });
+            _contextUnitTypeButton = CreateMapActionButton(
+                "창설 병종: 검병 · 클릭해 변경",
+                CyclePendingUnitArchetype);
+            _contextSelectUnitButton = CreateMapActionButton(
+                "이 칸의 아군 유닛 선택",
+                () =>
+                {
+                    SelectPlayerUnit();
+                    HideMapContextMenu();
+                });
+            _contextInspectUnitButton = CreateMapActionButton(
+                "이 칸의 부대 정보 확인",
+                () =>
+                {
+                    InspectUnitAtCurrentSelection();
+                    HideMapContextMenu();
+                });
+            _contextMoveUnitButton = CreateMapActionButton(
+                "이 칸으로 이동 · 체력 1",
+                () =>
+                {
+                    MoveSelectedPlayerUnit();
+                    HideMapContextMenu();
+                });
+            _contextMissionButton = CreateMapActionButton(
+                "미션 정보 · 정찰 / 봉쇄 / 공격",
+                ShowSelectedMissionInformation);
+            Button closeButton = CreateMapActionButton(
+                "닫기",
+                HideMapContextMenu);
+            closeButton.style.backgroundColor =
+                new Color(0.18f, 0.22f, 0.29f, 1f);
+
+            _mapContextMenu.Add(_contextUnitTypeButton);
+            _mapContextMenu.Add(_contextCreateUnitButton);
+            _mapContextMenu.Add(_contextSelectUnitButton);
+            _mapContextMenu.Add(_contextInspectUnitButton);
+            _mapContextMenu.Add(_contextMoveUnitButton);
+            _mapContextMenu.Add(_contextMissionButton);
+            _mapContextMenu.Add(closeButton);
+            root.Add(_mapContextMenu);
+            RegisterMapInputGuard(_mapContextMenu);
+            SetVisible(_mapContextMenu, false);
+        }
+
+        private void PositionMapContextMenu(Vector2 screenPosition)
+        {
+            if (_uiRoot == null || _mapContextMenu == null)
+                return;
+
+            float rootWidth = _uiRoot.resolvedStyle.width;
+            float rootHeight = _uiRoot.resolvedStyle.height;
+            if (float.IsNaN(rootWidth) || rootWidth <= 0f)
+                rootWidth = Screen.width;
+            if (float.IsNaN(rootHeight) || rootHeight <= 0f)
+                rootHeight = Screen.height;
+
+            float x = screenPosition.x * rootWidth / Mathf.Max(1f, Screen.width);
+            float y = (Screen.height - screenPosition.y) * rootHeight /
+                      Mathf.Max(1f, Screen.height);
+            const float menuWidth = 320f;
+            const float estimatedMenuHeight = 410f;
+            _mapContextMenu.style.left = Mathf.Clamp(
+                x + 10f,
+                10f,
+                Mathf.Max(10f, rootWidth - menuWidth - 10f));
+            _mapContextMenu.style.top = Mathf.Clamp(
+                y + 10f,
+                10f,
+                Mathf.Max(10f, rootHeight - estimatedMenuHeight - 10f));
+        }
+
+        private void HideMapContextMenu()
+        {
+            SetVisible(_mapContextMenu, false);
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = false;
         }
 
         private static Button CreateMapActionButton(
@@ -980,6 +1291,7 @@ namespace Game.Presentation
             Action clicked)
         {
             var button = new Button(clicked) { text = text };
+            button.focusable = false;
             button.style.height = 38;
             button.style.marginTop = 3;
             button.style.marginBottom = 3;
@@ -1014,6 +1326,7 @@ namespace Game.Presentation
             Action clicked)
         {
             var button = new Button(clicked) { text = text };
+            button.focusable = false;
             button.style.height = 42;
             button.style.minWidth = 58;
             button.style.flexGrow = 1;
@@ -1129,6 +1442,8 @@ namespace Game.Presentation
             if (gameplayMap != null && _mapEventsBound)
             {
                 gameplayMap.CellSelected -= HandleMapCellSelected;
+                gameplayMap.PrimaryCellSelected -= HideMapContextMenu;
+                gameplayMap.CellActionRequested -= HandleMapActionRequested;
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;
                 gameplayMap.MineCaptured -= HandleMineCaptured;
                 _mapEventsBound = false;

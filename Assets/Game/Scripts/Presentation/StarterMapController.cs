@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Game.Application.World;
+using Game.Domain.Military;
 using Game.Domain.World;
 using UnityEngine;
 
@@ -78,6 +79,7 @@ namespace Game.Presentation
 
         [Header("카메라")]
         [SerializeField, Min(1f)] private float cameraPanSpeed = 20f;
+        [SerializeField, Min(0.1f)] private float mousePanSensitivity = 1f;
         [SerializeField, Min(1f)] private float minimumZoom = 7f;
         [SerializeField, Min(2f)] private float maximumZoom = 24f;
         [SerializeField, Min(1f)] private float startingZoom = 16f;
@@ -113,6 +115,8 @@ namespace Game.Presentation
         private Material _mapMaterial;
         private Mesh _mapMesh;
         private Vector3 _cameraFocus;
+        private Vector3 _lastMousePosition;
+        private bool _isMousePanning;
         private int _generationSequence;
         private RealtimeMapGameplayService _gameplayService;
         private string _selectedPlayerUnitId = string.Empty;
@@ -125,6 +129,8 @@ namespace Game.Presentation
         public MapUnitState SelectedPlayerUnit =>
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
         public event Action<MapCellSelection> CellSelected;
+        public event Action PrimaryCellSelected;
+        public event Action<MapCellSelection, Vector2> CellActionRequested;
         public event Action GameplayStateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
 
@@ -153,6 +159,12 @@ namespace Game.Presentation
             _cameraFocus.z += vertical;
             ClampAndWrapCameraFocus();
             ApplyCameraTransform();
+        }
+
+        public void FocusPlayerFaction()
+        {
+            if (CurrentLayout != null)
+                FocusCameraOn(CurrentLayout.PlayerStart);
         }
 
         public bool TryGetCoordinate(
@@ -194,11 +206,19 @@ namespace Game.Presentation
 
         public bool TryCreatePlayerUnit(out string reason)
         {
+            return TryCreatePlayerUnit(UnitArchetype.Swordsman, out reason);
+        }
+
+        public bool TryCreatePlayerUnit(
+            UnitArchetype archetype,
+            out string reason)
+        {
             if (!CanCreatePlayerUnit(out reason))
                 return false;
 
             if (!_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
+                archetype,
                 out MapUnitState unit,
                 out reason))
             {
@@ -209,6 +229,11 @@ namespace Game.Presentation
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
             return true;
+        }
+
+        public MapUnitState FindUnitAt(GridCoordinate coordinate)
+        {
+            return _gameplayService?.FindUnitAt(coordinate);
         }
 
         public bool CanSelectPlayerUnitAt(
@@ -377,7 +402,19 @@ namespace Game.Presentation
                 aiFactionIds);
             _gameplayService.StateChanged += HandleGameplayStateChanged;
             _gameplayService.MineCaptured += HandleMineCaptured;
-            _selectedPlayerUnitId = string.Empty;
+
+            if (_gameplayService.TryCreateUnit(
+                _gameplayService.PlayerFactionId,
+                UnitArchetype.Swordsman,
+                out MapUnitState startingUnit,
+                out _))
+            {
+                _selectedPlayerUnitId = startingUnit.Id;
+            }
+            else
+            {
+                _selectedPlayerUnitId = string.Empty;
+            }
         }
 
         private void DetachGameplayService()
@@ -649,7 +686,8 @@ namespace Game.Presentation
             if (unit != null)
             {
                 string ownerName = GetFactionDisplayName(unit.OwnerFactionId);
-                detail += $"\n{ownerName} 유닛 {unit.Id}";
+                detail += $"\n{ownerName} {unit.ArchetypeDisplayName} {unit.Id}" +
+                          $" · 체력 {unit.Stamina}/{unit.MaxStamina}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
             }
@@ -704,18 +742,10 @@ namespace Game.Presentation
 
         private void BuildPlayerStart(GridCoordinate coordinate)
         {
-            ForEachSurfaceCopy(
-                xOffset => CreateBlock(
-                    $"플레이어 본사_{coordinate.X}_{coordinate.Y}",
-                    ToWorldPosition(coordinate, xOffset) +
-                    new Vector3(0f, 0.48f, 0f),
-                    new Vector3(
-                        tileSize * 0.76f,
-                        0.82f,
-                        tileSize * 0.76f),
-                    PlayerStartColor,
-                    _generatedRoot,
-                    false));
+            ForEachSurfaceCopy(xOffset => CreateCastle(
+                $"플레이어 성_{coordinate.X}_{coordinate.Y}",
+                ToWorldPosition(coordinate, xOffset),
+                PlayerStartColor));
         }
 
         private void BuildOpponentStarts(
@@ -726,31 +756,66 @@ namespace Game.Presentation
                 int opponentIndex = i;
                 GridCoordinate coordinate = opponentStarts[i];
                 Color color = EnemyColors[i % EnemyColors.Length];
-                ForEachSurfaceCopy(xOffset =>
-                {
-                    Vector3 position = ToWorldPosition(coordinate, xOffset);
-                    CreateBlock(
-                        $"경쟁 기업 {opponentIndex + 1} 본사_{coordinate.X}_{coordinate.Y}",
-                        position + new Vector3(0f, 0.48f, 0f),
-                        new Vector3(
-                            tileSize * 0.76f,
-                            0.82f,
-                            tileSize * 0.76f),
-                        color,
-                        _generatedRoot,
-                        false);
-                    CreateBlock(
-                        $"경쟁 기업 {opponentIndex + 1} 표식",
-                        position + new Vector3(0f, 1.02f, 0f),
-                        new Vector3(
-                            tileSize * 0.34f,
-                            0.28f,
-                            tileSize * 0.34f),
-                        color,
-                        _generatedRoot,
-                        false);
-                });
+                ForEachSurfaceCopy(xOffset => CreateCastle(
+                    $"경쟁 기업 {opponentIndex + 1} 성_{coordinate.X}_{coordinate.Y}",
+                    ToWorldPosition(coordinate, xOffset),
+                    color));
             }
+        }
+
+        private void CreateCastle(string name, Vector3 position, Color color)
+        {
+            CreateBlock(
+                name + "_성벽",
+                position + new Vector3(0f, 0.16f, 0f),
+                new Vector3(tileSize * 0.94f, 0.26f, tileSize * 0.94f),
+                color,
+                _generatedRoot,
+                false);
+            CreateBlock(
+                name + "_중앙성채",
+                position + new Vector3(0f, 0.58f, 0f),
+                new Vector3(tileSize * 0.46f, 0.72f, tileSize * 0.46f),
+                color,
+                _generatedRoot,
+                false);
+
+            float towerOffset = tileSize * 0.32f;
+            for (int x = -1; x <= 1; x += 2)
+            {
+                for (int z = -1; z <= 1; z += 2)
+                {
+                    CreateBlock(
+                        name + $"_망루_{x}_{z}",
+                        position + new Vector3(
+                            x * towerOffset,
+                            0.53f,
+                            z * towerOffset),
+                        new Vector3(
+                            tileSize * 0.20f,
+                            0.68f,
+                            tileSize * 0.20f),
+                        color,
+                        _generatedRoot,
+                        false);
+                }
+            }
+
+            Color accent = Color.Lerp(color, Color.white, 0.45f);
+            CreateBlock(
+                name + "_깃대",
+                position + new Vector3(0f, 1.24f, 0f),
+                new Vector3(tileSize * 0.04f, 0.62f, tileSize * 0.04f),
+                accent,
+                _generatedRoot,
+                false);
+            CreateBlock(
+                name + "_깃발",
+                position + new Vector3(tileSize * 0.13f, 1.43f, 0f),
+                new Vector3(tileSize * 0.24f, 0.16f, tileSize * 0.04f),
+                color,
+                _generatedRoot,
+                false);
         }
 
         private void BuildMines(GridMapLayout layout)
@@ -834,28 +899,111 @@ namespace Game.Presentation
                 ForEachSurfaceCopy(xOffset =>
                 {
                     Vector3 position = ToWorldPosition(unit.Coordinate, xOffset);
-                    CreateBlock(
-                        $"{unit.Id}_부대",
-                        position + new Vector3(0f, 0.76f, 0f),
-                        new Vector3(
-                            tileSize * (selected ? 0.48f : 0.38f),
-                            selected ? 0.66f : 0.52f,
-                            tileSize * (selected ? 0.48f : 0.38f)),
-                        color,
-                        _gameplayMarkerRoot,
-                        false);
-                    CreateBlock(
-                        $"{unit.Id}_방향표식",
-                        position + new Vector3(0f, 1.15f, 0f),
-                        new Vector3(
-                            tileSize * 0.16f,
-                            0.16f,
-                            tileSize * 0.16f),
-                        selected ? Color.white : color,
-                        _gameplayMarkerRoot,
-                        false);
+                    CreateUnitMarker(unit, position, color, selected);
                 });
             }
+        }
+
+        private void CreateUnitMarker(
+            MapUnitState unit,
+            Vector3 position,
+            Color color,
+            bool selected)
+        {
+            float width = 0.38f;
+            float height = 0.52f;
+            float depth = 0.38f;
+            switch (unit.Archetype)
+            {
+                case UnitArchetype.Spearman:
+                    width = 0.30f;
+                    height = 0.62f;
+                    depth = 0.30f;
+                    break;
+                case UnitArchetype.Maceman:
+                    width = 0.48f;
+                    height = 0.54f;
+                    depth = 0.44f;
+                    break;
+                case UnitArchetype.Archer:
+                    width = 0.42f;
+                    height = 0.46f;
+                    depth = 0.30f;
+                    break;
+                case UnitArchetype.Slinger:
+                    width = 0.32f;
+                    height = 0.44f;
+                    depth = 0.32f;
+                    break;
+                case UnitArchetype.Cavalry:
+                    width = 0.62f;
+                    height = 0.44f;
+                    depth = 0.34f;
+                    break;
+            }
+
+            float selectionScale = selected ? 1.16f : 1f;
+            if (selected)
+            {
+                CreateBlock(
+                    unit.Id + "_선택표시",
+                    position + new Vector3(0f, 0.40f, 0f),
+                    new Vector3(tileSize * 0.68f, 0.06f, tileSize * 0.68f),
+                    Color.white,
+                    _gameplayMarkerRoot,
+                    false);
+            }
+
+            CreateBlock(
+                $"{unit.Id}_{unit.ArchetypeDisplayName}",
+                position + new Vector3(0f, 0.72f, 0f),
+                new Vector3(
+                    tileSize * width * selectionScale,
+                    height * selectionScale,
+                    tileSize * depth * selectionScale),
+                color,
+                _gameplayMarkerRoot,
+                false);
+
+            Color accent = selected
+                ? Color.white
+                : Color.Lerp(color, Color.white, 0.55f);
+            Vector3 accentPosition = position + new Vector3(0f, 1.05f, 0f);
+            Vector3 accentScale;
+            switch (unit.Archetype)
+            {
+                case UnitArchetype.Spearman:
+                    accentPosition += new Vector3(tileSize * 0.18f, 0.08f, 0f);
+                    accentScale = new Vector3(tileSize * 0.045f, 0.90f, tileSize * 0.045f);
+                    break;
+                case UnitArchetype.Maceman:
+                    accentPosition += new Vector3(tileSize * 0.18f, 0.02f, 0f);
+                    accentScale = new Vector3(tileSize * 0.20f, 0.22f, tileSize * 0.20f);
+                    break;
+                case UnitArchetype.Archer:
+                    accentScale = new Vector3(tileSize * 0.56f, 0.07f, tileSize * 0.07f);
+                    break;
+                case UnitArchetype.Slinger:
+                    accentPosition += new Vector3(tileSize * 0.20f, 0f, 0f);
+                    accentScale = new Vector3(tileSize * 0.16f, 0.16f, tileSize * 0.16f);
+                    break;
+                case UnitArchetype.Cavalry:
+                    accentPosition += new Vector3(tileSize * 0.20f, 0f, 0f);
+                    accentScale = new Vector3(tileSize * 0.34f, 0.16f, tileSize * 0.12f);
+                    break;
+                default:
+                    accentPosition += new Vector3(tileSize * 0.17f, 0.02f, 0f);
+                    accentScale = new Vector3(tileSize * 0.06f, 0.62f, tileSize * 0.06f);
+                    break;
+            }
+
+            CreateBlock(
+                unit.Id + "_병종표식",
+                accentPosition,
+                accentScale,
+                accent,
+                _gameplayMarkerRoot,
+                false);
         }
 
         private static Color GetFactionColor(string factionId)
@@ -1029,6 +1177,32 @@ namespace Game.Presentation
                 PanMap(horizontal * distance, vertical * distance);
             }
 
+            if (UnityEngine.Input.GetKeyDown(KeyCode.L))
+                FocusPlayerFaction();
+
+            if (UnityEngine.Input.GetMouseButtonDown(2))
+            {
+                _lastMousePosition = UnityEngine.Input.mousePosition;
+                _isMousePanning = true;
+            }
+            else if (UnityEngine.Input.GetMouseButtonUp(2))
+            {
+                _isMousePanning = false;
+            }
+
+            if (_isMousePanning && UnityEngine.Input.GetMouseButton(2))
+            {
+                Vector3 currentMousePosition = UnityEngine.Input.mousePosition;
+                Vector3 pointerDelta = currentMousePosition - _lastMousePosition;
+                _lastMousePosition = currentMousePosition;
+                float worldUnitsPerPixel =
+                    (_mapCamera.orthographicSize * 2f) /
+                    Mathf.Max(1f, Screen.height);
+                PanMap(
+                    -pointerDelta.x * worldUnitsPerPixel * mousePanSensitivity,
+                    -pointerDelta.y * worldUnitsPerPixel * mousePanSensitivity);
+            }
+
             float wheel = UnityEngine.Input.mouseScrollDelta.y;
             if (!Mathf.Approximately(wheel, 0f))
             {
@@ -1043,8 +1217,9 @@ namespace Game.Presentation
 
         private void HandleSelectionInput()
         {
-            if (PointerSelectionBlocked ||
-                !UnityEngine.Input.GetMouseButtonDown(0))
+            bool leftClicked = UnityEngine.Input.GetMouseButtonDown(0);
+            bool rightClicked = UnityEngine.Input.GetMouseButtonDown(1);
+            if (PointerSelectionBlocked || (!leftClicked && !rightClicked))
                 return;
 
             Camera camera = _mapCamera != null ? _mapCamera : Camera.main;
@@ -1063,7 +1238,13 @@ namespace Game.Presentation
                 CurrentLayout,
                 coordinate);
             CurrentSelection = selection;
+            if (leftClicked)
+                PrimaryCellSelected?.Invoke();
             CellSelected?.Invoke(selection);
+            if (rightClicked)
+                CellActionRequested?.Invoke(
+                    selection,
+                    UnityEngine.Input.mousePosition);
             Debug.Log($"지도 선택: {selection}");
         }
 #endif

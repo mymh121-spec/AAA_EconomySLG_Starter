@@ -31,7 +31,7 @@ namespace Game.Presentation
 
         [Header("캠페인 참가 회사")]
         [SerializeField] private string playerCompanyName = "플레이어 기업";
-        [SerializeField, Min(0f)] private float initialCompanyCash = 1000000f;
+        [SerializeField, Min(0f)] private float initialCompanyCash = 500000f;
         [SerializeField, Min(1)] private int aiCompanyCount = 3;
 
         [Header("MVP 회사 운영")]
@@ -63,6 +63,8 @@ namespace Game.Presentation
             _simulation?.Phase ?? TurnPhase.PlayerPlanning;
         public int RemainingActionPoints =>
             _simulation?.PlayerCommands.RemainingActionPoints ?? 0;
+        public decimal PlayerCash =>
+            _playerCampaignState?.Company.Cash ?? (decimal)initialCompanyCash;
         public int QueuedCommandCount =>
             _simulation?.PlayerCommands.Count ?? 0;
         public bool IsCampaignFinished =>
@@ -111,7 +113,10 @@ namespace Game.Presentation
             if (advance.FixedStepCount <= 0)
                 return;
 
-            RealtimeFixedStepsAdvanced?.Invoke(advance.FixedStepCount);
+            // Map movement, capture, AI, and stamina all follow the same
+            // simulation speed as the in-game clock.
+            RealtimeFixedStepsAdvanced?.Invoke(
+                advance.FixedStepCount * _realtimeClock.SpeedMultiplier);
 
             for (int i = 0;
                  i < advance.CompletedGameDays && !IsCampaignFinished;
@@ -244,22 +249,6 @@ namespace Game.Presentation
         {
             return _simulation != null &&
                 _simulation.TryCancelLastPlayerCommand();
-        }
-
-        public bool TryReserveMapAction(
-            string displayName,
-            int actionPointCost,
-            out string reason)
-        {
-            if (_simulation == null)
-                BuildSimulation();
-
-            return _simulation.TryQueuePlayerCommand(
-                new MapActionReservationTurnCommand(
-                    _playerCampaignState.Company.Id,
-                    displayName,
-                    actionPointCost),
-                out reason);
         }
 
         public void ApplyMapMineProduction(

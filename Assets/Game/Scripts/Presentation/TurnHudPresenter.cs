@@ -68,7 +68,7 @@ namespace Game.Presentation
             if (actionPointLabel != null)
             {
                 actionPointLabel.text =
-                    $"남은 일일 행동력 {simulation.RemainingActionPoints}";
+                    "유닛 체력은 게임 시간 6시간마다 1 회복";
             }
 
             if (phaseLabel != null)

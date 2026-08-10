@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Game.Application.Turn;
 using Game.Domain.Common;
+using Game.Domain.Military;
 using Game.Domain.World;
 
 namespace Game.Application.World
@@ -12,6 +13,9 @@ namespace Game.Application.World
         public int FixedStepsToCapture { get; }
         public int AiDecisionIntervalSteps { get; }
         public int MaxUnitsPerFaction { get; }
+        public int MaxUnitStamina { get; }
+        public int MoveStaminaCost { get; }
+        public int StaminaRecoveryIntervalSteps { get; }
         public decimal NormalMineIronPerDay { get; }
         public decimal GoldMineCashPerDay { get; }
 
@@ -20,6 +24,9 @@ namespace Game.Application.World
             int fixedStepsToCapture = 30,
             int aiDecisionIntervalSteps = 20,
             int maxUnitsPerFaction = 4,
+            int maxUnitStamina = 10,
+            int moveStaminaCost = 1,
+            int staminaRecoveryIntervalSteps = 150,
             decimal normalMineIronPerDay = 12m,
             decimal goldMineCashPerDay = 1500m)
         {
@@ -27,6 +34,11 @@ namespace Game.Application.World
             FixedStepsToCapture = Math.Max(1, fixedStepsToCapture);
             AiDecisionIntervalSteps = Math.Max(1, aiDecisionIntervalSteps);
             MaxUnitsPerFaction = Math.Max(1, maxUnitsPerFaction);
+            MaxUnitStamina = Math.Max(1, maxUnitStamina);
+            MoveStaminaCost = Math.Max(1, moveStaminaCost);
+            StaminaRecoveryIntervalSteps = Math.Max(
+                1,
+                staminaRecoveryIntervalSteps);
             NormalMineIronPerDay = Math.Max(0m, normalMineIronPerDay);
             GoldMineCashPerDay = Math.Max(0m, goldMineCashPerDay);
         }
@@ -39,19 +51,74 @@ namespace Game.Application.World
 
         public string Id { get; }
         public string OwnerFactionId { get; }
+        public UnitArchetype Archetype { get; }
+        public string ArchetypeDisplayName => GetArchetypeDisplayName(Archetype);
         public GridCoordinate Coordinate { get; internal set; }
         public GridCoordinate? Destination { get; internal set; }
         public int MovementProgress { get; internal set; }
+        public int MaxStamina { get; }
+        public int Stamina { get; private set; }
+        public int StaminaRecoveryProgress { get; private set; }
         public bool IsMoving => _path.Count > 0;
 
         internal MapUnitState(
             string id,
             string ownerFactionId,
-            GridCoordinate coordinate)
+            GridCoordinate coordinate,
+            UnitArchetype archetype,
+            int maxStamina)
         {
             Id = id;
             OwnerFactionId = ownerFactionId;
             Coordinate = coordinate;
+            Archetype = archetype;
+            MaxStamina = Math.Max(1, maxStamina);
+            Stamina = MaxStamina;
+        }
+
+        public static string GetArchetypeDisplayName(UnitArchetype archetype)
+        {
+            switch (archetype)
+            {
+                case UnitArchetype.Swordsman: return "검병";
+                case UnitArchetype.Spearman: return "창병";
+                case UnitArchetype.Maceman: return "둔기병";
+                case UnitArchetype.Archer: return "궁병";
+                case UnitArchetype.Slinger: return "투석병";
+                case UnitArchetype.Cavalry: return "기마병";
+                default: return archetype.ToString();
+            }
+        }
+
+        internal bool TrySpendStamina(int amount, out string reason)
+        {
+            int safeAmount = Math.Max(1, amount);
+            if (Stamina < safeAmount)
+            {
+                reason = $"유닛 체력이 부족합니다. 필요 {safeAmount}, 현재 {Stamina}/{MaxStamina}";
+                return false;
+            }
+
+            Stamina -= safeAmount;
+            reason = string.Empty;
+            return true;
+        }
+
+        internal bool AdvanceStaminaRecovery(int recoveryIntervalSteps)
+        {
+            if (Stamina >= MaxStamina)
+            {
+                StaminaRecoveryProgress = 0;
+                return false;
+            }
+
+            StaminaRecoveryProgress++;
+            if (StaminaRecoveryProgress < recoveryIntervalSteps)
+                return false;
+
+            StaminaRecoveryProgress = 0;
+            Stamina = Math.Min(MaxStamina, Stamina + 1);
+            return true;
         }
 
         internal void SetPath(IReadOnlyList<GridCoordinate> path)
@@ -229,6 +296,17 @@ namespace Game.Application.World
             return null;
         }
 
+        public MapUnitState FindUnitAt(GridCoordinate coordinate)
+        {
+            for (int i = 0; i < _units.Count; i++)
+            {
+                if (_units[i].Coordinate.Equals(coordinate))
+                    return _units[i];
+            }
+
+            return null;
+        }
+
         public MapMineControlState FindMine(GridCoordinate coordinate)
         {
             for (int i = 0; i < _mines.Count; i++)
@@ -275,6 +353,19 @@ namespace Game.Application.World
             out MapUnitState unit,
             out string reason)
         {
+            return TryCreateUnit(
+                ownerFactionId,
+                SelectNextArchetype(ownerFactionId),
+                out unit,
+                out reason);
+        }
+
+        public bool TryCreateUnit(
+            string ownerFactionId,
+            UnitArchetype archetype,
+            out MapUnitState unit,
+            out string reason)
+        {
             unit = null;
             if (!CanCreateUnit(ownerFactionId, out reason))
                 return false;
@@ -283,10 +374,38 @@ namespace Game.Application.World
             unit = new MapUnitState(
                 $"unit_{ownerFactionId}_{++_unitSequence}",
                 ownerFactionId,
-                origin);
+                origin,
+                archetype,
+                _tuning.MaxUnitStamina);
             _units.Add(unit);
             StateChanged?.Invoke();
             return true;
+        }
+
+        private UnitArchetype SelectNextArchetype(string ownerFactionId)
+        {
+            int ownedUnitCount = 0;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                if (string.Equals(
+                    _units[i].OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+                {
+                    ownedUnitCount++;
+                }
+            }
+
+            UnitArchetype[] order =
+            {
+                UnitArchetype.Swordsman,
+                UnitArchetype.Spearman,
+                UnitArchetype.Archer,
+                UnitArchetype.Cavalry,
+                UnitArchetype.Maceman,
+                UnitArchetype.Slinger
+            };
+            return order[ownedUnitCount % order.Length];
         }
 
         public bool CanIssueMove(
@@ -340,6 +459,13 @@ namespace Game.Application.World
                 return false;
             }
 
+            if (unit.Stamina < _tuning.MoveStaminaCost)
+            {
+                reason = $"유닛 체력이 부족합니다. 필요 {_tuning.MoveStaminaCost}, " +
+                    $"현재 {unit.Stamina}/{unit.MaxStamina}";
+                return false;
+            }
+
             path = route;
             reason = string.Empty;
             return true;
@@ -361,7 +487,11 @@ namespace Game.Application.World
                 return false;
             }
 
-            FindUnit(unitId).SetPath(path);
+            MapUnitState unit = FindUnit(unitId);
+            if (!unit.TrySpendStamina(_tuning.MoveStaminaCost, out reason))
+                return false;
+
+            unit.SetPath(path);
             StateChanged?.Invoke();
             return true;
         }
@@ -378,6 +508,7 @@ namespace Game.Application.World
                     changed |= RunAiDecisions();
                 changed |= MoveUnitsOneFixedStep();
                 changed |= AdvanceMineCaptures();
+                changed |= RecoverUnitStamina();
                 anyChanged |= changed;
             }
 
@@ -524,6 +655,18 @@ namespace Game.Application.World
 
                 unit.MovementProgress = 0;
                 changed |= unit.TryAdvanceOneTile();
+            }
+
+            return changed;
+        }
+
+        private bool RecoverUnitStamina()
+        {
+            bool changed = false;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                changed |= _units[i].AdvanceStaminaRecovery(
+                    _tuning.StaminaRecoveryIntervalSteps);
             }
 
             return changed;
