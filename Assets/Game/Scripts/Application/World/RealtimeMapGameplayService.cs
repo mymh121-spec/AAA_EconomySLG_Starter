@@ -28,7 +28,7 @@ namespace Game.Application.World
             int fixedStepsPerMove = 8,
             int fixedStepsToCapture = 30,
             int aiDecisionIntervalSteps = 20,
-            int maxUnitsPerFaction = 4,
+            int maxUnitsPerFaction = 12,
             int maxUnitStamina = 10,
             int moveStaminaCost = 1,
             int staminaRecoveryIntervalSteps = 150,
@@ -204,6 +204,8 @@ namespace Game.Application.World
         public int SpawnedEconomicDay { get; }
         public bool IsDynamic { get; }
         public decimal YieldMultiplier { get; private set; }
+        public string GuardUnitId { get; internal set; }
+        public bool HasGuard => !string.IsNullOrEmpty(GuardUnitId);
 
         public MapMineControlState(
             MinePlacement placement,
@@ -217,6 +219,7 @@ namespace Game.Application.World
             SpawnedEconomicDay = Math.Max(0, spawnedEconomicDay);
             IsDynamic = isDynamic;
             YieldMultiplier = 1m;
+            GuardUnitId = string.Empty;
         }
 
         internal void Deplete(
@@ -322,6 +325,9 @@ namespace Game.Application.World
             new List<MapMineControlState>();
         private readonly List<MapCastleControlState> _castles =
             new List<MapCastleControlState>();
+        private readonly Dictionary<GridCoordinate, MapRecruitmentSiteState>
+            _recruitmentSites =
+                new Dictionary<GridCoordinate, MapRecruitmentSiteState>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -335,6 +341,7 @@ namespace Game.Application.World
             _tuning.FixedStepsToCaptureCastle;
         public int FixedStepsToSiegeUndefendedCastle =>
             _tuning.FixedStepsToSiegeUndefendedCastle;
+        public int CurrentEconomicDay => _economicDaySequence;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
@@ -369,7 +376,32 @@ namespace Game.Application.World
             for (int i = 0; i < layout.Mines.Count; i++)
                 _mines.Add(new MapMineControlState(layout.Mines[i]));
             for (int i = 0; i < layout.NeutralCastles.Count; i++)
-                _castles.Add(new MapCastleControlState(layout.NeutralCastles[i]));
+            {
+                GridCoordinate coordinate = layout.NeutralCastles[i];
+                _castles.Add(new MapCastleControlState(coordinate));
+                _recruitmentSites.Add(
+                    coordinate,
+                    new MapRecruitmentSiteState(
+                        coordinate,
+                        MapRecruitmentSiteKind.Castle,
+                        string.Empty,
+                        0,
+                        0,
+                        int.MaxValue));
+            }
+
+            foreach (KeyValuePair<string, GridCoordinate> entry in _factionBases)
+            {
+                _recruitmentSites.Add(
+                    entry.Value,
+                    new MapRecruitmentSiteState(
+                        entry.Value,
+                        MapRecruitmentSiteKind.Headquarters,
+                        entry.Key,
+                        MapCastleRules.HeadquartersRecruitmentCapacity,
+                        MapCastleRules.HeadquartersInitialRecruits,
+                        MapCastleRules.HeadquartersRecruitRecoveryDays));
+            }
         }
 
         public MapUnitState FindUnit(string unitId)
@@ -452,9 +484,50 @@ namespace Game.Application.World
 
         public bool CanCreateUnit(string ownerFactionId, out string reason)
         {
-            if (!_factionBases.ContainsKey(ownerFactionId ?? string.Empty))
+            string normalizedOwnerFactionId = ownerFactionId ?? string.Empty;
+            if (!_factionBases.TryGetValue(
+                normalizedOwnerFactionId,
+                out GridCoordinate headquarters))
             {
                 reason = "유닛을 만들 수 있는 본사가 없습니다.";
+                return false;
+            }
+
+            return CanCreateUnitAt(
+                normalizedOwnerFactionId,
+                headquarters,
+                out reason);
+        }
+
+        public bool CanCreateUnitAt(
+            string ownerFactionId,
+            GridCoordinate origin,
+            out string reason)
+        {
+            if (!_recruitmentSites.TryGetValue(
+                origin,
+                out MapRecruitmentSiteState recruitmentSite) ||
+                !string.Equals(
+                    recruitmentSite.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = FindMine(origin) != null
+                    ? "광산에서는 징병할 수 없습니다. 소유한 본사나 성을 선택하세요."
+                    : "이 위치에는 사용할 수 있는 징병소가 없습니다.";
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(origin);
+            if (castle != null && castle.IsUnderSiege)
+            {
+                reason = "공성 중인 성에서는 징병할 수 없습니다.";
+                return false;
+            }
+
+            if (recruitmentSite.RecruitmentCapacity <= 0)
+            {
+                reason = "점령 성의 역할을 먼저 지정해야 징병할 수 있습니다.";
                 return false;
             }
 
@@ -473,6 +546,24 @@ namespace Game.Application.World
             if (ownedUnitCount >= _tuning.MaxUnitsPerFaction)
             {
                 reason = $"세력당 유닛은 최대 {_tuning.MaxUnitsPerFaction}개입니다.";
+                return false;
+            }
+
+            int garrisonCount = CountOwnedUnitsAt(ownerFactionId, origin);
+            int garrisonCapacity = GetFriendlyGarrisonCapacity(
+                ownerFactionId,
+                origin);
+            if (garrisonCount >= garrisonCapacity)
+            {
+                reason = $"이 거점의 주둔 한도가 가득 찼습니다. " +
+                    $"현재 {garrisonCount}/{garrisonCapacity}";
+                return false;
+            }
+
+            if (recruitmentSite.AvailableRecruits <= 0)
+            {
+                reason = $"지역 징집 인력이 부족합니다. " +
+                    $"{recruitmentSite.RecruitRecoveryDays}일마다 1명분이 회복됩니다.";
                 return false;
             }
 
@@ -515,11 +606,47 @@ namespace Game.Application.World
             out MapUnitState unit,
             out string reason)
         {
+            string normalizedOwnerFactionId = ownerFactionId ?? string.Empty;
+            if (!_factionBases.TryGetValue(
+                normalizedOwnerFactionId,
+                out GridCoordinate headquarters))
+            {
+                unit = null;
+                reason = "유닛을 만들 수 있는 본사가 없습니다.";
+                return false;
+            }
+
+            return TryCreateUnitAt(
+                normalizedOwnerFactionId,
+                headquarters,
+                archetype,
+                weaponType,
+                armorClass,
+                out unit,
+                out reason);
+        }
+
+        public bool TryCreateUnitAt(
+            string ownerFactionId,
+            GridCoordinate origin,
+            UnitArchetype archetype,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out MapUnitState unit,
+            out string reason)
+        {
             unit = null;
-            if (!CanCreateUnit(ownerFactionId, out reason))
+            if (!CanCreateUnitAt(ownerFactionId, origin, out reason))
                 return false;
 
-            GridCoordinate origin = _factionBases[ownerFactionId];
+            MapRecruitmentSiteState recruitmentSite =
+                _recruitmentSites[origin];
+            if (!recruitmentSite.TryConsumeRecruit())
+            {
+                reason = "지역 징집 인력이 부족합니다.";
+                return false;
+            }
+
             unit = new MapUnitState(
                 $"unit_{ownerFactionId}_{++_unitSequence}",
                 ownerFactionId,
@@ -529,6 +656,9 @@ namespace Game.Application.World
                 weaponType,
                 armorClass);
             _units.Add(unit);
+            MapCastleControlState castle = FindCastle(origin);
+            if (castle != null)
+                RefreshCastleGarrison(castle);
             StateChanged?.Invoke();
             return true;
         }
@@ -627,6 +757,15 @@ namespace Game.Application.World
             if (unit.Coordinate.Equals(normalized))
             {
                 reason = "이미 해당 지역에 있습니다.";
+                return false;
+            }
+
+            if (!CanEnterFriendlySite(
+                ownerFactionId,
+                unit.Id,
+                normalized,
+                out reason))
+            {
                 return false;
             }
 
@@ -780,6 +919,7 @@ namespace Game.Application.World
             MapCastleControlState castle = FindCastle(coordinate);
             MapCastleRole previousRole = castle.Role;
             castle.Role = role;
+            ConfigureCastleRecruitmentSite(castle);
             reason = string.Empty;
             CastleRoleChanged?.Invoke(new MapCastleRoleChangedRecord(
                 castle.Coordinate,
@@ -841,6 +981,35 @@ namespace Game.Application.World
             return true;
         }
 
+        public bool TryGetRecruitmentSiteSnapshot(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            out MapRecruitmentSiteSnapshot snapshot)
+        {
+            snapshot = default;
+            if (!_recruitmentSites.TryGetValue(
+                coordinate,
+                out MapRecruitmentSiteState site) ||
+                !string.Equals(
+                    site.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            snapshot = new MapRecruitmentSiteSnapshot(
+                coordinate,
+                site.Kind,
+                site.OwnerFactionId,
+                CountOwnedUnitsAt(ownerFactionId, coordinate),
+                GetFriendlyGarrisonCapacity(ownerFactionId, coordinate),
+                site.AvailableRecruits,
+                site.RecruitmentCapacity,
+                site.RecruitRecoveryDays);
+            return true;
+        }
+
         public void AdvanceFixedSteps(int fixedStepCount)
         {
             int safeStepCount = Math.Max(0, fixedStepCount);
@@ -854,6 +1023,7 @@ namespace Game.Application.World
                 changed |= MoveUnitsOneFixedStep();
                 changed |= AdvanceCastleCaptures();
                 changed |= AdvanceMineCaptures();
+                changed |= RefreshMineGuards();
                 changed |= RecoverUnitStamina();
                 anyChanged |= changed;
             }
@@ -865,12 +1035,15 @@ namespace Game.Application.World
         public bool AdvanceEconomicDay(out MapMineSpawnRecord spawnedMine)
         {
             _economicDaySequence++;
+            bool recruitmentChanged = AdvanceRecruitmentPools();
             spawnedMine = default;
             if (_economicDaySequence % _tuning.MineSpawnIntervalDays != 0 ||
                 !TryFindDynamicMineCoordinate(
                     _economicDaySequence,
                     out GridCoordinate coordinate))
             {
+                if (recruitmentChanged)
+                    StateChanged?.Invoke();
                 return false;
             }
 
@@ -991,6 +1164,126 @@ namespace Game.Application.World
             }
 
             return false;
+        }
+
+        private bool CanEnterFriendlySite(
+            string ownerFactionId,
+            string movingUnitId,
+            GridCoordinate destination,
+            out string reason)
+        {
+            MapCastleControlState castle = FindCastle(destination);
+            if (castle != null && string.Equals(
+                castle.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                int capacity = MapCastleRules.GetGarrisonCapacity(castle.Role);
+                int count = CountOwnedUnitsAt(
+                    ownerFactionId,
+                    destination,
+                    movingUnitId);
+                if (count >= capacity)
+                {
+                    reason = $"성 주둔 한도가 가득 찼습니다. 현재 {count}/{capacity}";
+                    return false;
+                }
+            }
+
+            MapMineControlState mine = FindMine(destination);
+            if (mine != null && string.Equals(
+                mine.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                int count = CountOwnedUnitsAt(
+                    ownerFactionId,
+                    destination,
+                    movingUnitId);
+                if (count >= MapCastleRules.MineGuardCapacity)
+                {
+                    reason = "광산에는 공식 경비 부대 1개만 배치할 수 있습니다.";
+                    return false;
+                }
+            }
+
+            if (_recruitmentSites.TryGetValue(
+                    destination,
+                    out MapRecruitmentSiteState site) &&
+                site.Kind == MapRecruitmentSiteKind.Headquarters &&
+                string.Equals(
+                    site.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                int count = CountOwnedUnitsAt(
+                    ownerFactionId,
+                    destination,
+                    movingUnitId);
+                if (count >= MapCastleRules.HeadquartersGarrisonCapacity)
+                {
+                    reason = $"본사 주둔 한도가 가득 찼습니다. " +
+                        $"현재 {count}/{MapCastleRules.HeadquartersGarrisonCapacity}";
+                    return false;
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        private int GetFriendlyGarrisonCapacity(
+            string ownerFactionId,
+            GridCoordinate coordinate)
+        {
+            if (_recruitmentSites.TryGetValue(
+                    coordinate,
+                    out MapRecruitmentSiteState site) &&
+                site.Kind == MapRecruitmentSiteKind.Headquarters &&
+                string.Equals(
+                    site.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return MapCastleRules.HeadquartersGarrisonCapacity;
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle != null && string.Equals(
+                castle.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                return MapCastleRules.GetGarrisonCapacity(castle.Role);
+            }
+
+            return 0;
+        }
+
+        private int CountOwnedUnitsAt(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            string excludedUnitId = "")
+        {
+            int count = 0;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        ownerFactionId,
+                        StringComparison.Ordinal) &&
+                    !string.Equals(
+                        unit.Id,
+                        excludedUnitId,
+                        StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private static int PositiveModulo(int value, int modulus)
@@ -1345,6 +1638,7 @@ namespace Game.Application.World
                 StringComparison.Ordinal)
                 ? MapCastleRole.Unassigned
                 : SelectAiCastleRole(castle.Coordinate);
+            ConfigureCastleRecruitmentSite(castle);
             ClearCastleConflict(castle);
             RefreshCastleGarrison(castle);
             CastleCaptured?.Invoke(new MapCastleCaptureRecord(
@@ -1352,6 +1646,31 @@ namespace Game.Application.World
                 previousOwner,
                 castle.OwnerFactionId,
                 wasSiege));
+        }
+
+        private void ConfigureCastleRecruitmentSite(
+            MapCastleControlState castle)
+        {
+            if (castle == null ||
+                !_recruitmentSites.TryGetValue(
+                    castle.Coordinate,
+                    out MapRecruitmentSiteState site))
+            {
+                return;
+            }
+
+            site.Configure(
+                castle.OwnerFactionId,
+                MapCastleRules.GetRecruitmentCapacity(castle.Role),
+                MapCastleRules.GetRecruitRecoveryDays(castle.Role));
+        }
+
+        private bool AdvanceRecruitmentPools()
+        {
+            bool changed = false;
+            foreach (MapRecruitmentSiteState site in _recruitmentSites.Values)
+                changed |= site.AdvanceDay();
+            return changed;
         }
 
         private bool RefreshCastleGarrison(MapCastleControlState castle)
@@ -1500,6 +1819,47 @@ namespace Game.Application.World
                     mine.Kind,
                     previousOwner,
                     mine.OwnerFactionId));
+            }
+
+            return changed;
+        }
+
+        private bool RefreshMineGuards()
+        {
+            bool changed = false;
+            for (int mineIndex = 0; mineIndex < _mines.Count; mineIndex++)
+            {
+                MapMineControlState mine = _mines[mineIndex];
+                string guardUnitId = string.Empty;
+                if (!string.IsNullOrEmpty(mine.OwnerFactionId))
+                {
+                    for (int unitIndex = 0;
+                         unitIndex < _units.Count;
+                         unitIndex++)
+                    {
+                        MapUnitState unit = _units[unitIndex];
+                        if (unit.Coordinate.Equals(mine.Coordinate) &&
+                            string.Equals(
+                                unit.OwnerFactionId,
+                                mine.OwnerFactionId,
+                                StringComparison.Ordinal))
+                        {
+                            guardUnitId = unit.Id;
+                            break;
+                        }
+                    }
+                }
+
+                if (string.Equals(
+                    mine.GuardUnitId,
+                    guardUnitId,
+                    StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                mine.GuardUnitId = guardUnitId;
+                changed = true;
             }
 
             return changed;

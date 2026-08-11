@@ -429,12 +429,38 @@ namespace Game.Tests
                     out _),
                 Is.True);
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.IndustrialCity));
+            Assert.That(
+                service.TryCreateUnitAt(
+                    "player",
+                    castleCoordinate,
+                    UnitArchetype.Spearman,
+                    UnitWeaponType.Spear,
+                    ArmorClass.Light,
+                    out MapUnitState localRecruit,
+                    out _),
+                Is.True);
+            Assert.That(localRecruit.Coordinate, Is.EqualTo(castleCoordinate));
+            Assert.That(castle.GarrisonUnitCount, Is.EqualTo(2));
+            Assert.That(
+                service.CanCreateUnitAt(
+                    "player",
+                    castleCoordinate,
+                    out string fullCastleReason),
+                Is.False);
+            Assert.That(fullCastleReason, Does.Contain("주둔 한도"));
 
             Assert.That(
                 service.TryIssueMove(
                     "player",
                     unit.Id,
                     new GridCoordinate(3, 1),
+                out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    localRecruit.Id,
+                    new GridCoordinate(1, 1),
                     out _),
                 Is.True);
             service.AdvanceFixedSteps(1);
@@ -516,6 +542,124 @@ namespace Game.Tests
             Assert.That(castle.GarrisonUnitIds, Does.Contain(attacker.Id));
             Assert.That(captureRecord.WasSiege, Is.True);
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_RecruitmentPoolsRecoverByEconomicDay()
+        {
+            var terrain = new GridTerrainKind[4 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var headquarters = new GridCoordinate(0, 0);
+            var layout = new GridMapLayout(
+                4,
+                2,
+                53,
+                headquarters,
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    aiDecisionIntervalSteps: 1000,
+                    maxUnitsPerFaction: 12));
+
+            Assert.That(
+                service.TryGetRecruitmentSiteSnapshot(
+                    "player",
+                    headquarters,
+                    out MapRecruitmentSiteSnapshot initial),
+                Is.True);
+            Assert.That(initial.GarrisonCapacity, Is.EqualTo(6));
+            Assert.That(initial.AvailableRecruits, Is.EqualTo(4));
+
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.That(
+                    service.TryCreateUnit("player", out _, out _),
+                    Is.True);
+            }
+            Assert.That(
+                service.CanCreateUnit("player", out string emptyPoolReason),
+                Is.False);
+            Assert.That(emptyPoolReason, Does.Contain("징집 인력"));
+
+            service.AdvanceEconomicDay(out _);
+            Assert.That(service.TryCreateUnit("player", out _, out _), Is.True);
+            Assert.That(
+                service.TryGetRecruitmentSiteSnapshot(
+                    "player",
+                    headquarters,
+                    out MapRecruitmentSiteSnapshot recovered),
+                Is.True);
+            Assert.That(recovered.GarrisonUnitCount, Is.EqualTo(5));
+            Assert.That(recovered.AvailableRecruits, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_MineUsesOneGuardAndNeverRecruits()
+        {
+            var terrain = new GridTerrainKind[4 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var mineCoordinate = new GridCoordinate(1, 0);
+            var layout = new GridMapLayout(
+                4,
+                2,
+                59,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new[] { new MinePlacement(mineCoordinate, MineKind.Normal) },
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCapture: 1,
+                    aiDecisionIntervalSteps: 1000));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState guard, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    guard.Id,
+                    mineCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            MapMineControlState mine = service.FindMine(mineCoordinate);
+            Assert.That(mine.OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(mine.GuardUnitId, Is.EqualTo(guard.Id));
+            Assert.That(
+                service.CanCreateUnitAt(
+                    "player",
+                    mineCoordinate,
+                    out string recruitmentReason),
+                Is.False);
+            Assert.That(recruitmentReason, Does.Contain("광산"));
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    out MapUnitState secondUnit,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    secondUnit.Id,
+                    mineCoordinate,
+                    out string guardReason),
+                Is.False);
+            Assert.That(guardReason, Does.Contain("경비 부대 1개"));
         }
 
         [Test]

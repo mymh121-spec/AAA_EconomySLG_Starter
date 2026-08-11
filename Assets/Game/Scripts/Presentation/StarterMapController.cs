@@ -221,15 +221,41 @@ namespace Game.Presentation
 
         public bool CanCreatePlayerUnit(out string reason)
         {
+            if (CurrentLayout == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return CanCreatePlayerUnitAt(CurrentLayout.PlayerStart, out reason);
+        }
+
+        public bool CanCreatePlayerUnitAt(
+            GridCoordinate origin,
+            out string reason)
+        {
             if (_gameplayService == null)
             {
                 reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
                 return false;
             }
 
-            return _gameplayService.CanCreateUnit(
+            return _gameplayService.CanCreateUnitAt(
                 _gameplayService.PlayerFactionId,
+                origin,
                 out reason);
+        }
+
+        public bool TryGetPlayerRecruitmentSite(
+            GridCoordinate coordinate,
+            out MapRecruitmentSiteSnapshot snapshot)
+        {
+            snapshot = default;
+            return _gameplayService != null &&
+                _gameplayService.TryGetRecruitmentSiteSnapshot(
+                    _gameplayService.PlayerFactionId,
+                    coordinate,
+                    out snapshot);
         }
 
         public bool TryCreatePlayerUnit(out string reason)
@@ -254,11 +280,33 @@ namespace Game.Presentation
             ArmorClass armorClass,
             out string reason)
         {
-            if (!CanCreatePlayerUnit(out reason))
+            if (CurrentLayout == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return TryCreatePlayerUnitAt(
+                CurrentLayout.PlayerStart,
+                archetype,
+                weaponType,
+                armorClass,
+                out reason);
+        }
+
+        public bool TryCreatePlayerUnitAt(
+            GridCoordinate origin,
+            UnitArchetype archetype,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out string reason)
+        {
+            if (!CanCreatePlayerUnitAt(origin, out reason))
                 return false;
 
-            if (!_gameplayService.TryCreateUnit(
+            if (!_gameplayService.TryCreateUnitAt(
                 _gameplayService.PlayerFactionId,
+                origin,
                 archetype,
                 weaponType,
                 armorClass,
@@ -891,6 +939,10 @@ namespace Game.Presentation
                     : GetFactionDisplayName(mine.OwnerFactionId) + " 소유";
                 detail += "\n광산 상태: " + ownerName +
                           $" · 생산성 {mine.YieldMultiplier:P0}";
+                detail += mine.HasGuard
+                    ? $" · 경비대 {mine.GuardUnitId} (1/1)"
+                    : " · 경비대 없음 (0/1)";
+                detail += " · 현지 징병 불가";
                 if (mine.IsDynamic)
                     detail += $" · {mine.SpawnedEconomicDay}일 발견";
                 if (!string.IsNullOrEmpty(mine.CapturingFactionId))
@@ -908,7 +960,17 @@ namespace Game.Presentation
                 detail += "\n성 상태: " + ownerName +
                           " · 역할 " +
                           MapCastleRoleNames.GetKoreanName(castle.Role) +
-                          $" · 주둔군 {castle.GarrisonUnitCount}개 부대";
+                          $" · 주둔군 {castle.GarrisonUnitCount}/" +
+                          MapCastleRules.GetGarrisonCapacity(castle.Role);
+                if (_gameplayService.TryGetRecruitmentSiteSnapshot(
+                    _gameplayService.PlayerFactionId,
+                    coordinate,
+                    out MapRecruitmentSiteSnapshot castleRecruitment))
+                {
+                    detail += $" · 징집 인력 " +
+                              $"{castleRecruitment.AvailableRecruits}/" +
+                              castleRecruitment.RecruitmentCapacity;
+                }
                 if (castle.ConflictKind != MapCastleConflictKind.None)
                 {
                     string conflictName = castle.IsUnderSiege
@@ -922,6 +984,21 @@ namespace Game.Presentation
                               $"{castle.CaptureProgress}/" +
                               _gameplayService.GetCastleCaptureRequired(castle);
                 }
+            }
+            if (content == MapCellContent.PlayerBase &&
+                _gameplayService != null &&
+                _gameplayService.TryGetRecruitmentSiteSnapshot(
+                    _gameplayService.PlayerFactionId,
+                    coordinate,
+                    out MapRecruitmentSiteSnapshot headquartersRecruitment))
+            {
+                detail += $"\n본사 주둔군 " +
+                          $"{headquartersRecruitment.GarrisonUnitCount}/" +
+                          headquartersRecruitment.GarrisonCapacity +
+                          $" · 징집 인력 " +
+                          $"{headquartersRecruitment.AvailableRecruits}/" +
+                          headquartersRecruitment.RecruitmentCapacity +
+                          " · 하루마다 1명분 회복";
             }
 
             string capturingFactionId = castle?.CapturingFactionId ??

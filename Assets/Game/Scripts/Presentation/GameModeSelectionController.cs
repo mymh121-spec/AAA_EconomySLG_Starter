@@ -84,6 +84,7 @@ namespace Game.Presentation
         private UnitArchetype _pendingUnitArchetype = UnitArchetype.Swordsman;
         private UnitWeaponType _pendingWeaponType = UnitWeaponType.Sword;
         private ArmorClass _pendingArmorClass = ArmorClass.Light;
+        private GridCoordinate? _pendingRecruitmentOrigin;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -1117,9 +1118,13 @@ namespace Game.Presentation
             if (gameplayMap == null || singlePlayerSimulation == null)
                 return;
 
-            if (!gameplayMap.CanCreatePlayerUnit(out string reason))
+            GridCoordinate recruitOrigin = GetRecruitmentOrigin();
+            if (!gameplayMap.CanCreatePlayerUnitAt(
+                recruitOrigin,
+                out string reason))
             {
                 SetMapActionFeedback(reason);
+                SetNeutralNpcFeedback(reason);
                 return;
             }
 
@@ -1135,7 +1140,8 @@ namespace Game.Presentation
                 return;
             }
 
-            if (!gameplayMap.TryCreatePlayerUnit(
+            if (!gameplayMap.TryCreatePlayerUnitAt(
+                recruitOrigin,
                 _pendingUnitArchetype,
                 _pendingWeaponType,
                 _pendingArmorClass,
@@ -1155,7 +1161,7 @@ namespace Game.Presentation
                 $"{MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype)} · " +
                 $"{UnitEquipmentCatalog.GetWeaponDisplayName(_pendingWeaponType)} · " +
                 $"{UnitEquipmentCatalog.GetArmorDisplayName(_pendingArmorClass)} " +
-                $"구성으로 생산했습니다. 비용 {cost:N0}";
+                $"구성으로 {recruitOrigin}에서 징병했습니다. 비용 {cost:N0}";
             SetMapActionFeedback(result);
             SetNeutralNpcFeedback(result);
             CloseNeutralNpcView();
@@ -1570,9 +1576,13 @@ namespace Game.Presentation
                 return;
             }
 
-            bool atPlayerBase = selection.Content == MapCellContent.PlayerBase;
-            bool canCreate = atPlayerBase &&
-                gameplayMap.CanCreatePlayerUnit(out _);
+            bool atRecruitmentSite =
+                selection.Content == MapCellContent.PlayerBase ||
+                selection.Content == MapCellContent.PlayerCastle;
+            bool canCreate = atRecruitmentSite &&
+                gameplayMap.CanCreatePlayerUnitAt(
+                    selection.Coordinate,
+                    out _);
             bool canSelect = gameplayMap.CanSelectPlayerUnitAt(
                 selection.Coordinate,
                 out _);
@@ -1587,8 +1597,11 @@ namespace Game.Presentation
                 selection.Content == MapCellContent.PlayerCastle ||
                 selection.Content == MapCellContent.EnemyCastle;
 
-            SetVisible(createButton, atPlayerBase);
+            SetVisible(createButton, atRecruitmentSite);
             createButton.SetEnabled(canCreate);
+            createButton.text = selection.Content == MapCellContent.PlayerCastle
+                ? "이 성에서 징병 · 병종/장비 선택"
+                : "본사에서 징병 · 병종/장비 선택";
             SetVisible(selectButton, canSelect);
             selectButton.SetEnabled(canSelect);
             // A mine uses the single consolidated capture button in the
@@ -2050,16 +2063,38 @@ namespace Game.Presentation
             if (!_selection.IsSinglePlayer)
                 return;
 
+            if (gameplayMap?.CurrentSelection.HasValue == true)
+            {
+                MapCellSelection selection =
+                    gameplayMap.CurrentSelection.Value;
+                if (selection.Content == MapCellContent.PlayerBase ||
+                    selection.Content == MapCellContent.PlayerCastle)
+                {
+                    _pendingRecruitmentOrigin = selection.Coordinate;
+                }
+            }
+            if (!_pendingRecruitmentOrigin.HasValue)
+                _pendingRecruitmentOrigin = GetRecruitmentOrigin();
+
             _pendingWeaponType =
                 UnitEquipmentCatalog.GetDefaultWeapon(_pendingUnitArchetype);
             SetNeutralNpcFeedback(
-                "병종을 고른 뒤 무기와 갑옷을 선택하고 유닛 생산을 누르세요.");
+                $"{GetRecruitmentOrigin()} 징병소입니다. 병종·무기·갑옷을 " +
+                "고른 뒤 유닛 생산을 누르세요.");
             OpenNeutralNpcView(false);
         }
 
         private void OpenNeutralNpcView()
         {
+            _pendingRecruitmentOrigin = gameplayMap?.CurrentLayout?.PlayerStart;
             OpenNeutralNpcView(true);
+        }
+
+        private GridCoordinate GetRecruitmentOrigin()
+        {
+            if (_pendingRecruitmentOrigin.HasValue)
+                return _pendingRecruitmentOrigin.Value;
+            return gameplayMap?.CurrentLayout?.PlayerStart ?? default;
         }
 
         private void OpenNeutralNpcView(bool copySelectedEquipment)
@@ -2116,8 +2151,22 @@ namespace Game.Presentation
                 _pendingWeaponType,
                 _pendingArmorClass);
             MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+            GridCoordinate recruitOrigin = GetRecruitmentOrigin();
+            string recruitmentStatus = "징병소 정보 없음";
+            if (gameplayMap != null &&
+                gameplayMap.TryGetPlayerRecruitmentSite(
+                    recruitOrigin,
+                    out MapRecruitmentSiteSnapshot recruitmentSite))
+            {
+                recruitmentStatus =
+                    $"주둔 {recruitmentSite.GarrisonUnitCount}/" +
+                    $"{recruitmentSite.GarrisonCapacity} · 징집 인력 " +
+                    $"{recruitmentSite.AvailableRecruits}/" +
+                    recruitmentSite.RecruitmentCapacity;
+            }
 
             _neutralNpcSelectionStatus.text =
+                $"징병 위치: {recruitOrigin} · {recruitmentStatus}\n" +
                 $"구성: {archetypeName} · {weaponName} · {armorName}\n" +
                 $"능력: 공격 x{UnitEquipmentCatalog.GetAttackModifier(_pendingWeaponType):F2} · " +
                 $"방어 x{UnitEquipmentCatalog.GetDefenseModifier(_pendingArmorClass):F2} · " +
@@ -2136,7 +2185,7 @@ namespace Game.Presentation
                 : $"{selectedUnit.Id} 장비 변경 · {equipmentCost:N0}";
 
             bool canCreate = gameplayMap != null &&
-                gameplayMap.CanCreatePlayerUnit(out _) &&
+                gameplayMap.CanCreatePlayerUnitAt(recruitOrigin, out _) &&
                 singlePlayerSimulation != null &&
                 singlePlayerSimulation.CanAffordPlayerCash(recruitCost);
             bool sameEquipment = selectedUnit != null &&

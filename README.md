@@ -21,6 +21,7 @@ Unity C# starter architecture for an economic simulation + SLG game.
 - An integrated world turn that moves factory inputs and outputs, warehouse stock, trade cash, operating costs, debt, and economic power through real domain objects.
 - Real-time map gameplay with a Korean action panel, player and AI units, horizontally wrapped land pathfinding, mine capture, ownership markers, and daily mine production.
 - Single-player neutral-castle occupation with garrison tracking, faction flags, selectable outpost roles, and defended-siege state transitions.
+- Distinct military-site rules: headquarters/castles recruit from recovering local manpower pools, while mines allow one guard and never recruit locally.
 
 ## Open in Unity
 
@@ -72,6 +73,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - See `PERFORMANCE_GUIDE_KO.md` for scale targets and profiling rules.
 - See `WORLD_MAP_RULES_KO.md` for the 80×48 flat-world, horizontal wrapping, controls, and PvP coordinate rules.
 - See `CASTLE_CONTROL_RULES_KO.md` for neutral-castle capture, garrisons, roles, siege transitions, and the single-player-to-server boundary.
+- See `GARRISON_RECRUITMENT_RULES_KO.md` for headquarters/castle capacities, local recruitment pools, and mine-guard rules.
 - See `LAND_SEA_MOVEMENT_KO.md` for port-based embarkation, sea transport, landing, and authoritative-server rules.
 - See `GAME_SCOPE_REVIEW_KO.md` for what to add next, what to defer, and the recommended mine-density reduction.
 - See `REALTIME_GAME_CONTINUATION_README_KO.md` for the pause/1–5× realtime handoff state and the copy-ready continuation prompt.

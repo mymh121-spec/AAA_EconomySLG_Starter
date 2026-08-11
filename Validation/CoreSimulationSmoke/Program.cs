@@ -132,6 +132,14 @@ Check(captureGameplay.TryIssueMove(
 captureGameplay.AdvanceFixedSteps(2);
 Check(captureGameplay.FindMine(captureCoordinate).OwnerFactionId == "player",
     "광산 점령 및 소유권 변경");
+Check(captureGameplay.FindMine(captureCoordinate).GuardUnitId ==
+      captureUnit.Id,
+    "광산 공식 경비대 1개 기록");
+Check(!captureGameplay.CanCreateUnitAt(
+        "player",
+        captureCoordinate,
+        out _),
+    "광산 현지 징병 금지");
 Check(captureGameplay.CreateDailyProduction()[0].IronAmount == 12m,
     "점령 광산의 일일 생산량 반영");
 
@@ -232,6 +240,18 @@ Check(castleGameplay.TrySetCastleRole(
     "점령 성 역할 선택");
 Check(controlledCastle.Role == MapCastleRole.IndustrialCity,
     "성 역할 상태 저장");
+Check(castleGameplay.TryCreateUnitAt(
+        "player",
+        castleCoordinate,
+        UnitArchetype.Spearman,
+        UnitWeaponType.Spear,
+        ArmorClass.Light,
+        out MapUnitState localCastleRecruit,
+        out _),
+    "점령 성의 지역 징집 인력으로 현지 징병");
+Check(localCastleRecruit.Coordinate.Equals(castleCoordinate) &&
+      controlledCastle.GarrisonUnitCount == 2,
+    "현지 징병 부대의 성 주둔 기록");
 
 var resources = new List<ResourceId>
 {
