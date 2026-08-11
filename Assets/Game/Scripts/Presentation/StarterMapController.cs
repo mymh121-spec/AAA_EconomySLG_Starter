@@ -86,20 +86,25 @@ namespace Game.Presentation
         [SerializeField] private bool createCameraIfMissing = true;
         [SerializeField] private bool createLightIfMissing = true;
 
-        private static readonly Color PlayerStartColor =
-            new Color(0.16f, 0.43f, 0.82f);
-        private static readonly Color NormalMineColor =
-            new Color(0.36f, 0.39f, 0.43f);
-        private static readonly Color GoldMineColor =
-            new Color(0.88f, 0.58f, 0.08f);
-        private static readonly Color UnclaimedMineControlColor =
-            new Color(0.24f, 0.27f, 0.31f);
-        private static readonly Color[] EnemyColors =
+        [Header("세력과 거점 색상")]
+        [SerializeField] private Color playerFactionColor =
+            new Color(0.05f, 0.42f, 1.00f, 1f);
+        [SerializeField] private Color[] enemyFactionColors =
         {
-            new Color(0.78f, 0.18f, 0.18f),
-            new Color(0.72f, 0.27f, 0.68f),
-            new Color(0.86f, 0.39f, 0.12f)
+            new Color(0.92f, 0.10f, 0.12f, 1f),
+            new Color(0.68f, 0.16f, 0.88f, 1f),
+            new Color(1.00f, 0.38f, 0.04f, 1f)
         };
+        [SerializeField] private Color neutralFactionColor =
+            new Color(0.72f, 0.72f, 0.72f, 1f);
+        [SerializeField] private Color ironMineStructureColor =
+            new Color(0.30f, 0.36f, 0.46f, 1f);
+        [SerializeField] private Color goldMineStructureColor =
+            new Color(1.00f, 0.65f, 0.03f, 1f);
+        [SerializeField] private Color unclaimedIronMineFloorColor =
+            new Color(0.22f, 0.32f, 0.46f, 1f);
+        [SerializeField] private Color unclaimedGoldMineFloorColor =
+            new Color(0.56f, 0.35f, 0.04f, 1f);
 
         private readonly GridMapLayoutGenerator _layoutGenerator =
             new GridMapLayoutGenerator();
@@ -115,6 +120,7 @@ namespace Game.Presentation
         private Sprite _goldMineSprite;
         private Texture2D _mapTexture;
         private Material _mapMaterial;
+        private Material _blockMaterial;
         private Mesh _mapMesh;
         private Vector3 _cameraFocus;
         private Vector3 _lastMousePosition;
@@ -813,7 +819,7 @@ namespace Game.Presentation
             ForEachSurfaceCopy(xOffset => CreateCastle(
                 $"플레이어 성_{coordinate.X}_{coordinate.Y}",
                 ToWorldPosition(coordinate, xOffset),
-                PlayerStartColor));
+                playerFactionColor));
         }
 
         private void BuildOpponentStarts(
@@ -823,7 +829,7 @@ namespace Game.Presentation
             {
                 int opponentIndex = i;
                 GridCoordinate coordinate = opponentStarts[i];
-                Color color = EnemyColors[i % EnemyColors.Length];
+                Color color = GetEnemyFactionColor(i);
                 ForEachSurfaceCopy(xOffset => CreateCastle(
                     $"경쟁 기업 {opponentIndex + 1} 성_{coordinate.X}_{coordinate.Y}",
                     ToWorldPosition(coordinate, xOffset),
@@ -833,18 +839,28 @@ namespace Game.Presentation
 
         private void CreateCastle(string name, Vector3 position, Color color)
         {
+            // Castle architecture and ownership are separate visual layers.
+            // The wide floor plate remains visible even when zoomed out and
+            // makes each faction readable without inspecting the castle.
+            CreateSiteFloorPlate(
+                name + "_세력 바닥",
+                position,
+                color,
+                tileSize * 1.08f);
+
+            Color wallColor = Color.Lerp(color, Color.black, 0.18f);
             CreateBlock(
                 name + "_성벽",
                 position + new Vector3(0f, 0.16f, 0f),
-                new Vector3(tileSize * 0.94f, 0.26f, tileSize * 0.94f),
-                color,
+                new Vector3(tileSize * 0.82f, 0.26f, tileSize * 0.82f),
+                wallColor,
                 _generatedRoot,
                 false);
             CreateBlock(
                 name + "_중앙성채",
                 position + new Vector3(0f, 0.58f, 0f),
                 new Vector3(tileSize * 0.46f, 0.72f, tileSize * 0.46f),
-                color,
+                wallColor,
                 _generatedRoot,
                 false);
 
@@ -896,7 +912,9 @@ namespace Game.Presentation
         {
             bool isGold = mine.Kind == MineKind.Gold;
             string mineName = isGold ? "금광" : "철광산";
-            Color mineColor = isGold ? GoldMineColor : NormalMineColor;
+            Color mineColor = isGold
+                ? goldMineStructureColor
+                : ironMineStructureColor;
             ForEachSurfaceCopy(xOffset =>
             {
                 Vector3 position = ToWorldPosition(
@@ -1094,7 +1112,9 @@ namespace Game.Presentation
         private Color GetMineControlColor(MapMineControlState mine)
         {
             Color currentColor = string.IsNullOrEmpty(mine.OwnerFactionId)
-                ? UnclaimedMineControlColor
+                ? mine.Kind == MineKind.Gold
+                    ? unclaimedGoldMineFloorColor
+                    : unclaimedIronMineFloorColor
                 : GetFactionColor(mine.OwnerFactionId);
             if (string.IsNullOrEmpty(mine.CapturingFactionId))
                 return currentColor;
@@ -1108,17 +1128,45 @@ namespace Game.Presentation
                 0.35f + progress * 0.65f);
         }
 
-        private static Color GetFactionColor(string factionId)
+        private Color GetFactionColor(string factionId)
         {
             if (string.Equals(factionId, "player", StringComparison.Ordinal))
-                return PlayerStartColor;
+                return playerFactionColor;
             if (string.Equals(factionId, "ai_1", StringComparison.Ordinal))
-                return EnemyColors[0];
+                return GetEnemyFactionColor(0);
             if (string.Equals(factionId, "ai_2", StringComparison.Ordinal))
-                return EnemyColors[1];
+                return GetEnemyFactionColor(1);
             if (string.Equals(factionId, "ai_3", StringComparison.Ordinal))
-                return EnemyColors[2];
-            return new Color(0.72f, 0.72f, 0.72f);
+                return GetEnemyFactionColor(2);
+            return neutralFactionColor;
+        }
+
+        private Color GetEnemyFactionColor(int enemyIndex)
+        {
+            if (enemyFactionColors == null || enemyFactionColors.Length == 0)
+            {
+                return new Color(0.92f, 0.10f, 0.12f, 1f);
+            }
+
+            int safeIndex = PositiveModulo(
+                enemyIndex,
+                enemyFactionColors.Length);
+            return enemyFactionColors[safeIndex];
+        }
+
+        private void CreateSiteFloorPlate(
+            string objectName,
+            Vector3 position,
+            Color color,
+            float size)
+        {
+            CreateBlock(
+                objectName,
+                position + new Vector3(0f, 0.055f, 0f),
+                new Vector3(size, 0.09f, size),
+                color,
+                _generatedRoot,
+                false);
         }
 
         private void HandleGameplayStateChanged()
@@ -1226,7 +1274,34 @@ namespace Game.Presentation
                 coordinate.Y * tileSize - heightOffset);
         }
 
-        private static GameObject CreateBlock(
+        private Material GetOrCreateBlockMaterial()
+        {
+            if (_blockMaterial != null)
+                return _blockMaterial;
+
+            Shader shader =
+                Shader.Find("Universal Render Pipeline/Unlit") ??
+                Shader.Find("Unlit/Color") ??
+                Shader.Find("Sprites/Default") ??
+                Shader.Find("Standard");
+            if (shader == null)
+            {
+                throw new InvalidOperationException(
+                    "거점 색상 표시용 셰이더를 찾지 못했습니다.");
+            }
+
+            _blockMaterial = new Material(shader)
+            {
+                name = "세력 색상 공유 재질"
+            };
+            if (_blockMaterial.HasProperty("_BaseColor"))
+                _blockMaterial.SetColor("_BaseColor", Color.white);
+            if (_blockMaterial.HasProperty("_Color"))
+                _blockMaterial.SetColor("_Color", Color.white);
+            return _blockMaterial;
+        }
+
+        private GameObject CreateBlock(
             string objectName,
             Vector3 position,
             Vector3 scale,
@@ -1240,10 +1315,12 @@ namespace Game.Presentation
             block.transform.position = position;
             block.transform.localScale = scale;
 
+            Renderer renderer = block.GetComponent<Renderer>();
+            renderer.sharedMaterial = GetOrCreateBlockMaterial();
             var properties = new MaterialPropertyBlock();
             properties.SetColor("_Color", color);
             properties.SetColor("_BaseColor", color);
-            block.GetComponent<Renderer>().SetPropertyBlock(properties);
+            renderer.SetPropertyBlock(properties);
             Collider collider = block.GetComponent<Collider>();
             if (colliderEnabled)
             {
@@ -1430,9 +1507,11 @@ namespace Game.Presentation
             _mapSurfaceColliders.Clear();
             _iconBillboards.Clear();
             DestroyRuntimeAsset(_mapMaterial);
+            DestroyRuntimeAsset(_blockMaterial);
             DestroyRuntimeAsset(_mapTexture);
             DestroyRuntimeAsset(_mapMesh);
             _mapMaterial = null;
+            _blockMaterial = null;
             _mapTexture = null;
             _mapMesh = null;
         }
@@ -1505,6 +1584,7 @@ namespace Game.Presentation
             DestroyRuntimeAsset(_normalMineSprite);
             DestroyRuntimeAsset(_goldMineSprite);
             DestroyRuntimeAsset(_mapMaterial);
+            DestroyRuntimeAsset(_blockMaterial);
             DestroyRuntimeAsset(_mapTexture);
             DestroyRuntimeAsset(_mapMesh);
         }
