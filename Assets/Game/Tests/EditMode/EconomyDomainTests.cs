@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using NUnit.Framework;
 using Game.Application;
@@ -23,6 +24,65 @@ namespace Game.Tests
 {
     public sealed class EconomyDomainTests
     {
+        [Test]
+        public void MatchmakingRequest_ValidatesHiveConnectionInputs()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new PvpMatchmakingRequest(0, 100, string.Empty));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new PvpMatchmakingRequest(1, -1, string.Empty));
+            Assert.Throws<ArgumentException>(() =>
+                new PvpMatchmakingRequest(
+                    1,
+                    100,
+                    new string('가', 257)));
+
+            var valid = new PvpMatchmakingRequest(7, 1200, "서울 서버");
+
+            Assert.That(valid.MatchId, Is.EqualTo(7));
+            Assert.That(valid.Point, Is.EqualTo(1200));
+            Assert.That(valid.ExtraData, Is.EqualTo("서울 서버"));
+        }
+
+        [TestCase("matchingInProgress", "", PvpMatchmakingStatus.Searching)]
+        [TestCase("matched", "", PvpMatchmakingStatus.Matched)]
+        [TestCase("timeout", "", PvpMatchmakingStatus.TimedOut)]
+        [TestCase("", "requested", PvpMatchmakingStatus.Searching)]
+        [TestCase("", "notRequested", PvpMatchmakingStatus.Idle)]
+        public void MatchmakingStatusMapper_MapsHiveStatuses(
+            string matchingStatus,
+            string requestStatus,
+            PvpMatchmakingStatus expected)
+        {
+            Assert.That(
+                PvpMatchmakingStatusMapper.FromExternalStatus(
+                    matchingStatus,
+                    requestStatus),
+                Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void MatchmakingSnapshot_CopiesMatchedPlayerCollection()
+        {
+            var source = new List<PvpMatchedPlayer>
+            {
+                new PvpMatchedPlayer(10L, 900, "기업 A")
+            };
+            var snapshot = new PvpMatchmakingSnapshot(
+                "HIVE Matchmaking",
+                1,
+                PvpMatchmakingStatus.Matched,
+                "완료",
+                "external-match",
+                source);
+
+            source.Clear();
+
+            Assert.That(snapshot.IsTerminal, Is.True);
+            Assert.That(snapshot.Players.Count, Is.EqualTo(1));
+            Assert.That(snapshot.Players[0].PlayerId, Is.EqualTo(10L));
+        }
+
         [Test]
         public void RealtimeClock_SupportsPauseAndOneToFiveTimesSpeed()
         {

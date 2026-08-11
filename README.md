@@ -24,7 +24,7 @@ Unity C# starter architecture for an economic simulation + SLG game.
 ## Open in Unity
 
 1. Open this folder as a Unity project.
-2. Use Unity 6.3 LTS `6000.3.20f1`.
+2. Use Unity 6.3 LTS `6000.3.21f1`.
 3. Open the menu `게임 > 기본 경제 에셋 생성` if you want to regenerate the sample data.
 4. Reference `Assets/Game/Scripts/Application/SimulationEngine.cs` as the entry point for the simulation.
 
@@ -47,7 +47,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - Map play is real-time: a unit has 10 stamina, movement costs 1 stamina, and 1 stamina regenerates every six in-game hours. Speed buttons affect the clock, movement, capture, AI, and stamina recovery together.
 - Units use the existing six military archetypes: swordsman, spearman, maceman, archer, slinger, and cavalry. The headquarters panel lets the player cycle the unit type before recruitment.
 - Left-clicking selects a tile. Right-clicking opens context actions for troop inspection, missions, movement, mining, and capture. Speed is selected with the on-screen 1–5× buttons, while pause/resume also supports `Space`.
-- Multiplayer asks for a server endpoint and runtime access token, then uses the authoritative PvP server.
+- Multiplayer supports direct authoritative-server connection plus an optional HIVE individual-matchmaking path. HIVE finds players; the C# server still resolves the game.
 - Returning to mode selection disconnects multiplayer and prevents both simulation paths from running together.
 - See `GAME_MODE_SELECTION_KO.md` for the player flow and setup details.
 
@@ -66,9 +66,11 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - `PvpAuthoritativeGateway` provides server-authoritative routing, bounded idempotency caching, request-conflict detection, and reconnect snapshots.
 - Open Unity Test Runner and run `Game.Tests.EditMode` to verify market, inventory, production, AI, PvP, finance, game-mode, turn, and campaign rules.
 - See `PVP_PREPARATION_KO.md` for the authoritative-server protocol and remaining network work.
+- See `HIVE_CONNECTION_KO.md` for the connection-first HIVE adapter, installation, console setup, and current limitations.
 - See `UNITY_6_3_MIGRATION_KO.md` for the editor migration status and validation procedure.
 - See `PERFORMANCE_GUIDE_KO.md` for scale targets and profiling rules.
 - See `WORLD_MAP_RULES_KO.md` for the 80×48 flat-world, horizontal wrapping, controls, and PvP coordinate rules.
+- See `LAND_SEA_MOVEMENT_KO.md` for port-based embarkation, sea transport, landing, and authoritative-server rules.
 - See `REALTIME_GAME_CONTINUATION_README_KO.md` for the pause/1–5× realtime handoff state and the copy-ready continuation prompt.
 
 ## Architecture

@@ -25,6 +25,12 @@ $relativeFiles = New-Object 'System.Collections.Generic.List[string]'
 $relativeFiles.Add("RUN_SINGLE_PLAYER.cmd")
 $relativeFiles.Add("RUN_WINDOWS_EXE.cmd")
 $relativeFiles.Add("PREPARE_UNITY_LAUNCH.ps1")
+$relativeFiles.Add("PREPARE_HIVE_CONNECTION_SDK.cmd")
+$relativeFiles.Add("PREPARE_HIVE_CONNECTION_SDK.ps1")
+$relativeFiles.Add("HIVE_CONNECTION_KO.md")
+$relativeFiles.Add("LAND_SEA_MOVEMENT_KO.md")
+$relativeFiles.Add("NEXT_STEPS_KO.txt")
+$relativeFiles.Add("README.md")
 $relativeFiles.Add("Packages\manifest.json")
 
 $sourceGameRoot = Join-Path $sourceProject "Assets\Game"

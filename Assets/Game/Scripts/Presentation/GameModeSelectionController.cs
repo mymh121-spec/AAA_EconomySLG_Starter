@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using System.Threading.Tasks;
+using Game.Application.PvP;
 using Game.Application.Session;
 using Game.Application.World;
 using Game.Domain.Military;
@@ -34,6 +35,9 @@ namespace Game.Presentation
         private VisualElement _multiplayerView;
         private TextField _endpointField;
         private TextField _tokenField;
+        private TextField _hiveMatchIdField;
+        private TextField _hivePointField;
+        private TextField _hiveExtraDataField;
         private Label _connectionStatus;
         private Label _singlePlayerStatus;
         private Label _singleMapSelectionStatus;
@@ -207,6 +211,8 @@ namespace Game.Presentation
                 return;
 
             multiplayerSession.StateChanged += HandleMultiplayerStateChanged;
+            multiplayerSession.MatchmakingChanged +=
+                HandleMultiplayerMatchmakingChanged;
             multiplayerSession.ErrorRaised += HandleMultiplayerError;
             _multiplayerEventsBound = true;
         }
@@ -289,8 +295,45 @@ namespace Game.Presentation
             };
             StyleInput(_tokenField);
             _connectionView.Add(_tokenField);
+
+            var hiveTitle = new Label("HIVE 자동 매칭 · 선택 기능");
+            hiveTitle.style.fontSize = 18;
+            hiveTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            hiveTitle.style.color = new Color(0.39f, 0.78f, 1f);
+            hiveTitle.style.marginTop = 8;
+            hiveTitle.style.marginBottom = 6;
+            _connectionView.Add(hiveTitle);
+
+            _hiveMatchIdField = new TextField("HIVE 매치 ID")
+            {
+                value = "1"
+            };
+            StyleInput(_hiveMatchIdField);
+            _connectionView.Add(_hiveMatchIdField);
+
+            _hivePointField = new TextField("매칭 점수")
+            {
+                value = "1000"
+            };
+            StyleInput(_hivePointField);
+            _connectionView.Add(_hivePointField);
+
+            _hiveExtraDataField = new TextField("추가 정보")
+            {
+                value = "플레이어"
+            };
+            StyleInput(_hiveExtraDataField);
+            _connectionView.Add(_hiveExtraDataField);
             _connectionStatus = AddStatus(_connectionView);
-            AddButton(_connectionView, "서버 연결", ConnectMultiplayer);
+            AddButton(
+                _connectionView,
+                "HIVE에서 상대 찾고 서버 연결",
+                ConnectMultiplayerThroughHive);
+            AddButton(
+                _connectionView,
+                "HIVE 매칭 취소",
+                CancelHiveMatchmaking);
+            AddButton(_connectionView, "직접 서버 연결", ConnectMultiplayer);
             AddButton(_connectionView, "뒤로", ShowModeSelection);
 
             _singlePlayerView = CreateCard(
@@ -375,7 +418,11 @@ namespace Game.Presentation
             EnsureMultiplayerSession();
             SetServiceActive(singlePlayerSimulation, false);
             SetServiceActive(multiplayerSession, true);
-            _connectionStatus.text = "토큰은 연결에만 사용되며 저장하지 않습니다.";
+            _connectionStatus.text = multiplayerSession.IsHiveMatchmakingAvailable
+                ? "HIVE 자동 매칭 또는 직접 서버 연결을 선택하세요. " +
+                  "토큰은 저장하지 않습니다."
+                : "직접 서버 연결은 지금 사용할 수 있습니다. HIVE 자동 매칭은 " +
+                  "SDK 설치와 HIVE 콘솔 설정 후 활성화됩니다.";
             SetVisible(_modeView, false);
             SetVisible(_singlePlayerView, false);
             SetVisible(_singlePlayerResultView, false);
@@ -393,6 +440,13 @@ namespace Game.Presentation
             string token = _tokenField.value;
             _tokenField.value = string.Empty;
 
+            if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
+            {
+                _connectionStatus.text =
+                    "게임 서버가 발급한 32자 이상의 접속 토큰이 필요합니다.";
+                return;
+            }
+
             if (!multiplayerSession.ConfigureServerEndpoint(endpoint))
             {
                 _connectionStatus.text = multiplayerSession.LastError;
@@ -409,15 +463,114 @@ namespace Game.Presentation
                     return;
                 }
 
-                SetVisible(_connectionView, false);
-                SetVisible(_multiplayerView, true);
-                ShowGameplayHud();
-                RefreshMultiplayerStatus(multiplayerSession.CurrentState);
+                EnterConnectedMultiplayer();
             }
             finally
             {
                 token = string.Empty;
             }
+        }
+
+        private async void ConnectMultiplayerThroughHive()
+        {
+            if (multiplayerSession.IsRequestRunning ||
+                multiplayerSession.IsMatchmakingRequestRunning)
+            {
+                return;
+            }
+
+            string endpoint = _endpointField.value?.Trim();
+            string token = _tokenField.value;
+            if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
+            {
+                _connectionStatus.text =
+                    "HIVE 매칭 뒤 게임 서버에 들어갈 32자 이상의 접속 " +
+                    "토큰이 필요합니다.";
+                return;
+            }
+            if (!int.TryParse(_hiveMatchIdField.value, out int matchId) ||
+                matchId <= 0)
+            {
+                _connectionStatus.text =
+                    "HIVE 콘솔에 등록한 1 이상의 매치 ID를 입력하세요.";
+                return;
+            }
+            if (!int.TryParse(_hivePointField.value, out int point) ||
+                point < 0)
+            {
+                _connectionStatus.text = "매칭 점수는 0 이상이어야 합니다.";
+                return;
+            }
+            string extraData = _hiveExtraDataField.value ?? string.Empty;
+            if (extraData.Length > PvpMatchmakingRequest.MaxExtraDataLength)
+            {
+                _connectionStatus.text =
+                    $"추가 정보는 {PvpMatchmakingRequest.MaxExtraDataLength}자 " +
+                    "이하여야 합니다.";
+                return;
+            }
+            if (!multiplayerSession.ConfigureServerEndpoint(endpoint))
+            {
+                _connectionStatus.text = multiplayerSession.LastError;
+                return;
+            }
+
+            _connectionStatus.text = "HIVE 자동 매칭을 시작합니다...";
+            try
+            {
+                PvpMatchmakingSnapshot snapshot =
+                    await multiplayerSession.FindHiveMatchAsync(
+                        matchId,
+                        point,
+                        extraData);
+                if (snapshot == null ||
+                    snapshot.Status != PvpMatchmakingStatus.Matched)
+                {
+                    _connectionStatus.text = snapshot?.Message ??
+                        "HIVE 매칭 결과를 받지 못했습니다.";
+                    return;
+                }
+
+                _connectionStatus.text =
+                    $"HIVE 매칭 완료({snapshot.Players.Count}명). " +
+                    "게임 서버에 접속합니다...";
+                bool connected = await multiplayerSession.ConnectAsync(token);
+                if (!connected)
+                {
+                    _connectionStatus.text = multiplayerSession.LastError;
+                    return;
+                }
+
+                _tokenField.value = string.Empty;
+                EnterConnectedMultiplayer();
+            }
+            catch (Exception exception)
+            {
+                _connectionStatus.text = exception.Message;
+            }
+            finally
+            {
+                token = string.Empty;
+            }
+        }
+
+        private async void CancelHiveMatchmaking()
+        {
+            if (multiplayerSession == null)
+                return;
+
+            _connectionStatus.text = "HIVE 매칭을 취소하는 중입니다...";
+            PvpMatchmakingSnapshot snapshot =
+                await multiplayerSession.CancelHiveMatchmakingAsync();
+            _connectionStatus.text = snapshot.Message;
+        }
+
+        private void EnterConnectedMultiplayer()
+        {
+            SetVisible(_connectionView, false);
+            SetVisible(_multiplayerView, true);
+            ShowGameplayHud();
+            RefreshMultiplayerStatus(multiplayerSession.CurrentState);
         }
 
         private void ToggleSinglePlayerPause()
@@ -706,6 +859,33 @@ namespace Game.Presentation
         private void HandleMultiplayerStateChanged(PvpReconnectDto state)
         {
             RefreshMultiplayerStatus(state);
+        }
+
+        private void HandleMultiplayerMatchmakingChanged(
+            PvpMatchmakingSnapshot snapshot)
+        {
+            if (!_selection.IsMultiplayer ||
+                _connectionStatus == null ||
+                snapshot == null)
+            {
+                return;
+            }
+
+            var builder = new StringBuilder(160)
+                .Append(snapshot.Message);
+            if (!string.IsNullOrWhiteSpace(snapshot.ExternalMatchingId))
+            {
+                builder.Append("\nHIVE 매칭 번호: ")
+                    .Append(snapshot.ExternalMatchingId);
+            }
+            if (snapshot.Players.Count > 0)
+            {
+                builder.Append("\n확인된 참가자: ")
+                    .Append(snapshot.Players.Count)
+                    .Append("명");
+            }
+
+            _connectionStatus.text = builder.ToString();
         }
 
         private void HandleMapCellSelected(MapCellSelection selection)
@@ -2146,6 +2326,8 @@ namespace Game.Presentation
             if (multiplayerSession != null && _multiplayerEventsBound)
             {
                 multiplayerSession.StateChanged -= HandleMultiplayerStateChanged;
+                multiplayerSession.MatchmakingChanged -=
+                    HandleMultiplayerMatchmakingChanged;
                 multiplayerSession.ErrorRaised -= HandleMultiplayerError;
                 multiplayerSession.Disconnect();
                 _multiplayerEventsBound = false;
