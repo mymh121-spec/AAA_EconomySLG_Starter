@@ -205,6 +205,40 @@ namespace Game.Presentation
             RealtimeStateChanged?.Invoke();
         }
 
+        public bool CanAffordPlayerCash(decimal amount)
+        {
+            if (_simulation == null)
+                BuildSimulation();
+
+            return amount >= 0m &&
+                _playerCampaignState?.Company != null &&
+                _playerCampaignState.Company.CanAfford(amount);
+        }
+
+        public bool TrySpendPlayerCash(decimal amount, out string reason)
+        {
+            if (amount < 0m)
+            {
+                reason = "지출 금액은 0 이상이어야 합니다.";
+                return false;
+            }
+
+            if (_simulation == null)
+                BuildSimulation();
+
+            if (_playerCampaignState?.Company == null ||
+                !_playerCampaignState.Company.TrySpend(amount))
+            {
+                reason = $"자금이 부족합니다. 필요 {amount:N0}, " +
+                         $"보유 {PlayerCash:N0}";
+                return false;
+            }
+
+            reason = string.Empty;
+            RealtimeStateChanged?.Invoke();
+            return true;
+        }
+
         public bool TryQueueMarketOrder(
             MarketOrder order,
             string displayName,

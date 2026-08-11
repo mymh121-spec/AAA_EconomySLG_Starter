@@ -55,6 +55,15 @@ namespace Game.Presentation
         private Button _contextMoveUnitButton;
         private Button _contextCaptureMineButton;
         private Button _contextMissionButton;
+        private Button _neutralNpcTopButton;
+        private VisualElement _neutralNpcView;
+        private Label _neutralNpcSelectionStatus;
+        private Label _neutralNpcFeedback;
+        private Button _npcArchetypeButton;
+        private Button _npcWeaponButton;
+        private Button _npcArmorButton;
+        private Button _npcRecruitButton;
+        private Button _npcEquipButton;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
@@ -62,6 +71,8 @@ namespace Game.Presentation
         private bool _multiplayerEventsBound;
         private bool _mapEventsBound;
         private UnitArchetype _pendingUnitArchetype = UnitArchetype.Swordsman;
+        private UnitWeaponType _pendingWeaponType = UnitWeaponType.Sword;
+        private ArmorClass _pendingArmorClass = ArmorClass.Light;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -316,6 +327,7 @@ namespace Game.Presentation
             StyleGameplayHud(_multiplayerView);
             RegisterMapInputGuard(_multiplayerView);
             BuildMapContextMenu(_uiRoot);
+            BuildNeutralNpcInterface(_uiRoot);
         }
 
         private void SelectSinglePlayer()
@@ -565,6 +577,8 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            CloseNeutralNpcView();
+            SetVisible(_neutralNpcTopButton, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.035f, 0.047f, 0.07f, 0.98f);
             _uiRoot.style.alignItems = Align.Center;
@@ -576,6 +590,8 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            CloseNeutralNpcView();
+            SetVisible(_neutralNpcTopButton, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.68f);
             _uiRoot.style.alignItems = Align.Center;
@@ -587,6 +603,8 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            CloseNeutralNpcView();
+            SetVisible(_neutralNpcTopButton, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.76f);
             _uiRoot.style.alignItems = Align.Center;
@@ -603,6 +621,7 @@ namespace Game.Presentation
             _uiRoot.style.backgroundColor = Color.clear;
             _uiRoot.style.alignItems = Align.FlexStart;
             _uiRoot.style.justifyContent = Justify.FlexStart;
+            SetVisible(_neutralNpcTopButton, _selection.IsSinglePlayer);
         }
 
         private void RefreshSinglePlayerStatus()
@@ -636,6 +655,10 @@ namespace Game.Presentation
                     .Append(selectedUnit.Stamina)
                     .Append('/')
                     .Append(selectedUnit.MaxStamina)
+                    .Append(" · ")
+                    .Append(selectedUnit.WeaponDisplayName)
+                    .Append(" / ")
+                    .Append(selectedUnit.ArmorDisplayName)
                     .Append(" · 게임 시간 6시간마다 1 회복");
             }
 
@@ -696,7 +719,7 @@ namespace Game.Presentation
                 _contextMoveUnitButton);
             SetVisible(
                 _contextUnitTypeButton,
-                selection.Content == MapCellContent.PlayerBase);
+                false);
             SetVisible(
                 _contextInspectUnitButton,
                 !string.IsNullOrEmpty(selection.UnitId));
@@ -765,17 +788,92 @@ namespace Game.Presentation
                 return;
             }
 
-            if (!gameplayMap.TryCreatePlayerUnit(
+            decimal cost = UnitEquipmentCatalog.GetRecruitmentCost(
                 _pendingUnitArchetype,
-                out reason))
+                _pendingWeaponType,
+                _pendingArmorClass);
+            if (!singlePlayerSimulation.CanAffordPlayerCash(cost))
             {
-                SetMapActionFeedback(reason);
+                SetNeutralNpcFeedback(
+                    $"자금이 부족합니다. 필요 {cost:N0}, " +
+                    $"보유 {singlePlayerSimulation.PlayerCash:N0}");
                 return;
             }
 
-            SetMapActionFeedback(
-                $"{MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype)} " +
-                "부대를 창설하고 자동으로 선택했습니다.");
+            if (!gameplayMap.TryCreatePlayerUnit(
+                _pendingUnitArchetype,
+                _pendingWeaponType,
+                _pendingArmorClass,
+                out reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+
+            if (!singlePlayerSimulation.TrySpendPlayerCash(cost, out reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+
+            string result =
+                $"{MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype)} · " +
+                $"{UnitEquipmentCatalog.GetWeaponDisplayName(_pendingWeaponType)} · " +
+                $"{UnitEquipmentCatalog.GetArmorDisplayName(_pendingArmorClass)} " +
+                $"구성으로 생산했습니다. 비용 {cost:N0}";
+            SetMapActionFeedback(result);
+            SetNeutralNpcFeedback(result);
+            CloseNeutralNpcView();
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void EquipSelectedPlayerUnit()
+        {
+            if (gameplayMap == null || singlePlayerSimulation == null)
+                return;
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            if (selectedUnit == null)
+            {
+                SetNeutralNpcFeedback("장비를 변경할 플레이어 부대를 먼저 선택하세요.");
+                return;
+            }
+
+            decimal cost = UnitEquipmentCatalog.GetEquipmentCost(
+                _pendingWeaponType,
+                _pendingArmorClass);
+            if (!singlePlayerSimulation.CanAffordPlayerCash(cost))
+            {
+                SetNeutralNpcFeedback(
+                    $"자금이 부족합니다. 필요 {cost:N0}, " +
+                    $"보유 {singlePlayerSimulation.PlayerCash:N0}");
+                return;
+            }
+
+            if (!gameplayMap.TryEquipSelectedPlayerUnit(
+                _pendingWeaponType,
+                _pendingArmorClass,
+                out string reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+
+            if (!singlePlayerSimulation.TrySpendPlayerCash(cost, out reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+
+            string result =
+                $"{selectedUnit.Id} 장비를 " +
+                $"{UnitEquipmentCatalog.GetWeaponDisplayName(_pendingWeaponType)} / " +
+                $"{UnitEquipmentCatalog.GetArmorDisplayName(_pendingArmorClass)}(으)로 " +
+                $"변경했습니다. 비용 {cost:N0}";
+            SetMapActionFeedback(result);
+            SetNeutralNpcFeedback(result);
+            CloseNeutralNpcView();
             RefreshSinglePlayerStatus();
             RefreshSelectedMapActions();
         }
@@ -802,7 +900,39 @@ namespace Game.Presentation
             }
 
             _pendingUnitArchetype = order[next];
+            _pendingWeaponType =
+                UnitEquipmentCatalog.GetDefaultWeapon(_pendingUnitArchetype);
             RefreshUnitTypeButtonLabels();
+            RefreshNeutralNpcView();
+        }
+
+        private void CyclePendingWeapon()
+        {
+            UnitWeaponType[] order =
+            {
+                UnitWeaponType.Sword,
+                UnitWeaponType.Spear,
+                UnitWeaponType.Mace,
+                UnitWeaponType.Bow,
+                UnitWeaponType.Sling,
+                UnitWeaponType.Lance
+            };
+            int next = Array.IndexOf(order, _pendingWeaponType) + 1;
+            _pendingWeaponType = order[next % order.Length];
+            RefreshNeutralNpcView();
+        }
+
+        private void CyclePendingArmor()
+        {
+            ArmorClass[] order =
+            {
+                ArmorClass.Unarmored,
+                ArmorClass.Light,
+                ArmorClass.Heavy
+            };
+            int next = Array.IndexOf(order, _pendingArmorClass) + 1;
+            _pendingArmorClass = order[next % order.Length];
+            RefreshNeutralNpcView();
         }
 
         private void RefreshUnitTypeButtonLabels()
@@ -840,6 +970,9 @@ namespace Game.Presentation
                 : "대기 중";
             SetMapActionFeedback(
                 $"부대 정보 | {owner} | {unit.ArchetypeDisplayName} | " +
+                $"{unit.WeaponDisplayName} / {unit.ArmorDisplayName} | " +
+                $"공격 x{unit.AttackModifier:F2} · 방어 x{unit.DefenseModifier:F2} · " +
+                $"기동 x{unit.MobilityModifier:F2} | " +
                 $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
                 $"위치 {unit.Coordinate} | {movement}");
         }
@@ -972,6 +1105,7 @@ namespace Game.Presentation
                 ? "지도 행동 · 선택된 유닛 없음"
                 : $"지도 행동 · {selectedUnit.ArchetypeDisplayName} " +
                   $"{selectedUnit.Id} {selectedUnit.Coordinate} · " +
+                  $"{selectedUnit.WeaponDisplayName}/{selectedUnit.ArmorDisplayName} · " +
                   $"체력 {selectedUnit.Stamina}/{selectedUnit.MaxStamina}";
 
             ConfigureMapActionButtons(
@@ -982,7 +1116,7 @@ namespace Game.Presentation
             bool atPlayerBase =
                 selection.Content == MapCellContent.PlayerBase;
             bool hasUnit = !string.IsNullOrEmpty(selection.UnitId);
-            SetVisible(_unitTypeButton, atPlayerBase);
+            SetVisible(_unitTypeButton, false);
             SetVisible(_inspectUnitButton, hasUnit);
 
             if (_mapContextMenu != null &&
@@ -993,9 +1127,15 @@ namespace Game.Presentation
                     _contextCreateUnitButton,
                     _contextSelectUnitButton,
                     _contextMoveUnitButton);
-                SetVisible(_contextUnitTypeButton, atPlayerBase);
+                SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
                 ConfigureCaptureMineButton(selection);
+            }
+
+            if (_neutralNpcView != null &&
+                _neutralNpcView.resolvedStyle.display == DisplayStyle.Flex)
+            {
+                RefreshNeutralNpcView();
             }
         }
 
@@ -1204,8 +1344,8 @@ namespace Game.Presentation
             _singleMapActionPanel.Add(_singleMapActionTitle);
 
             _createUnitButton = CreateMapActionButton(
-                "본사에서 유닛 추가 창설",
-                CreatePlayerUnit);
+                "유닛 생산 · 병종과 장비 선택",
+                OpenRecruitmentAtNeutralNpc);
             _unitTypeButton = CreateMapActionButton(
                 "창설 병종: 검병 · 클릭해 변경",
                 CyclePendingUnitArchetype);
@@ -1278,11 +1418,11 @@ namespace Game.Presentation
             _mapContextMenu.Add(_mapContextHint);
 
             _contextCreateUnitButton = CreateMapActionButton(
-                "본사에서 유닛 추가 창설",
+                "유닛 생산 · 병종과 장비 선택",
                 () =>
                 {
-                    CreatePlayerUnit();
                     HideMapContextMenu();
+                    OpenRecruitmentAtNeutralNpc();
                 });
             _contextUnitTypeButton = CreateMapActionButton(
                 "창설 병종: 검병 · 클릭해 변경",
@@ -1335,6 +1475,189 @@ namespace Game.Presentation
             root.Add(_mapContextMenu);
             RegisterMapInputGuard(_mapContextMenu);
             SetVisible(_mapContextMenu, false);
+        }
+
+        private void BuildNeutralNpcInterface(VisualElement root)
+        {
+            _neutralNpcTopButton = new Button(OpenNeutralNpcView)
+            {
+                text = "중립 NPC · 용병/장비 상인"
+            };
+            _neutralNpcTopButton.focusable = false;
+            _neutralNpcTopButton.style.position = Position.Absolute;
+            _neutralNpcTopButton.style.top = 16;
+            _neutralNpcTopButton.style.left = 440;
+            _neutralNpcTopButton.style.right = StyleKeyword.Auto;
+            _neutralNpcTopButton.style.width = 310;
+            _neutralNpcTopButton.style.height = 50;
+            _neutralNpcTopButton.style.fontSize = 17;
+            _neutralNpcTopButton.style.unityFontStyleAndWeight = FontStyle.Bold;
+            _neutralNpcTopButton.style.backgroundColor =
+                new Color(0.42f, 0.27f, 0.12f, 0.98f);
+            _neutralNpcTopButton.style.color = Color.white;
+            root.Add(_neutralNpcTopButton);
+
+            _neutralNpcView = CreateCard(
+                root,
+                "중립 용병·장비 상인",
+                "병종과 장비를 직접 구성해 모집하거나 선택 부대의 장비를 변경합니다.");
+            _neutralNpcView.style.position = Position.Absolute;
+            _neutralNpcView.style.top = 78;
+            _neutralNpcView.style.left = 440;
+            _neutralNpcView.style.right = StyleKeyword.Auto;
+            _neutralNpcView.style.width = 500;
+            _neutralNpcView.style.maxWidth = new Length(48, LengthUnit.Percent);
+            _neutralNpcView.style.paddingLeft = 24;
+            _neutralNpcView.style.paddingRight = 24;
+            _neutralNpcView.style.paddingTop = 22;
+            _neutralNpcView.style.paddingBottom = 22;
+            _neutralNpcView.style.backgroundColor =
+                new Color(0.075f, 0.085f, 0.105f, 0.98f);
+
+            _neutralNpcSelectionStatus = AddStatus(_neutralNpcView);
+            _npcArchetypeButton = CreateMapActionButton(
+                "병종 선택",
+                CyclePendingUnitArchetype);
+            _npcWeaponButton = CreateMapActionButton(
+                "무기 선택",
+                CyclePendingWeapon);
+            _npcArmorButton = CreateMapActionButton(
+                "갑옷 선택",
+                CyclePendingArmor);
+            _npcRecruitButton = CreateMapActionButton(
+                "선택 구성으로 유닛 생산",
+                CreatePlayerUnit);
+            _npcRecruitButton.style.backgroundColor =
+                new Color(0.14f, 0.45f, 0.24f, 1f);
+            _npcEquipButton = CreateMapActionButton(
+                "선택 부대 장비 변경",
+                EquipSelectedPlayerUnit);
+            _npcEquipButton.style.backgroundColor =
+                new Color(0.45f, 0.31f, 0.12f, 1f);
+
+            _neutralNpcView.Add(_npcArchetypeButton);
+            _neutralNpcView.Add(_npcWeaponButton);
+            _neutralNpcView.Add(_npcArmorButton);
+            _neutralNpcView.Add(_npcRecruitButton);
+            _neutralNpcView.Add(_npcEquipButton);
+            _neutralNpcFeedback = AddStatus(_neutralNpcView);
+            AddButton(_neutralNpcView, "닫기", CloseNeutralNpcView);
+
+            RegisterMapInputGuard(_neutralNpcTopButton);
+            RegisterMapInputGuard(_neutralNpcView);
+            SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_neutralNpcView, false);
+        }
+
+        private void OpenRecruitmentAtNeutralNpc()
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            _pendingWeaponType =
+                UnitEquipmentCatalog.GetDefaultWeapon(_pendingUnitArchetype);
+            SetNeutralNpcFeedback(
+                "병종을 고른 뒤 무기와 갑옷을 선택하고 유닛 생산을 누르세요.");
+            OpenNeutralNpcView(false);
+        }
+
+        private void OpenNeutralNpcView()
+        {
+            OpenNeutralNpcView(true);
+        }
+
+        private void OpenNeutralNpcView(bool copySelectedEquipment)
+        {
+            if (!_selection.IsSinglePlayer || _neutralNpcView == null)
+                return;
+
+            MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+            if (copySelectedEquipment && selectedUnit != null)
+            {
+                _pendingUnitArchetype = selectedUnit.Archetype;
+                _pendingWeaponType = selectedUnit.WeaponType;
+                _pendingArmorClass = selectedUnit.ArmorClass;
+                SetNeutralNpcFeedback(
+                    "선택 부대의 현재 장비를 불러왔습니다. 변경할 장비를 고르세요.");
+            }
+            else if (copySelectedEquipment)
+            {
+                SetNeutralNpcFeedback(
+                    "선택 부대가 없습니다. 새 용병을 모집할 수 있습니다.");
+            }
+
+            HideMapContextMenu();
+            SetVisible(_neutralNpcView, true);
+            _neutralNpcView.BringToFront();
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = true;
+            RefreshNeutralNpcView();
+        }
+
+        private void CloseNeutralNpcView()
+        {
+            SetVisible(_neutralNpcView, false);
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = false;
+        }
+
+        private void RefreshNeutralNpcView()
+        {
+            if (_neutralNpcSelectionStatus == null)
+                return;
+
+            string archetypeName =
+                MapUnitState.GetArchetypeDisplayName(_pendingUnitArchetype);
+            string weaponName =
+                UnitEquipmentCatalog.GetWeaponDisplayName(_pendingWeaponType);
+            string armorName =
+                UnitEquipmentCatalog.GetArmorDisplayName(_pendingArmorClass);
+            decimal recruitCost = UnitEquipmentCatalog.GetRecruitmentCost(
+                _pendingUnitArchetype,
+                _pendingWeaponType,
+                _pendingArmorClass);
+            decimal equipmentCost = UnitEquipmentCatalog.GetEquipmentCost(
+                _pendingWeaponType,
+                _pendingArmorClass);
+            MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+
+            _neutralNpcSelectionStatus.text =
+                $"구성: {archetypeName} · {weaponName} · {armorName}\n" +
+                $"능력: 공격 x{UnitEquipmentCatalog.GetAttackModifier(_pendingWeaponType):F2} · " +
+                $"방어 x{UnitEquipmentCatalog.GetDefenseModifier(_pendingArmorClass):F2} · " +
+                $"기동 x{UnitEquipmentCatalog.GetMobilityModifier(_pendingUnitArchetype, _pendingArmorClass):F2}\n" +
+                $"모집비 {recruitCost:N0} · 장비 구입비 {equipmentCost:N0}\n" +
+                (selectedUnit == null
+                    ? "장비 변경 대상: 선택된 부대 없음"
+                    : $"장비 변경 대상: {selectedUnit.ArchetypeDisplayName} {selectedUnit.Id}");
+
+            _npcArchetypeButton.text = $"병종: {archetypeName} · 클릭해 변경";
+            _npcWeaponButton.text = $"무기: {weaponName} · 클릭해 변경";
+            _npcArmorButton.text = $"갑옷: {armorName} · 클릭해 변경";
+            _npcRecruitButton.text = $"유닛 생산 · {recruitCost:N0}";
+            _npcEquipButton.text = selectedUnit == null
+                ? "선택 부대 장비 변경"
+                : $"{selectedUnit.Id} 장비 변경 · {equipmentCost:N0}";
+
+            bool canCreate = gameplayMap != null &&
+                gameplayMap.CanCreatePlayerUnit(out _) &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.CanAffordPlayerCash(recruitCost);
+            bool sameEquipment = selectedUnit != null &&
+                selectedUnit.WeaponType == _pendingWeaponType &&
+                selectedUnit.ArmorClass == _pendingArmorClass;
+            bool canEquip = selectedUnit != null &&
+                !sameEquipment &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.CanAffordPlayerCash(equipmentCost);
+            _npcRecruitButton.SetEnabled(canCreate);
+            _npcEquipButton.SetEnabled(canEquip);
+        }
+
+        private void SetNeutralNpcFeedback(string message)
+        {
+            if (_neutralNpcFeedback != null)
+                _neutralNpcFeedback.text = message ?? string.Empty;
         }
 
         private void PositionMapContextMenu(Vector2 screenPosition)
@@ -1451,9 +1774,15 @@ namespace Game.Presentation
             element.RegisterCallback<PointerLeaveEvent>(
                 _ =>
                 {
-                    if (gameplayMap != null)
+                    if (gameplayMap != null && !IsNeutralNpcViewOpen())
                         gameplayMap.PointerSelectionBlocked = false;
                 });
+        }
+
+        private bool IsNeutralNpcViewOpen()
+        {
+            return _neutralNpcView != null &&
+                _neutralNpcView.resolvedStyle.display == DisplayStyle.Flex;
         }
 
         private static void AddDescription(VisualElement parent, string text)

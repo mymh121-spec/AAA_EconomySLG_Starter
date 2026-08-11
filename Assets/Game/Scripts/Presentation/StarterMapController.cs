@@ -215,12 +215,27 @@ namespace Game.Presentation
             UnitArchetype archetype,
             out string reason)
         {
+            return TryCreatePlayerUnit(
+                archetype,
+                UnitEquipmentCatalog.GetDefaultWeapon(archetype),
+                ArmorClass.Light,
+                out reason);
+        }
+
+        public bool TryCreatePlayerUnit(
+            UnitArchetype archetype,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out string reason)
+        {
             if (!CanCreatePlayerUnit(out reason))
                 return false;
 
             if (!_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
                 archetype,
+                weaponType,
+                armorClass,
                 out MapUnitState unit,
                 out reason))
             {
@@ -231,6 +246,25 @@ namespace Game.Presentation
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
             return true;
+        }
+
+        public bool TryEquipSelectedPlayerUnit(
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 장비를 변경할 플레이어 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.TryChangeEquipment(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                weaponType,
+                armorClass,
+                out reason);
         }
 
         public MapUnitState FindUnitAt(GridCoordinate coordinate)
@@ -689,7 +723,11 @@ namespace Game.Presentation
             {
                 string ownerName = GetFactionDisplayName(unit.OwnerFactionId);
                 detail += $"\n{ownerName} {unit.ArchetypeDisplayName} {unit.Id}" +
-                          $" · 체력 {unit.Stamina}/{unit.MaxStamina}";
+                          $" · {unit.WeaponDisplayName} / {unit.ArmorDisplayName}" +
+                          $" · 체력 {unit.Stamina}/{unit.MaxStamina}" +
+                          $" · 공격 {unit.AttackModifier:F2}" +
+                          $" 방어 {unit.DefenseModifier:F2}" +
+                          $" 기동 {unit.MobilityModifier:F2}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
             }
@@ -964,31 +1002,49 @@ namespace Game.Presentation
                 _gameplayMarkerRoot,
                 false);
 
+            if (unit.ArmorClass != ArmorClass.Unarmored)
+            {
+                bool heavyArmor = unit.ArmorClass == ArmorClass.Heavy;
+                Color armorColor = heavyArmor
+                    ? new Color(0.30f, 0.34f, 0.40f)
+                    : new Color(0.58f, 0.63f, 0.70f);
+                CreateBlock(
+                    unit.Id + "_갑옷",
+                    position + new Vector3(0f, 0.78f, 0f),
+                    new Vector3(
+                        tileSize * width * (heavyArmor ? 1.12f : 1.03f),
+                        heavyArmor ? 0.22f : 0.12f,
+                        tileSize * depth * (heavyArmor ? 1.12f : 1.03f)),
+                    armorColor,
+                    _gameplayMarkerRoot,
+                    false);
+            }
+
             Color accent = selected
                 ? Color.white
                 : Color.Lerp(color, Color.white, 0.55f);
             Vector3 accentPosition = position + new Vector3(0f, 1.05f, 0f);
             Vector3 accentScale;
-            switch (unit.Archetype)
+            switch (unit.WeaponType)
             {
-                case UnitArchetype.Spearman:
+                case UnitWeaponType.Spear:
                     accentPosition += new Vector3(tileSize * 0.18f, 0.08f, 0f);
                     accentScale = new Vector3(tileSize * 0.045f, 0.90f, tileSize * 0.045f);
                     break;
-                case UnitArchetype.Maceman:
+                case UnitWeaponType.Mace:
                     accentPosition += new Vector3(tileSize * 0.18f, 0.02f, 0f);
                     accentScale = new Vector3(tileSize * 0.20f, 0.22f, tileSize * 0.20f);
                     break;
-                case UnitArchetype.Archer:
+                case UnitWeaponType.Bow:
                     accentScale = new Vector3(tileSize * 0.56f, 0.07f, tileSize * 0.07f);
                     break;
-                case UnitArchetype.Slinger:
+                case UnitWeaponType.Sling:
                     accentPosition += new Vector3(tileSize * 0.20f, 0f, 0f);
                     accentScale = new Vector3(tileSize * 0.16f, 0.16f, tileSize * 0.16f);
                     break;
-                case UnitArchetype.Cavalry:
+                case UnitWeaponType.Lance:
                     accentPosition += new Vector3(tileSize * 0.20f, 0f, 0f);
-                    accentScale = new Vector3(tileSize * 0.34f, 0.16f, tileSize * 0.12f);
+                    accentScale = new Vector3(tileSize * 0.54f, 0.08f, tileSize * 0.08f);
                     break;
                 default:
                     accentPosition += new Vector3(tileSize * 0.17f, 0.02f, 0f);

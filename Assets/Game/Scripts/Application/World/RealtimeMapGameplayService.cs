@@ -53,6 +53,18 @@ namespace Game.Application.World
         public string OwnerFactionId { get; }
         public UnitArchetype Archetype { get; }
         public string ArchetypeDisplayName => GetArchetypeDisplayName(Archetype);
+        public UnitWeaponType WeaponType { get; private set; }
+        public ArmorClass ArmorClass { get; private set; }
+        public string WeaponDisplayName =>
+            UnitEquipmentCatalog.GetWeaponDisplayName(WeaponType);
+        public string ArmorDisplayName =>
+            UnitEquipmentCatalog.GetArmorDisplayName(ArmorClass);
+        public decimal AttackModifier =>
+            UnitEquipmentCatalog.GetAttackModifier(WeaponType);
+        public decimal DefenseModifier =>
+            UnitEquipmentCatalog.GetDefenseModifier(ArmorClass);
+        public decimal MobilityModifier =>
+            UnitEquipmentCatalog.GetMobilityModifier(Archetype, ArmorClass);
         public GridCoordinate Coordinate { get; internal set; }
         public GridCoordinate? Destination { get; internal set; }
         public int MovementProgress { get; internal set; }
@@ -66,14 +78,26 @@ namespace Game.Application.World
             string ownerFactionId,
             GridCoordinate coordinate,
             UnitArchetype archetype,
-            int maxStamina)
+            int maxStamina,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass)
         {
             Id = id;
             OwnerFactionId = ownerFactionId;
             Coordinate = coordinate;
             Archetype = archetype;
+            WeaponType = weaponType;
+            ArmorClass = armorClass;
             MaxStamina = Math.Max(1, maxStamina);
             Stamina = MaxStamina;
+        }
+
+        internal void ChangeEquipment(
+            UnitWeaponType weaponType,
+            ArmorClass armorClass)
+        {
+            WeaponType = weaponType;
+            ArmorClass = armorClass;
         }
 
         public static string GetArchetypeDisplayName(UnitArchetype archetype)
@@ -366,6 +390,23 @@ namespace Game.Application.World
             out MapUnitState unit,
             out string reason)
         {
+            return TryCreateUnit(
+                ownerFactionId,
+                archetype,
+                UnitEquipmentCatalog.GetDefaultWeapon(archetype),
+                ArmorClass.Light,
+                out unit,
+                out reason);
+        }
+
+        public bool TryCreateUnit(
+            string ownerFactionId,
+            UnitArchetype archetype,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out MapUnitState unit,
+            out string reason)
+        {
             unit = null;
             if (!CanCreateUnit(ownerFactionId, out reason))
                 return false;
@@ -376,8 +417,39 @@ namespace Game.Application.World
                 ownerFactionId,
                 origin,
                 archetype,
-                _tuning.MaxUnitStamina);
+                _tuning.MaxUnitStamina,
+                weaponType,
+                armorClass);
             _units.Add(unit);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TryChangeEquipment(
+            string ownerFactionId,
+            string unitId,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null)
+            {
+                reason = "장비를 변경할 부대를 찾을 수 없습니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                unit.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 부대 장비는 변경할 수 없습니다.";
+                return false;
+            }
+
+            unit.ChangeEquipment(weaponType, armorClass);
+            reason = string.Empty;
             StateChanged?.Invoke();
             return true;
         }
@@ -650,7 +722,13 @@ namespace Game.Application.World
                     continue;
 
                 unit.MovementProgress++;
-                if (unit.MovementProgress < _tuning.FixedStepsPerMove)
+                int requiredSteps = Math.Max(
+                    1,
+                    (int)Math.Round(
+                        _tuning.FixedStepsPerMove /
+                        (double)unit.MobilityModifier,
+                        MidpointRounding.AwayFromZero));
+                if (unit.MovementProgress < requiredSteps)
                     continue;
 
                 unit.MovementProgress = 0;

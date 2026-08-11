@@ -253,6 +253,52 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_CreatesAndChangesConfiguredEquipment()
+        {
+            var terrain = new GridTerrainKind[3 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                3,
+                2,
+                29,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player");
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    UnitWeaponType.Lance,
+                    ArmorClass.Heavy,
+                    out MapUnitState unit,
+                    out _),
+                Is.True);
+            Assert.That(unit.WeaponType, Is.EqualTo(UnitWeaponType.Lance));
+            Assert.That(unit.ArmorClass, Is.EqualTo(ArmorClass.Heavy));
+            Assert.That(unit.AttackModifier, Is.EqualTo(1.24m));
+            Assert.That(unit.DefenseModifier, Is.EqualTo(1.58m));
+            Assert.That(unit.MobilityModifier, Is.EqualTo(1.1880m));
+
+            Assert.That(
+                service.TryChangeEquipment(
+                    "player",
+                    unit.Id,
+                    UnitWeaponType.Bow,
+                    ArmorClass.Light,
+                    out _),
+                Is.True);
+            Assert.That(unit.WeaponDisplayName, Is.EqualTo("장궁"));
+            Assert.That(unit.ArmorDisplayName, Is.EqualTo("경갑"));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_AiUsesSameMoveAndCaptureRules()
         {
             var terrain = new GridTerrainKind[6 * 3];
