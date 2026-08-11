@@ -23,6 +23,7 @@ $backupRoot = Join-Path $TargetProject ("_codex_backup-" + $stamp)
 
 $relativeFiles = New-Object 'System.Collections.Generic.List[string]'
 $relativeFiles.Add("RUN_SINGLE_PLAYER.cmd")
+$relativeFiles.Add("RUN_WINDOWS_EXE.cmd")
 $relativeFiles.Add("PREPARE_UNITY_LAUNCH.ps1")
 $relativeFiles.Add("Packages\manifest.json")
 
