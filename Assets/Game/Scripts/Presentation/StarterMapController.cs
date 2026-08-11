@@ -92,6 +92,8 @@ namespace Game.Presentation
             new Color(0.36f, 0.39f, 0.43f);
         private static readonly Color GoldMineColor =
             new Color(0.88f, 0.58f, 0.08f);
+        private static readonly Color UnclaimedMineControlColor =
+            new Color(0.24f, 0.27f, 0.31f);
         private static readonly Color[] EnemyColors =
         {
             new Color(0.78f, 0.18f, 0.18f),
@@ -871,18 +873,15 @@ namespace Game.Presentation
             for (int i = 0; i < _gameplayService.Mines.Count; i++)
             {
                 MapMineControlState mine = _gameplayService.Mines[i];
-                if (string.IsNullOrEmpty(mine.OwnerFactionId))
-                    continue;
-
-                Color color = GetFactionColor(mine.OwnerFactionId);
+                Color color = GetMineControlColor(mine);
                 ForEachSurfaceCopy(xOffset => CreateBlock(
                     $"광산 소유권_{mine.Coordinate.X}_{mine.Coordinate.Y}",
                     ToWorldPosition(mine.Coordinate, xOffset) +
-                    new Vector3(0f, 0.52f, 0f),
+                    new Vector3(0f, 0.045f, 0f),
                     new Vector3(
-                        tileSize * 0.24f,
-                        0.20f,
-                        tileSize * 0.24f),
+                        tileSize * 0.78f,
+                        0.07f,
+                        tileSize * 0.78f),
                     color,
                     _gameplayMarkerRoot,
                     false));
@@ -1004,6 +1003,23 @@ namespace Game.Presentation
                 accent,
                 _gameplayMarkerRoot,
                 false);
+        }
+
+        private Color GetMineControlColor(MapMineControlState mine)
+        {
+            Color currentColor = string.IsNullOrEmpty(mine.OwnerFactionId)
+                ? UnclaimedMineControlColor
+                : GetFactionColor(mine.OwnerFactionId);
+            if (string.IsNullOrEmpty(mine.CapturingFactionId))
+                return currentColor;
+
+            float progress = Mathf.Clamp01(
+                mine.CaptureProgress /
+                Mathf.Max(1f, _gameplayService.FixedStepsToCapture));
+            return Color.Lerp(
+                currentColor,
+                GetFactionColor(mine.CapturingFactionId),
+                0.35f + progress * 0.65f);
         }
 
         private static Color GetFactionColor(string factionId)

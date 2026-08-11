@@ -53,6 +53,7 @@ namespace Game.Presentation
         private Button _contextSelectUnitButton;
         private Button _contextInspectUnitButton;
         private Button _contextMoveUnitButton;
+        private Button _contextCaptureMineButton;
         private Button _contextMissionButton;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
@@ -699,6 +700,7 @@ namespace Game.Presentation
             SetVisible(
                 _contextInspectUnitButton,
                 !string.IsNullOrEmpty(selection.UnitId));
+            ConfigureCaptureMineButton(selection);
 
             bool missionTarget = selection.Content == MapCellContent.EnemyBase;
             SetVisible(_contextMissionButton, missionTarget);
@@ -896,6 +898,59 @@ namespace Game.Presentation
             RefreshSelectedMapActions();
         }
 
+        private void CaptureSelectedMine()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            bool isMine = selection.Content == MapCellContent.NormalMine ||
+                          selection.Content == MapCellContent.GoldMine;
+            if (!isMine)
+            {
+                SetMapActionFeedback("이 위치는 점령 가능한 자원 거점이 아닙니다.");
+                return;
+            }
+
+            if (string.Equals(
+                selection.MineOwnerFactionId,
+                "player",
+                StringComparison.Ordinal))
+            {
+                SetMapActionFeedback("이미 플레이어가 점령한 자원 거점입니다.");
+                return;
+            }
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            if (selectedUnit == null)
+            {
+                SetMapActionFeedback("먼저 플레이어 부대를 선택하세요.");
+                return;
+            }
+
+            if (selectedUnit.Coordinate.Equals(selection.Coordinate))
+            {
+                SetMapActionFeedback(
+                    $"{selection.DisplayName} 점령을 진행합니다. " +
+                    "부대를 이 위치에 유지하면 점령이 완료됩니다.");
+                return;
+            }
+
+            if (!gameplayMap.TryMoveSelectedPlayerUnit(
+                selection.Coordinate,
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(
+                $"{selection.DisplayName} 점령 명령을 내렸습니다. " +
+                "부대가 도착하면 점령이 시작됩니다.");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
         private void RefreshSelectedMapActions()
         {
             if (gameplayMap != null && gameplayMap.CurrentSelection.HasValue)
@@ -940,7 +995,29 @@ namespace Game.Presentation
                     _contextMoveUnitButton);
                 SetVisible(_contextUnitTypeButton, atPlayerBase);
                 SetVisible(_contextInspectUnitButton, hasUnit);
+                ConfigureCaptureMineButton(selection);
             }
+        }
+
+        private void ConfigureCaptureMineButton(MapCellSelection selection)
+        {
+            if (_contextCaptureMineButton == null)
+                return;
+
+            bool isMine = selection.Content == MapCellContent.NormalMine ||
+                          selection.Content == MapCellContent.GoldMine;
+            bool alreadyOwned = string.Equals(
+                selection.MineOwnerFactionId,
+                "player",
+                StringComparison.Ordinal);
+            bool hasSelectedUnit = gameplayMap?.SelectedPlayerUnit != null;
+
+            SetVisible(_contextCaptureMineButton, isMine);
+            _contextCaptureMineButton.SetEnabled(
+                isMine && !alreadyOwned && hasSelectedUnit);
+            _contextCaptureMineButton.text = alreadyOwned
+                ? "점령 완료 · 플레이어 소유"
+                : "점령한다";
         }
 
         private void ConfigureMapActionButtons(
@@ -1231,6 +1308,13 @@ namespace Game.Presentation
                     MoveSelectedPlayerUnit();
                     HideMapContextMenu();
                 });
+            _contextCaptureMineButton = CreateMapActionButton(
+                "점령한다",
+                () =>
+                {
+                    CaptureSelectedMine();
+                    HideMapContextMenu();
+                });
             _contextMissionButton = CreateMapActionButton(
                 "미션 정보 · 정찰 / 봉쇄 / 공격",
                 ShowSelectedMissionInformation);
@@ -1245,6 +1329,7 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextSelectUnitButton);
             _mapContextMenu.Add(_contextInspectUnitButton);
             _mapContextMenu.Add(_contextMoveUnitButton);
+            _mapContextMenu.Add(_contextCaptureMineButton);
             _mapContextMenu.Add(_contextMissionButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);
