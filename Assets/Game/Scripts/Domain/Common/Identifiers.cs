@@ -73,6 +73,61 @@ namespace Game.Domain.Common
         public override string ToString() => $"{Value}일차";
     }
 
+    public readonly struct GameCalendarDate : IEquatable<GameCalendarDate>
+    {
+        public const int MonthsPerYear = 12;
+        public const int DaysPerMonth = 30;
+        public const int DaysPerYear = MonthsPerYear * DaysPerMonth;
+
+        public int Year { get; }
+        public int Month { get; }
+        public int Day { get; }
+
+        public GameCalendarDate(int year, int month, int day)
+        {
+            Year = Math.Max(1, year);
+            Month = Math.Clamp(month, 1, MonthsPerYear);
+            Day = Math.Clamp(day, 1, DaysPerMonth);
+        }
+
+        public static GameCalendarDate FromDayNumber(int dayNumber)
+        {
+            int zeroBasedDay = Math.Max(1, dayNumber) - 1;
+            int year = zeroBasedDay / DaysPerYear + 1;
+            int dayOfYear = zeroBasedDay % DaysPerYear;
+            int month = dayOfYear / DaysPerMonth + 1;
+            int day = dayOfYear % DaysPerMonth + 1;
+            return new GameCalendarDate(year, month, day);
+        }
+
+        public bool Equals(GameCalendarDate other)
+        {
+            return Year == other.Year &&
+                   Month == other.Month &&
+                   Day == other.Day;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is GameCalendarDate other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                return ((Year * 397) ^ Month) * 397 ^ Day;
+            }
+        }
+
+        public override string ToString()
+        {
+            return Year == 1
+                ? $"{Month}월 {Day}일"
+                : $"{Year}년 {Month}월 {Day}일";
+        }
+    }
+
     public readonly struct TurnNumber : IEquatable<TurnNumber>
     {
         public int Value { get; }

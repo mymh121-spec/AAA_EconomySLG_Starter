@@ -73,6 +73,8 @@ namespace Game.Application.World
     {
         private readonly Queue<GridCoordinate> _path =
             new Queue<GridCoordinate>();
+        private readonly List<GridCoordinate> _plannedPath =
+            new List<GridCoordinate>();
 
         public string Id { get; }
         public string OwnerFactionId { get; }
@@ -97,6 +99,7 @@ namespace Game.Application.World
         public int Stamina { get; private set; }
         public int StaminaRecoveryProgress { get; private set; }
         public bool IsMoving => _path.Count > 0;
+        public IReadOnlyList<GridCoordinate> PlannedPath => _plannedPath;
 
         internal MapUnitState(
             string id,
@@ -173,8 +176,15 @@ namespace Game.Application.World
         internal void SetPath(IReadOnlyList<GridCoordinate> path)
         {
             _path.Clear();
+            _plannedPath.Clear();
+            if (path.Count > 0)
+                _plannedPath.Add(Coordinate);
+
             for (int i = 0; i < path.Count; i++)
+            {
                 _path.Enqueue(path[i]);
+                _plannedPath.Add(path[i]);
+            }
 
             Destination = path.Count > 0
                 ? path[path.Count - 1]
@@ -189,7 +199,10 @@ namespace Game.Application.World
 
             Coordinate = _path.Dequeue();
             if (_path.Count == 0)
+            {
                 Destination = null;
+                _plannedPath.Clear();
+            }
             return true;
         }
     }

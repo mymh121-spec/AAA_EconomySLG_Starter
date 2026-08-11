@@ -1,4 +1,5 @@
 using Game.Domain.Campaign;
+using Game.Domain.Common;
 using Game.Domain.Localization;
 
 namespace Game.Presentation
@@ -21,13 +22,13 @@ namespace Game.Presentation
                 {
                     return $"캠페인 진행 중 · {power} · " +
                         $"경제 패권 판정은 " +
-                        $"{result.DominanceCheckStartTurn}턴부터";
+                        $"{GameCalendarDate.FromDayNumber(result.DominanceCheckStartTurn)}부터";
                 }
 
                 string streak = result.DominanceConsecutiveTurns > 0
                     ? $", 패권 조건 " +
                       $"{result.DominanceConsecutiveTurns}/" +
-                      $"{result.DominanceRequiredConsecutiveTurns}턴"
+                      $"{result.DominanceRequiredConsecutiveTurns}일"
                     : string.Empty;
                 return $"캠페인 진행 중 · {power}{streak}";
             }
@@ -64,11 +65,11 @@ namespace Game.Presentation
                 case CampaignEndReason.LastCompanyStanding:
                     return "모든 경쟁자 제거";
                 case CampaignEndReason.TurnLimitVictory:
-                    return "30턴 경제력 1위";
+                    return "12개월 종료 경제력 1위";
                 case CampaignEndReason.TurnLimitDefeat:
-                    return "30턴 경제 경쟁 패배";
+                    return "12개월 종료 경제 경쟁 패배";
                 case CampaignEndReason.TurnLimitDraw:
-                    return "30턴 공동 1위";
+                    return "12개월 종료 공동 1위";
                 default:
                     return "승패 미결정";
             }

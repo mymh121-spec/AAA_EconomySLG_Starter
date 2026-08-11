@@ -29,10 +29,10 @@ MonoBehaviour:
   fixedRealtimeStepSeconds: 0.1
   initialGameSpeed: 1
   maxRealtimeStepsPerFrame: 16
-  maxCampaignTurns: 30
-  dominanceCheckStartTurn: 15
+  maxCampaignTurns: 360
+  dominanceCheckStartTurn: 181
   dominanceMultiplier: 3
-  dominanceRequiredTurns: 2
+  dominanceRequiredTurns: 60
   recentProfitMultiplier: 5
   factoryAssetValue: 10000
   warehouseAssetValue: 5000

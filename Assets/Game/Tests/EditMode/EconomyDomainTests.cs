@@ -280,10 +280,18 @@ namespace Game.Tests
                     mineCoordinate,
                     out _),
                 Is.True);
+            Assert.That(unit.IsMoving, Is.True);
+            Assert.That(unit.PlannedPath.Count, Is.EqualTo(2));
+            Assert.That(
+                unit.PlannedPath[0],
+                Is.EqualTo(new GridCoordinate(0, 1)));
+            Assert.That(unit.PlannedPath[1], Is.EqualTo(mineCoordinate));
 
             service.AdvanceFixedSteps(2);
 
             Assert.That(unit.Coordinate, Is.EqualTo(mineCoordinate));
+            Assert.That(unit.IsMoving, Is.False);
+            Assert.That(unit.PlannedPath, Is.Empty);
             Assert.That(
                 service.FindMine(mineCoordinate).OwnerFactionId,
                 Is.EqualTo("player"));
@@ -1158,7 +1166,45 @@ namespace Game.Tests
         }
 
         [Test]
-        public void Campaign_DominanceCheckStartsAtTurn15AndWinsAtTurn16()
+        public void Calendar_ConvertsA360DayCampaignIntoTwelveMonths()
+        {
+            Assert.That(
+                GameCalendarDate.FromDayNumber(1).ToString(),
+                Is.EqualTo("1월 1일"));
+            Assert.That(
+                GameCalendarDate.FromDayNumber(30).ToString(),
+                Is.EqualTo("1월 30일"));
+            Assert.That(
+                GameCalendarDate.FromDayNumber(31).ToString(),
+                Is.EqualTo("2월 1일"));
+            Assert.That(
+                GameCalendarDate.FromDayNumber(360).ToString(),
+                Is.EqualTo("12월 30일"));
+        }
+
+        [Test]
+        public void Operations_OfferThreeDifferentApproachesPerMissionKind()
+        {
+            foreach (WorldOpportunityKind kind in
+                Enum.GetValues(typeof(WorldOpportunityKind)))
+            {
+                var approaches = WorldOperationCatalog.GetApproaches(kind);
+
+                Assert.That(approaches.Count, Is.EqualTo(3));
+                Assert.That(
+                    approaches[0].Approach,
+                    Is.Not.EqualTo(approaches[1].Approach));
+                Assert.That(
+                    approaches[1].Approach,
+                    Is.Not.EqualTo(approaches[2].Approach));
+                Assert.That(
+                    approaches[0].UpfrontCostMultiplier,
+                    Is.GreaterThanOrEqualTo(0m));
+            }
+        }
+
+        [Test]
+        public void Campaign_DominanceRequiresTwoFullMonthsFromMonthSeven()
         {
             CampaignState state = CreateCampaign(
                 300,
@@ -1166,28 +1212,35 @@ namespace Game.Tests
                 50);
             var evaluator = new CampaignVictoryEvaluator(
                 new CampaignRuleSet(
-                    maxTurns: 30,
-                    dominanceCheckStartTurn: 15,
+                    maxTurns: 360,
+                    dominanceCheckStartTurn: 181,
                     dominanceMultiplier: 3,
-                    dominanceRequiredConsecutiveTurns: 2));
+                    dominanceRequiredConsecutiveTurns: 60));
 
-            CampaignTurnResult turn14 = evaluator.Evaluate(
-                new TurnNumber(14),
+            CampaignTurnResult turn180 = evaluator.Evaluate(
+                new TurnNumber(180),
                 state);
-            CampaignTurnResult turn15 = evaluator.Evaluate(
-                new TurnNumber(15),
-                state);
-            CampaignTurnResult turn16 = evaluator.Evaluate(
-                new TurnNumber(16),
-                state);
+            CampaignTurnResult result = null;
+            for (int day = 181; day <= 240; day++)
+            {
+                result = evaluator.Evaluate(
+                    new TurnNumber(day),
+                    state);
+                if (day < 240)
+                {
+                    Assert.That(
+                        result.Outcome,
+                        Is.EqualTo(CampaignOutcome.InProgress));
+                }
+            }
 
-            Assert.That(turn14.Outcome, Is.EqualTo(CampaignOutcome.InProgress));
-            Assert.That(turn14.DominanceConsecutiveTurns, Is.EqualTo(0));
-            Assert.That(turn15.Outcome, Is.EqualTo(CampaignOutcome.InProgress));
-            Assert.That(turn15.DominanceConsecutiveTurns, Is.EqualTo(1));
-            Assert.That(turn16.Outcome, Is.EqualTo(CampaignOutcome.Victory));
+            Assert.That(turn180.Outcome, Is.EqualTo(CampaignOutcome.InProgress));
+            Assert.That(turn180.DominanceConsecutiveTurns, Is.EqualTo(0));
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Outcome, Is.EqualTo(CampaignOutcome.Victory));
+            Assert.That(result.DominanceConsecutiveTurns, Is.EqualTo(60));
             Assert.That(
-                turn16.EndReason,
+                result.EndReason,
                 Is.EqualTo(CampaignEndReason.EconomicDominance));
         }
 
@@ -1228,17 +1281,17 @@ namespace Game.Tests
             var evaluator = new CampaignVictoryEvaluator(
                 new CampaignRuleSet());
 
-            CampaignTurnResult turn15 = evaluator.Evaluate(
-                new TurnNumber(15),
+            CampaignTurnResult turn181 = evaluator.Evaluate(
+                new TurnNumber(181),
                 state);
             state.Participants[1].Company.Receive(100);
-            CampaignTurnResult turn16 = evaluator.Evaluate(
-                new TurnNumber(16),
+            CampaignTurnResult turn182 = evaluator.Evaluate(
+                new TurnNumber(182),
                 state);
 
-            Assert.That(turn15.DominanceConsecutiveTurns, Is.EqualTo(1));
-            Assert.That(turn16.Outcome, Is.EqualTo(CampaignOutcome.InProgress));
-            Assert.That(turn16.DominanceConsecutiveTurns, Is.EqualTo(0));
+            Assert.That(turn181.DominanceConsecutiveTurns, Is.EqualTo(1));
+            Assert.That(turn182.Outcome, Is.EqualTo(CampaignOutcome.InProgress));
+            Assert.That(turn182.DominanceConsecutiveTurns, Is.EqualTo(0));
         }
 
         [Test]
@@ -1267,7 +1320,7 @@ namespace Game.Tests
         }
 
         [Test]
-        public void Campaign_Turn30AwardsVictoryToHighestEconomicPower()
+        public void Campaign_Month12AwardsVictoryToHighestEconomicPower()
         {
             CampaignState state = CreateCampaign(
                 101,
@@ -1275,7 +1328,7 @@ namespace Game.Tests
                 90);
             CampaignTurnResult result =
                 new CampaignVictoryEvaluator(new CampaignRuleSet())
-                    .Evaluate(new TurnNumber(30), state);
+                    .Evaluate(new TurnNumber(360), state);
 
             Assert.That(result.Outcome, Is.EqualTo(CampaignOutcome.Victory));
             Assert.That(

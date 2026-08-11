@@ -26,9 +26,20 @@ namespace Game.Application.World
 
         bool CanPlayerIntervene(string opportunityId, out string reason);
 
+        bool CanPlayerIntervene(
+            string opportunityId,
+            WorldOperationApproach approach,
+            out string reason);
+
         PlayerInterventionResult TryPlayerIntervention(
             string opportunityId,
             decimal playerCapability,
+            TurnNumber turn);
+
+        PlayerInterventionResult TryPlayerIntervention(
+            string opportunityId,
+            decimal playerCapability,
+            WorldOperationApproach approach,
             TurnNumber turn);
     }
 
@@ -138,6 +149,51 @@ namespace Game.Application.World
                 return false;
             }
 
+            return CanPlayerIntervene(
+                opportunityId,
+                WorldOperationCatalog.GetDefault(opportunity.Kind).Approach,
+                out reason);
+        }
+
+        public bool CanPlayerIntervene(
+            string opportunityId,
+            WorldOperationApproach approach,
+            out string reason)
+        {
+            WorldOpportunity opportunity =
+                State.FindOpportunity(opportunityId);
+            if (opportunity == null)
+            {
+                reason = "해당 작전을 찾을 수 없습니다.";
+                return false;
+            }
+            if (opportunity.Status != WorldOpportunityStatus.Offered)
+            {
+                reason = "이미 처리되었거나 진행 중인 작전입니다.";
+                return false;
+            }
+            if (!WorldOperationCatalog.TryGet(
+                opportunity.Kind,
+                approach,
+                out WorldOperationApproachProfile profile))
+            {
+                reason = "이 작전에는 선택한 해결 방식을 사용할 수 없습니다.";
+                return false;
+            }
+
+            decimal cost = CalculateUpfrontCost(opportunity, profile);
+            CompanyEconomyRuntime playerCompany = FindPlayerCompany();
+            if (playerCompany == null)
+            {
+                reason = "플레이어 회사를 찾을 수 없습니다.";
+                return false;
+            }
+            if (!playerCompany.Company.CanAfford(cost))
+            {
+                reason = $"작전 준비금 {cost:N0}원이 필요합니다.";
+                return false;
+            }
+
             reason = string.Empty;
             return true;
         }
@@ -147,37 +203,87 @@ namespace Game.Application.World
             decimal playerCapability,
             TurnNumber turn)
         {
-            if (!CanPlayerIntervene(opportunityId, out string reason))
+            WorldOpportunity opportunity =
+                State.FindOpportunity(opportunityId);
+            WorldOperationApproach approach = opportunity == null
+                ? WorldOperationApproach.Negotiation
+                : WorldOperationCatalog.GetDefault(opportunity.Kind).Approach;
+            return TryPlayerIntervention(
+                opportunityId,
+                playerCapability,
+                approach,
+                turn);
+        }
+
+        public PlayerInterventionResult TryPlayerIntervention(
+            string opportunityId,
+            decimal playerCapability,
+            WorldOperationApproach approach,
+            TurnNumber turn)
+        {
+            if (!CanPlayerIntervene(
+                opportunityId,
+                approach,
+                out string reason))
             {
                 LastPlayerIntervention = new PlayerInterventionResult(
                     false,
                     false,
                     reason,
                     0m,
-                    0m);
+                    0m,
+                    WorldOperationOutcome.None,
+                    approach);
                 return LastPlayerIntervention;
             }
 
             WorldOpportunity opportunity =
                 State.FindOpportunity(opportunityId);
+            WorldOperationCatalog.TryGet(
+                opportunity.Kind,
+                approach,
+                out WorldOperationApproachProfile profile);
+            decimal upfrontCost = CalculateUpfrontCost(opportunity, profile);
+            CompanyEconomyRuntime playerCompany = FindPlayerCompany();
+            if (!playerCompany.Company.TrySpend(upfrontCost))
+            {
+                LastPlayerIntervention = new PlayerInterventionResult(
+                    false,
+                    false,
+                    "다른 지출로 인해 작전 준비금이 부족해졌습니다.",
+                    0m,
+                    0m,
+                    WorldOperationOutcome.None,
+                    approach);
+                return LastPlayerIntervention;
+            }
+
             opportunity.TryAccept();
             decimal effectiveCapability = playerCapability > 0m
                 ? playerCapability
                 : State.PlayerCharacter.GetCapability(opportunity.Kind);
+            effectiveCapability *= profile.CapabilityMultiplier;
             decimal capabilityRatio = effectiveCapability /
                 Math.Max(1m, effectiveCapability +
                     opportunity.Difficulty * 100m);
             decimal successChance = Math.Clamp(
                 0.25m +
                 capabilityRatio * 0.60m +
-                _tuning.PlayerInterventionEfficiency,
+                _tuning.PlayerInterventionEfficiency +
+                profile.SuccessChanceModifier,
                 0.10m,
                 0.98m);
             var random = CreateTurnRandom(
                 turn,
                 StableHash(opportunity.Id) ^ 0x5f3759df);
-            bool success = (decimal)random.NextDouble() <= successChance;
-            opportunity.Resolve(success, "player");
+            decimal roll = (decimal)random.NextDouble();
+            WorldOperationOutcome outcome = DetermineOutcome(
+                roll,
+                successChance);
+            bool success = outcome == WorldOperationOutcome.GreatSuccess ||
+                           outcome == WorldOperationOutcome.Success;
+            bool compromise = outcome == WorldOperationOutcome.Compromise;
+            opportunity.Resolve(outcome, "player", approach);
 
             WorldEventInstance worldEvent =
                 State.FindEvent(opportunity.EventId);
@@ -188,27 +294,54 @@ namespace Game.Application.World
                 if (worldEvent != null)
                 {
                     worldEvent.Resolve(true, "player");
-                    ApplyEventResolution(worldEvent);
+                    ApplyEventResolution(
+                        worldEvent,
+                        profile.ConsequenceStrength);
                     _resolvedEventBuffer.Add(worldEvent);
                 }
-                money = opportunity.MoneyReward;
-                reputation = opportunity.ReputationReward;
-                State.AddPlayerRewards(money, reputation);
-                RewardPlayerCompany(money);
+            }
+            else if (compromise)
+            {
+                worldEvent?.Mitigate(
+                    0.18m * profile.ConsequenceStrength);
             }
             else
             {
-                worldEvent?.Escalate(0.10m);
+                decimal escalation = outcome == WorldOperationOutcome.Disaster
+                    ? profile.FailureEscalation
+                    : profile.FailureEscalation * 0.50m;
+                worldEvent?.Escalate(escalation);
             }
+
+            decimal outcomeRewardMultiplier =
+                GetOutcomeRewardMultiplier(outcome);
+            if (outcomeRewardMultiplier > 0m)
+            {
+                money = opportunity.MoneyReward *
+                    profile.MoneyRewardMultiplier *
+                    outcomeRewardMultiplier;
+                reputation = opportunity.ReputationReward *
+                    profile.ReputationRewardMultiplier *
+                    outcomeRewardMultiplier;
+                State.AddPlayerRewards(money, reputation);
+                RewardPlayerCompany(money);
+            }
+
+            ApplyApproachConsequence(
+                opportunity,
+                worldEvent,
+                profile,
+                outcome);
 
             LastPlayerIntervention = new PlayerInterventionResult(
                 true,
                 success,
-                success
-                    ? "플레이어 개입으로 문제가 빠르게 해결되었습니다."
-                    : "개입은 실패했지만 세계 시뮬레이션은 계속 진행됩니다.",
+                BuildOutcomeMessage(profile.DisplayName, outcome),
                 money,
-                reputation);
+                reputation,
+                outcome,
+                approach,
+                upfrontCost);
             return LastPlayerIntervention;
         }
 
@@ -864,10 +997,14 @@ namespace Game.Application.World
                 reason));
         }
 
-        private void ApplyEventResolution(WorldEventInstance worldEvent)
+        private void ApplyEventResolution(
+            WorldEventInstance worldEvent,
+            decimal strength = 1m)
         {
             if (worldEvent == null)
                 return;
+
+            decimal resolvedStrength = Math.Clamp(strength, 0.10m, 2m);
 
             GeneratedRegionState region = State.World.FindRegion(
                 worldEvent.RegionId);
@@ -877,31 +1014,168 @@ namespace Game.Application.World
                     State.FindResourceSite(worldEvent.TargetId)?.SetActive(true);
                     break;
                 case WorldEventKind.BanditIncrease:
-                    region?.AdjustBanditThreat(-0.35m);
-                    region?.AdjustStability(0.08m);
+                    region?.AdjustBanditThreat(-0.35m * resolvedStrength);
+                    region?.AdjustStability(0.08m * resolvedStrength);
                     break;
                 case WorldEventKind.HarvestFailure:
                 case WorldEventKind.FactoryDisruption:
                 case WorldEventKind.MilitarySupplyShortage:
-                    region?.AdjustStability(0.04m);
+                    region?.AdjustStability(0.04m * resolvedStrength);
                     break;
                 case WorldEventKind.ImportantNpcDeath:
-                    region?.AdjustStability(0.06m);
+                    region?.AdjustStability(0.06m * resolvedStrength);
                     break;
             }
         }
 
-        private void RewardPlayerCompany(decimal amount)
+        private void ApplyApproachConsequence(
+            WorldOpportunity opportunity,
+            WorldEventInstance worldEvent,
+            WorldOperationApproachProfile profile,
+            WorldOperationOutcome outcome)
+        {
+            GeneratedRegionState region = State.World.FindRegion(
+                opportunity.RegionId);
+            decimal outcomeStrength = GetOutcomeConsequenceMultiplier(outcome) *
+                profile.ConsequenceStrength;
+            if (outcomeStrength <= 0m)
+            {
+                if (outcome == WorldOperationOutcome.Disaster)
+                {
+                    region?.AdjustStability(-0.05m);
+                    if (profile.Approach == WorldOperationApproach.CovertAction ||
+                        profile.Approach == WorldOperationApproach.ArmedSecurity)
+                    {
+                        region?.AdjustBanditThreat(0.08m);
+                    }
+                }
+                return;
+            }
+
+            switch (profile.Approach)
+            {
+                case WorldOperationApproach.Negotiation:
+                    region?.AdjustStability(0.035m * outcomeStrength);
+                    break;
+                case WorldOperationApproach.Logistics:
+                    region?.AdjustStability(0.018m * outcomeStrength);
+                    break;
+                case WorldOperationApproach.TechnicalInvestment:
+                    State.FindResourceSite(worldEvent?.TargetId)?
+                        .DiscoverAdditionalReserve(350m * outcomeStrength);
+                    region?.AdjustStability(0.015m * outcomeStrength);
+                    break;
+                case WorldOperationApproach.CovertAction:
+                    region?.AdjustBanditThreat(-0.10m * outcomeStrength);
+                    break;
+                case WorldOperationApproach.ArmedSecurity:
+                    region?.AdjustBanditThreat(-0.16m * outcomeStrength);
+                    region?.AdjustStability(0.012m * outcomeStrength);
+                    break;
+                case WorldOperationApproach.PublicRelief:
+                    region?.AdjustStability(0.075m * outcomeStrength);
+                    break;
+            }
+        }
+
+        private CompanyEconomyRuntime FindPlayerCompany()
         {
             for (int i = 0; i < _economy.Companies.Count; i++)
             {
                 CompanyEconomyRuntime company = _economy.Companies[i];
                 if (company.CampaignState.IsPlayer)
-                {
-                    company.Company.Receive(amount);
-                    return;
-                }
+                    return company;
             }
+
+            return null;
+        }
+
+        private static decimal CalculateUpfrontCost(
+            WorldOpportunity opportunity,
+            WorldOperationApproachProfile profile)
+        {
+            return WorldOperationCatalog.CalculateUpfrontCost(
+                opportunity,
+                profile);
+        }
+
+        private static WorldOperationOutcome DetermineOutcome(
+            decimal roll,
+            decimal successChance)
+        {
+            if (roll <= successChance * 0.18m)
+                return WorldOperationOutcome.GreatSuccess;
+            if (roll <= successChance)
+                return WorldOperationOutcome.Success;
+            if (roll <= Math.Min(0.97m, successChance + 0.16m))
+                return WorldOperationOutcome.Compromise;
+            return roll >= 0.965m
+                ? WorldOperationOutcome.Disaster
+                : WorldOperationOutcome.Failure;
+        }
+
+        private static decimal GetOutcomeRewardMultiplier(
+            WorldOperationOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case WorldOperationOutcome.GreatSuccess:
+                    return 1.25m;
+                case WorldOperationOutcome.Success:
+                    return 1m;
+                case WorldOperationOutcome.Compromise:
+                    return 0.35m;
+                default:
+                    return 0m;
+            }
+        }
+
+        private static decimal GetOutcomeConsequenceMultiplier(
+            WorldOperationOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case WorldOperationOutcome.GreatSuccess:
+                    return 1.25m;
+                case WorldOperationOutcome.Success:
+                    return 1m;
+                case WorldOperationOutcome.Compromise:
+                    return 0.40m;
+                default:
+                    return 0m;
+            }
+        }
+
+        private static string BuildOutcomeMessage(
+            string approachName,
+            WorldOperationOutcome outcome)
+        {
+            string result;
+            switch (outcome)
+            {
+                case WorldOperationOutcome.GreatSuccess:
+                    result = "대성공: 주목표와 추가 이권을 확보했습니다.";
+                    break;
+                case WorldOperationOutcome.Success:
+                    result = "성공: 세계 문제가 해결되고 경제에 반영됩니다.";
+                    break;
+                case WorldOperationOutcome.Compromise:
+                    result = "부분 성공: 피해를 줄였지만 후속 작전이 필요합니다.";
+                    break;
+                case WorldOperationOutcome.Disaster:
+                    result = "대실패: 사태가 악화되고 지역 불안이 커졌습니다.";
+                    break;
+                default:
+                    result = "실패: 목표를 달성하지 못했고 세계는 계속 변합니다.";
+                    break;
+            }
+
+            return $"{approachName} · {result}";
+        }
+
+        private void RewardPlayerCompany(decimal amount)
+        {
+            FindPlayerCompany()?.Company.Receive(amount);
         }
 
         private WorldNpcState FindBestNpc(RegionId regionId)
@@ -1100,6 +1374,7 @@ namespace Game.Application.World
         private readonly IAutonomousWorldTurnService _world;
         private readonly string _opportunityId;
         private readonly decimal _playerCapability;
+        private readonly WorldOperationApproach? _approach;
 
         public CompanyId ActorId { get; }
         public string DisplayName { get; }
@@ -1116,6 +1391,7 @@ namespace Game.Application.World
             _world = world ?? throw new ArgumentNullException(nameof(world));
             _opportunityId = opportunityId ?? string.Empty;
             _playerCapability = Math.Max(0m, playerCapability);
+            _approach = null;
             ActorId = actorId;
             DisplayName = string.IsNullOrWhiteSpace(displayName)
                 ? "세계 사건 개입"
@@ -1123,17 +1399,46 @@ namespace Game.Application.World
             ActionPointCost = Math.Max(1, actionPointCost);
         }
 
+        public InterveneWorldOpportunityTurnCommand(
+            IAutonomousWorldTurnService world,
+            string opportunityId,
+            CompanyId actorId,
+            decimal playerCapability,
+            string displayName,
+            WorldOperationApproach approach,
+            int actionPointCost = 2)
+            : this(
+                world,
+                opportunityId,
+                actorId,
+                playerCapability,
+                displayName,
+                actionPointCost)
+        {
+            _approach = approach;
+        }
+
         public bool CanExecute(
             TurnCommandContext context,
             out string reason)
         {
-            return _world.CanPlayerIntervene(_opportunityId, out reason);
+            return _approach.HasValue
+                ? _world.CanPlayerIntervene(
+                    _opportunityId,
+                    _approach.Value,
+                    out reason)
+                : _world.CanPlayerIntervene(_opportunityId, out reason);
         }
 
         public void Execute(TurnCommandContext context)
         {
-            PlayerInterventionResult result =
-                _world.TryPlayerIntervention(
+            PlayerInterventionResult result = _approach.HasValue
+                ? _world.TryPlayerIntervention(
+                    _opportunityId,
+                    _playerCapability,
+                    _approach.Value,
+                    context.Turn)
+                : _world.TryPlayerIntervention(
                     _opportunityId,
                     _playerCapability,
                     context.Turn);

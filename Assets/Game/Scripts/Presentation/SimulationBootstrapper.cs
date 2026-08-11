@@ -77,9 +77,12 @@ namespace Game.Presentation
             _worldEconomy;
         public AutonomousWorldState CurrentAutonomousWorld =>
             _autonomousWorldState;
+        public PlayerInterventionResult? LastPlayerIntervention =>
+            (_autonomousWorldService as AutonomousWorldSimulationService)?
+                .LastPlayerIntervention;
         public int MaxCampaignTurns => simulationSettings != null
             ? simulationSettings.MaxCampaignTurns
-            : 30;
+            : GameCalendarDate.DaysPerYear;
         public int RealtimeDayNumber =>
             _realtimeClock?.CurrentDayNumber ?? CurrentTurn.Value;
         public int RealtimeHour => _realtimeClock?.HourOfDay ?? 0;
@@ -344,6 +347,48 @@ namespace Game.Presentation
                     _playerCampaignState.Company.Id,
                     playerCapability,
                     displayName),
+                out reason);
+        }
+
+        public bool TryQueueWorldIntervention(
+            string opportunityId,
+            WorldOperationApproach approach,
+            decimal playerCapability,
+            out string reason)
+        {
+            if (_simulation == null)
+                BuildSimulation();
+            if (_autonomousWorldService == null)
+            {
+                reason = "자율 세계 시뮬레이션이 준비되지 않았습니다.";
+                return false;
+            }
+
+            WorldOpportunity opportunity =
+                _autonomousWorldState?.FindOpportunity(opportunityId);
+            string displayName = opportunity == null
+                ? "경제 작전"
+                : opportunity.DisplayName;
+            return _simulation.TryQueuePlayerCommand(
+                new InterveneWorldOpportunityTurnCommand(
+                    _autonomousWorldService,
+                    opportunityId,
+                    _playerCampaignState.Company.Id,
+                    playerCapability,
+                    displayName,
+                    approach),
+                out reason);
+        }
+
+        public bool TryQueueWorldIntervention(
+            string opportunityId,
+            WorldOperationApproach approach,
+            out string reason)
+        {
+            return TryQueueWorldIntervention(
+                opportunityId,
+                approach,
+                playerCapability: 0m,
                 out reason);
         }
 

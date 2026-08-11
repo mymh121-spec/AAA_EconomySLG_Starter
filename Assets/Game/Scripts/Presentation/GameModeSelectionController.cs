@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Game.Application.PvP;
 using Game.Application.Session;
 using Game.Application.World;
+using Game.Domain.Common;
 using Game.Domain.Military;
 using Game.Domain.World;
 using UnityEngine;
@@ -70,6 +71,13 @@ namespace Game.Presentation
         private Button _npcArmorButton;
         private Button _npcRecruitButton;
         private Button _npcEquipButton;
+        private Button _operationBoardTopButton;
+        private VisualElement _operationBoardView;
+        private Label _operationBoardSummary;
+        private Label _operationBoardFeedback;
+        private Button _nextOperationButton;
+        private Button _operationApproachButton;
+        private Button _acceptOperationButton;
         private VisualElement _timeHudView;
         private Label _timeHudLabel;
         private VisualElement _pauseMenuOverlay;
@@ -85,6 +93,9 @@ namespace Game.Presentation
         private UnitWeaponType _pendingWeaponType = UnitWeaponType.Sword;
         private ArmorClass _pendingArmorClass = ArmorClass.Light;
         private GridCoordinate? _pendingRecruitmentOrigin;
+        private int _selectedOperationIndex;
+        private int _selectedOperationApproachIndex;
+        private string _queuedOperationId = string.Empty;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -379,6 +390,7 @@ namespace Game.Presentation
             RegisterMapInputGuard(_multiplayerView);
             BuildMapContextMenu(_uiRoot);
             BuildNeutralNpcInterface(_uiRoot);
+            BuildOperationBoardInterface(_uiRoot);
             BuildTimeHudAndPauseMenu(_uiRoot);
         }
 
@@ -661,10 +673,10 @@ namespace Game.Presentation
                 .Append(CampaignResultKoreanFormatter.GetReasonName(
                     result.EndReason))
                 .Append('\n')
-                .Append("종료 턴: ")
-                .Append(result.ResolvedTurn.Value)
-                .Append(" / ")
-                .Append(singlePlayerSimulation.MaxCampaignTurns)
+                .Append("종료 날짜: ")
+                .Append(GameCalendarDate.FromDayNumber(
+                    result.ResolvedTurn.Value))
+                .Append(" / 전체 12개월")
                 .Append('\n')
                 .Append("승자: ")
                 .Append(winners)
@@ -676,6 +688,9 @@ namespace Game.Presentation
 
         private void ConfirmSinglePlayerResult()
         {
+            _queuedOperationId = string.Empty;
+            _selectedOperationIndex = 0;
+            _selectedOperationApproachIndex = 0;
             singlePlayerSimulation.RestartSimulation();
             gameplayMap?.ResetMap();
             SetVisible(_singlePlayerResultView, false);
@@ -741,7 +756,9 @@ namespace Game.Presentation
 
             HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
+            CloseOperationBoard();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_operationBoardTopButton, false);
             SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.035f, 0.047f, 0.07f, 0.98f);
@@ -756,7 +773,9 @@ namespace Game.Presentation
 
             HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
+            CloseOperationBoard();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_operationBoardTopButton, false);
             SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.68f);
@@ -771,7 +790,9 @@ namespace Game.Presentation
 
             HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
+            CloseOperationBoard();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_operationBoardTopButton, false);
             SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.76f);
@@ -790,6 +811,7 @@ namespace Game.Presentation
             _uiRoot.style.alignItems = Align.FlexStart;
             _uiRoot.style.justifyContent = Justify.FlexStart;
             SetVisible(_neutralNpcTopButton, _selection.IsSinglePlayer);
+            SetVisible(_operationBoardTopButton, _selection.IsSinglePlayer);
             SetVisible(_timeHudView, _selection.IsSinglePlayer);
             SetVisible(_pauseMenuOverlay, false);
             SetVisible(_keyGuideView, false);
@@ -801,12 +823,17 @@ namespace Game.Presentation
             if (_singlePlayerStatus == null || singlePlayerSimulation == null)
                 return;
 
+            GameCalendarDate currentDate = GameCalendarDate.FromDayNumber(
+                singlePlayerSimulation.RealtimeDayNumber);
+            GameCalendarDate settlementDate = GameCalendarDate.FromDayNumber(
+                singlePlayerSimulation.CurrentTurn.Value);
+
             if (_timeHudLabel != null)
             {
                 _timeHudLabel.text = new StringBuilder(96)
                     .Append("현재 ")
-                    .Append(singlePlayerSimulation.RealtimeDayNumber)
-                    .Append("일 ")
+                    .Append(currentDate)
+                    .Append(' ')
                     .Append(singlePlayerSimulation.RealtimeHour.ToString("D2"))
                     .Append(':')
                     .Append(singlePlayerSimulation.RealtimeMinute.ToString("D2"))
@@ -815,10 +842,8 @@ namespace Game.Presentation
                         ? "일시정지"
                         : singlePlayerSimulation.RealtimeSpeedMultiplier + "배속")
                     .Append("\n다음 경제 정산 ")
-                    .Append(singlePlayerSimulation.CurrentTurn.Value)
-                    .Append("일 / 총 ")
-                    .Append(singlePlayerSimulation.MaxCampaignTurns)
-                    .Append("일")
+                    .Append(settlementDate)
+                    .Append(" / 전체 12개월")
                     .ToString();
             }
 
@@ -854,6 +879,7 @@ namespace Game.Presentation
 
             RefreshSinglePlayerStatus();
             RefreshSelectedHeadquartersInventory();
+            RefreshOperationBoard();
             if (singlePlayerSimulation != null &&
                 singlePlayerSimulation.IsCampaignFinished)
             {
@@ -2058,6 +2084,300 @@ namespace Game.Presentation
             SetVisible(_neutralNpcView, false);
         }
 
+        private void BuildOperationBoardInterface(VisualElement root)
+        {
+            _operationBoardTopButton = new Button(OpenOperationBoard)
+            {
+                text = "경제 작전 게시판"
+            };
+            _operationBoardTopButton.focusable = false;
+            _operationBoardTopButton.style.position = Position.Absolute;
+            _operationBoardTopButton.style.top = 16;
+            _operationBoardTopButton.style.left = 770;
+            _operationBoardTopButton.style.right = StyleKeyword.Auto;
+            _operationBoardTopButton.style.width = 270;
+            _operationBoardTopButton.style.height = 50;
+            _operationBoardTopButton.style.fontSize = 17;
+            _operationBoardTopButton.style.unityFontStyleAndWeight =
+                FontStyle.Bold;
+            _operationBoardTopButton.style.backgroundColor =
+                new Color(0.12f, 0.39f, 0.34f, 0.98f);
+            _operationBoardTopButton.style.color = Color.white;
+            root.Add(_operationBoardTopButton);
+
+            _operationBoardView = CreateCard(
+                root,
+                "경제 작전 게시판",
+                "세계에서 실제로 발생한 위기와 기회입니다. 해결 방식에 따라 비용·위험·보상과 후속 경제가 달라집니다.");
+            _operationBoardView.style.position = Position.Absolute;
+            _operationBoardView.style.top = 78;
+            _operationBoardView.style.left = 610;
+            _operationBoardView.style.right = StyleKeyword.Auto;
+            _operationBoardView.style.width = 610;
+            _operationBoardView.style.maxWidth =
+                new Length(52, LengthUnit.Percent);
+            _operationBoardView.style.paddingLeft = 24;
+            _operationBoardView.style.paddingRight = 24;
+            _operationBoardView.style.paddingTop = 22;
+            _operationBoardView.style.paddingBottom = 22;
+            _operationBoardView.style.backgroundColor =
+                new Color(0.055f, 0.105f, 0.105f, 0.98f);
+
+            _operationBoardSummary = AddStatus(_operationBoardView);
+            _operationBoardSummary.style.minHeight = 150;
+            _nextOperationButton = CreateMapActionButton(
+                "다음 작전 보기",
+                CycleSelectedOperation);
+            _operationApproachButton = CreateMapActionButton(
+                "해결 방식 선택",
+                CycleSelectedOperationApproach);
+            _acceptOperationButton = CreateMapActionButton(
+                "선택한 방식으로 작전 준비",
+                QueueSelectedOperation);
+            _acceptOperationButton.style.backgroundColor =
+                new Color(0.10f, 0.48f, 0.30f, 1f);
+            _operationBoardView.Add(_nextOperationButton);
+            _operationBoardView.Add(_operationApproachButton);
+            _operationBoardView.Add(_acceptOperationButton);
+            _operationBoardFeedback = AddStatus(_operationBoardView);
+            AddButton(_operationBoardView, "닫기", CloseOperationBoard);
+
+            RegisterMapInputGuard(_operationBoardTopButton);
+            RegisterMapInputGuard(_operationBoardView);
+            SetVisible(_operationBoardTopButton, false);
+            SetVisible(_operationBoardView, false);
+        }
+
+        private void OpenOperationBoard()
+        {
+            if (!_selection.IsSinglePlayer || _operationBoardView == null)
+                return;
+
+            CloseNeutralNpcView();
+            HideMapContextMenu();
+            SetVisible(_operationBoardView, true);
+            _operationBoardView.BringToFront();
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = true;
+            RefreshOperationBoard();
+        }
+
+        private void CloseOperationBoard()
+        {
+            SetVisible(_operationBoardView, false);
+            if (gameplayMap != null && !IsPauseMenuOpen())
+                gameplayMap.PointerSelectionBlocked = false;
+        }
+
+        private void CycleSelectedOperation()
+        {
+            int offeredCount = CountOfferedOperations();
+            if (offeredCount <= 0)
+                return;
+
+            _selectedOperationIndex =
+                (_selectedOperationIndex + 1) % offeredCount;
+            _selectedOperationApproachIndex = 0;
+            RefreshOperationBoard();
+        }
+
+        private void CycleSelectedOperationApproach()
+        {
+            WorldOpportunity opportunity = GetSelectedOfferedOperation();
+            if (opportunity == null)
+                return;
+
+            var approaches = WorldOperationCatalog.GetApproaches(
+                opportunity.Kind);
+            _selectedOperationApproachIndex =
+                (_selectedOperationApproachIndex + 1) % approaches.Count;
+            RefreshOperationBoard();
+        }
+
+        private void QueueSelectedOperation()
+        {
+            WorldOpportunity opportunity = GetSelectedOfferedOperation();
+            if (opportunity == null || singlePlayerSimulation == null)
+            {
+                SetOperationFeedback("현재 수락할 수 있는 경제 작전이 없습니다.");
+                return;
+            }
+
+            var approaches = WorldOperationCatalog.GetApproaches(
+                opportunity.Kind);
+            int approachIndex = Math.Clamp(
+                _selectedOperationApproachIndex,
+                0,
+                approaches.Count - 1);
+            WorldOperationApproachProfile profile = approaches[approachIndex];
+            if (singlePlayerSimulation.TryQueueWorldIntervention(
+                opportunity.Id,
+                profile.Approach,
+                out string reason))
+            {
+                _queuedOperationId = opportunity.Id;
+                SetOperationFeedback(
+                    $"{profile.DisplayName} 준비 명령을 등록했습니다. " +
+                    "다음 경제 정산 때 결과가 확정됩니다.");
+            }
+            else
+            {
+                SetOperationFeedback(reason);
+            }
+
+            RefreshOperationBoard(false);
+            RefreshSinglePlayerStatus();
+        }
+
+        private void RefreshOperationBoard(bool refreshFeedback = true)
+        {
+            if (_operationBoardSummary == null)
+                return;
+
+            WorldOpportunity queuedOperation = singlePlayerSimulation?
+                .CurrentAutonomousWorld?.FindOpportunity(_queuedOperationId);
+            if (queuedOperation == null ||
+                queuedOperation.Status != WorldOpportunityStatus.Offered)
+            {
+                _queuedOperationId = string.Empty;
+            }
+
+            int offeredCount = CountOfferedOperations();
+            WorldOpportunity opportunity = GetSelectedOfferedOperation();
+            if (opportunity == null)
+            {
+                _operationBoardSummary.text =
+                    "현재 공개된 작전이 없습니다.\n" +
+                    "시장 부족·광산 사고·도적·공장 장애 같은 실제 세계 문제가 " +
+                    "발생하면 계약이 올라옵니다.";
+                _nextOperationButton.SetEnabled(false);
+                _operationApproachButton.SetEnabled(false);
+                _acceptOperationButton.SetEnabled(false);
+                if (refreshFeedback)
+                    RefreshLastOperationFeedback();
+                return;
+            }
+
+            var approaches = WorldOperationCatalog.GetApproaches(
+                opportunity.Kind);
+            _selectedOperationApproachIndex = Math.Clamp(
+                _selectedOperationApproachIndex,
+                0,
+                approaches.Count - 1);
+            WorldOperationApproachProfile profile =
+                approaches[_selectedOperationApproachIndex];
+            decimal upfrontCost = WorldOperationCatalog.CalculateUpfrontCost(
+                opportunity,
+                profile);
+            decimal estimatedReward = opportunity.MoneyReward *
+                profile.MoneyRewardMultiplier;
+            GameCalendarDate deadline = GameCalendarDate.FromDayNumber(
+                opportunity.NpcResolveTurn.Value);
+
+            _operationBoardSummary.text =
+                $"공개 작전 {offeredCount}건 · 선택 " +
+                $"{_selectedOperationIndex + 1}/{offeredCount}\n" +
+                $"{opportunity.DisplayName} · {opportunity.RegionId}\n" +
+                $"마감 {deadline} · 난도 {opportunity.Difficulty:P0}\n" +
+                $"해결 방식: {profile.DisplayName}\n" +
+                $"{profile.Description}\n" +
+                $"준비금 {upfrontCost:N0}원 · 기본 예상 보상 " +
+                $"{estimatedReward:N0}원 · 평판 배율 " +
+                $"x{profile.ReputationRewardMultiplier:F2}";
+            _nextOperationButton.SetEnabled(offeredCount > 1);
+            _operationApproachButton.SetEnabled(approaches.Count > 1);
+            _operationApproachButton.text =
+                $"해결 방식: {profile.DisplayName} · 클릭해 변경";
+            bool alreadyQueued = string.Equals(
+                _queuedOperationId,
+                opportunity.Id,
+                StringComparison.Ordinal);
+            _acceptOperationButton.text = alreadyQueued
+                ? "이 작전은 다음 정산에 실행됩니다"
+                : $"{profile.DisplayName} 준비 · {upfrontCost:N0}원";
+            _acceptOperationButton.SetEnabled(
+                !alreadyQueued &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.PlayerCash >= upfrontCost &&
+                singlePlayerSimulation.RemainingActionPoints >= 2);
+            if (refreshFeedback)
+                RefreshLastOperationFeedback();
+        }
+
+        private int CountOfferedOperations()
+        {
+            var world = singlePlayerSimulation?.CurrentAutonomousWorld;
+            if (world == null)
+                return 0;
+
+            int count = 0;
+            for (int i = 0; i < world.Opportunities.Count; i++)
+            {
+                if (world.Opportunities[i].Status ==
+                    WorldOpportunityStatus.Offered)
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private WorldOpportunity GetSelectedOfferedOperation()
+        {
+            var world = singlePlayerSimulation?.CurrentAutonomousWorld;
+            if (world == null)
+                return null;
+
+            int count = CountOfferedOperations();
+            if (count <= 0)
+            {
+                _selectedOperationIndex = 0;
+                return null;
+            }
+            _selectedOperationIndex = Math.Clamp(
+                _selectedOperationIndex,
+                0,
+                count - 1);
+
+            int offeredIndex = 0;
+            for (int i = 0; i < world.Opportunities.Count; i++)
+            {
+                WorldOpportunity opportunity = world.Opportunities[i];
+                if (opportunity.Status != WorldOpportunityStatus.Offered)
+                    continue;
+                if (offeredIndex == _selectedOperationIndex)
+                    return opportunity;
+                offeredIndex++;
+            }
+            return null;
+        }
+
+        private void RefreshLastOperationFeedback()
+        {
+            PlayerInterventionResult? result =
+                singlePlayerSimulation?.LastPlayerIntervention;
+            if (result.HasValue &&
+                !string.IsNullOrWhiteSpace(result.Value.Message))
+            {
+                SetOperationFeedback(
+                    $"최근 결과: {result.Value.Message}\n" +
+                    $"보상 {result.Value.MoneyReward:N0}원 · 평판 " +
+                    $"{result.Value.ReputationReward:N1} · 준비금 " +
+                    $"{result.Value.UpfrontCost:N0}원");
+            }
+            else
+            {
+                SetOperationFeedback(
+                    "전투 외에도 협상·물류·기술·비밀공작으로 해결할 수 있습니다.");
+            }
+        }
+
+        private void SetOperationFeedback(string message)
+        {
+            if (_operationBoardFeedback != null)
+                _operationBoardFeedback.text = message ?? string.Empty;
+        }
+
         private void OpenRecruitmentAtNeutralNpc()
         {
             if (!_selection.IsSinglePlayer)
@@ -2117,6 +2437,7 @@ namespace Game.Presentation
                     "선택 부대가 없습니다. 새 용병을 모집할 수 있습니다.");
             }
 
+            CloseOperationBoard();
             HideMapContextMenu();
             SetVisible(_neutralNpcView, true);
             _neutralNpcView.BringToFront();
@@ -2287,6 +2608,12 @@ namespace Game.Presentation
 
         private void HandleEscapePressed()
         {
+            if (IsOperationBoardOpen())
+            {
+                CloseOperationBoard();
+                return;
+            }
+
             if (IsNeutralNpcViewOpen())
             {
                 CloseNeutralNpcView();
@@ -2372,6 +2699,12 @@ namespace Game.Presentation
         {
             return _pauseMenuOverlay != null &&
                 _pauseMenuOverlay.resolvedStyle.display == DisplayStyle.Flex;
+        }
+
+        private bool IsOperationBoardOpen()
+        {
+            return _operationBoardView != null &&
+                _operationBoardView.resolvedStyle.display == DisplayStyle.Flex;
         }
 
         private void PositionMapContextMenu(Vector2 screenPosition)
@@ -2490,6 +2823,7 @@ namespace Game.Presentation
                 {
                     if (gameplayMap != null &&
                         !IsNeutralNpcViewOpen() &&
+                        !IsOperationBoardOpen() &&
                         !IsPauseMenuOpen())
                     {
                         gameplayMap.PointerSelectionBlocked = false;

@@ -52,6 +52,298 @@ namespace Game.Domain.World
         Closed
     }
 
+    public enum WorldOperationApproach
+    {
+        Negotiation,
+        Logistics,
+        TechnicalInvestment,
+        CovertAction,
+        ArmedSecurity,
+        PublicRelief
+    }
+
+    public enum WorldOperationOutcome
+    {
+        None,
+        GreatSuccess,
+        Success,
+        Compromise,
+        Failure,
+        Disaster
+    }
+
+    public readonly struct WorldOperationApproachProfile
+    {
+        public WorldOperationApproach Approach { get; }
+        public string DisplayName { get; }
+        public string Description { get; }
+        public decimal CapabilityMultiplier { get; }
+        public decimal SuccessChanceModifier { get; }
+        public decimal MoneyRewardMultiplier { get; }
+        public decimal ReputationRewardMultiplier { get; }
+        public decimal UpfrontCostMultiplier { get; }
+        public decimal ConsequenceStrength { get; }
+        public decimal FailureEscalation { get; }
+
+        public WorldOperationApproachProfile(
+            WorldOperationApproach approach,
+            string displayName,
+            string description,
+            decimal capabilityMultiplier,
+            decimal successChanceModifier,
+            decimal moneyRewardMultiplier,
+            decimal reputationRewardMultiplier,
+            decimal upfrontCostMultiplier,
+            decimal consequenceStrength,
+            decimal failureEscalation)
+        {
+            Approach = approach;
+            DisplayName = displayName ?? approach.ToString();
+            Description = description ?? string.Empty;
+            CapabilityMultiplier = Math.Max(0.10m, capabilityMultiplier);
+            SuccessChanceModifier = Math.Clamp(
+                successChanceModifier,
+                -0.50m,
+                0.50m);
+            MoneyRewardMultiplier = Math.Max(0m, moneyRewardMultiplier);
+            ReputationRewardMultiplier = Math.Max(
+                0m,
+                reputationRewardMultiplier);
+            UpfrontCostMultiplier = Math.Max(0m, upfrontCostMultiplier);
+            ConsequenceStrength = Math.Clamp(
+                consequenceStrength,
+                0.10m,
+                2m);
+            FailureEscalation = Math.Clamp(
+                failureEscalation,
+                0.01m,
+                0.50m);
+        }
+    }
+
+    public static class WorldOperationCatalog
+    {
+        private static readonly WorldOperationApproachProfile[]
+            SuppressBandits =
+            {
+                Profile(
+                    WorldOperationApproach.ArmedSecurity,
+                    "무력 진압",
+                    "병력을 투입해 빠르게 위협을 제거합니다.",
+                    1.20m, 0.14m, 1.10m, 0.75m, 0.12m, 1.20m, 0.18m),
+                Profile(
+                    WorldOperationApproach.Negotiation,
+                    "지역 협상",
+                    "지역 세력과 거래해 도적의 지원망을 끊습니다.",
+                    0.95m, 0.05m, 0.75m, 1.45m, 0.08m, 0.90m, 0.08m),
+                Profile(
+                    WorldOperationApproach.CovertAction,
+                    "비밀공작",
+                    "정보원을 이용해 조직을 내부에서 붕괴시킵니다.",
+                    1.05m, 0.08m, 1.40m, 0.55m, 0.06m, 1.05m, 0.22m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] EscortSupply =
+        {
+            Profile(
+                WorldOperationApproach.Logistics,
+                "수송망 재설계",
+                "우회로와 분산 수송으로 물자를 목적지까지 보냅니다.",
+                1.20m, 0.15m, 1.05m, 1.00m, 0.14m, 1.15m, 0.10m),
+            Profile(
+                WorldOperationApproach.ArmedSecurity,
+                "무장 호위",
+                "호위 병력을 붙여 위험 구간을 정면 돌파합니다.",
+                1.10m, 0.10m, 1.15m, 0.80m, 0.12m, 1.05m, 0.16m),
+            Profile(
+                WorldOperationApproach.CovertAction,
+                "미끼 수송",
+                "가짜 수송대를 노출하고 본대를 은밀히 이동시킵니다.",
+                1.00m, 0.06m, 1.45m, 0.50m, 0.06m, 1.00m, 0.24m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] RepairMine =
+        {
+            Profile(
+                WorldOperationApproach.TechnicalInvestment,
+                "기술 복구",
+                "기술자와 기계를 투입해 설비와 갱도를 개선합니다.",
+                1.25m, 0.18m, 1.10m, 1.05m, 0.20m, 1.30m, 0.08m),
+            Profile(
+                WorldOperationApproach.Logistics,
+                "긴급 장비 조달",
+                "복구 자재와 인력을 우선 수송해 조업을 재개합니다.",
+                1.10m, 0.10m, 1.00m, 1.00m, 0.14m, 1.05m, 0.10m),
+            Profile(
+                WorldOperationApproach.Negotiation,
+                "공동 복구 계약",
+                "지역 업체와 비용 및 향후 채굴권을 나눕니다.",
+                0.95m, 0.06m, 0.70m, 1.40m, 0.06m, 0.85m, 0.08m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] SurveyVein =
+        {
+            Profile(
+                WorldOperationApproach.TechnicalInvestment,
+                "정밀 탐사",
+                "장비와 기술자를 투입해 매장량을 정확히 조사합니다.",
+                1.25m, 0.17m, 1.10m, 1.00m, 0.18m, 1.30m, 0.06m),
+            Profile(
+                WorldOperationApproach.CovertAction,
+                "경쟁사 정보 탈취",
+                "경쟁사의 조사 자료를 입수해 비용과 시간을 줄입니다.",
+                1.05m, 0.07m, 1.50m, 0.45m, 0.05m, 1.00m, 0.22m),
+            Profile(
+                WorldOperationApproach.Negotiation,
+                "현지 조사권 계약",
+                "주민과 토지 소유자의 협조를 확보합니다.",
+                1.00m, 0.08m, 0.80m, 1.35m, 0.08m, 0.90m, 0.08m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] StabilizeRegion =
+        {
+            Profile(
+                WorldOperationApproach.Negotiation,
+                "이해관계 조정",
+                "노동자·상인·지역 권력자 사이의 합의를 만듭니다.",
+                1.20m, 0.14m, 0.75m, 1.50m, 0.10m, 1.20m, 0.07m),
+            Profile(
+                WorldOperationApproach.PublicRelief,
+                "민생 지원",
+                "식량과 의약품을 공급해 불안을 낮춥니다.",
+                1.15m, 0.12m, 0.55m, 1.80m, 0.18m, 1.30m, 0.06m),
+            Profile(
+                WorldOperationApproach.ArmedSecurity,
+                "치안 통제",
+                "병력을 배치해 단기간에 질서를 회복합니다.",
+                1.05m, 0.08m, 1.10m, 0.65m, 0.12m, 0.90m, 0.18m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] ProtectFacility =
+        {
+            Profile(
+                WorldOperationApproach.ArmedSecurity,
+                "시설 경비 강화",
+                "경비대와 방어 설비로 생산시설을 보호합니다.",
+                1.20m, 0.15m, 1.10m, 0.80m, 0.14m, 1.20m, 0.14m),
+            Profile(
+                WorldOperationApproach.TechnicalInvestment,
+                "설비 분산·보강",
+                "핵심 공정을 분산하고 고장 지점을 보강합니다.",
+                1.15m, 0.13m, 1.00m, 1.10m, 0.18m, 1.25m, 0.08m),
+            Profile(
+                WorldOperationApproach.CovertAction,
+                "배후 추적",
+                "파괴 공작의 배후를 추적해 재발을 막습니다.",
+                1.00m, 0.06m, 1.45m, 0.50m, 0.06m, 1.05m, 0.22m)
+            };
+
+        private static readonly WorldOperationApproachProfile[] EmergencyDelivery =
+        {
+            Profile(
+                WorldOperationApproach.Logistics,
+                "긴급 납품",
+                "운송 용량을 집중해 부족 물자를 우선 공급합니다.",
+                1.20m, 0.16m, 1.05m, 1.10m, 0.16m, 1.20m, 0.08m),
+            Profile(
+                WorldOperationApproach.PublicRelief,
+                "구호 배급",
+                "이윤을 줄이고 주민에게 물자를 직접 배급합니다.",
+                1.15m, 0.13m, 0.50m, 1.90m, 0.20m, 1.35m, 0.05m),
+            Profile(
+                WorldOperationApproach.Negotiation,
+                "민간 조달 계약",
+                "상인 조합과 가격 및 물량을 협상합니다.",
+                1.00m, 0.08m, 0.80m, 1.35m, 0.10m, 0.95m, 0.08m)
+            };
+
+        public static IReadOnlyList<WorldOperationApproachProfile> GetApproaches(
+            WorldOpportunityKind kind)
+        {
+            switch (kind)
+            {
+                case WorldOpportunityKind.SuppressBandits:
+                    return SuppressBandits;
+                case WorldOpportunityKind.EscortSupply:
+                    return EscortSupply;
+                case WorldOpportunityKind.RepairMine:
+                    return RepairMine;
+                case WorldOpportunityKind.SurveyVein:
+                    return SurveyVein;
+                case WorldOpportunityKind.ProtectFacility:
+                    return ProtectFacility;
+                case WorldOpportunityKind.EmergencyDelivery:
+                    return EmergencyDelivery;
+                default:
+                    return StabilizeRegion;
+            }
+        }
+
+        public static WorldOperationApproachProfile GetDefault(
+            WorldOpportunityKind kind)
+        {
+            return GetApproaches(kind)[0];
+        }
+
+        public static bool TryGet(
+            WorldOpportunityKind kind,
+            WorldOperationApproach approach,
+            out WorldOperationApproachProfile profile)
+        {
+            IReadOnlyList<WorldOperationApproachProfile> approaches =
+                GetApproaches(kind);
+            for (int i = 0; i < approaches.Count; i++)
+            {
+                if (approaches[i].Approach == approach)
+                {
+                    profile = approaches[i];
+                    return true;
+                }
+            }
+
+            profile = default;
+            return false;
+        }
+
+        public static decimal CalculateUpfrontCost(
+            WorldOpportunity opportunity,
+            WorldOperationApproachProfile profile)
+        {
+            if (opportunity == null)
+                return 0m;
+
+            return Math.Round(
+                opportunity.MoneyReward * profile.UpfrontCostMultiplier,
+                0,
+                MidpointRounding.AwayFromZero);
+        }
+
+        private static WorldOperationApproachProfile Profile(
+            WorldOperationApproach approach,
+            string displayName,
+            string description,
+            decimal capabilityMultiplier,
+            decimal successChanceModifier,
+            decimal moneyRewardMultiplier,
+            decimal reputationRewardMultiplier,
+            decimal upfrontCostMultiplier,
+            decimal consequenceStrength,
+            decimal failureEscalation)
+        {
+            return new WorldOperationApproachProfile(
+                approach,
+                displayName,
+                description,
+                capabilityMultiplier,
+                successChanceModifier,
+                moneyRewardMultiplier,
+                reputationRewardMultiplier,
+                upfrontCostMultiplier,
+                consequenceStrength,
+                failureEscalation);
+        }
+    }
+
     public sealed class AutonomousWorldTuning
     {
         public decimal RandomEventChancePerTurn { get; }
@@ -199,6 +491,12 @@ namespace Game.Domain.World
                 Severity = Math.Clamp(Severity + amount, 0.05m, 1m);
         }
 
+        public void Mitigate(decimal amount)
+        {
+            if (IsActive)
+                Severity = Math.Clamp(Severity - amount, 0.05m, 1m);
+        }
+
         public void Resolve(bool byPlayer, string actorId)
         {
             if (!IsActive)
@@ -231,6 +529,8 @@ namespace Game.Domain.World
         public decimal ReputationReward { get; }
         public WorldOpportunityStatus Status { get; private set; }
         public string ResolverId { get; private set; }
+        public WorldOperationApproach? SelectedApproach { get; private set; }
+        public WorldOperationOutcome Outcome { get; private set; }
 
         public WorldOpportunity(
             string id,
@@ -256,6 +556,8 @@ namespace Game.Domain.World
             ReputationReward = Math.Max(0m, reputationReward);
             Status = WorldOpportunityStatus.Offered;
             ResolverId = string.Empty;
+            SelectedApproach = null;
+            Outcome = WorldOperationOutcome.None;
         }
 
         public bool TryAccept()
@@ -268,13 +570,30 @@ namespace Game.Domain.World
 
         public void Resolve(bool success, string resolverId)
         {
+            Resolve(
+                success
+                    ? WorldOperationOutcome.Success
+                    : WorldOperationOutcome.Failure,
+                resolverId,
+                WorldOperationCatalog.GetDefault(Kind).Approach);
+        }
+
+        public void Resolve(
+            WorldOperationOutcome outcome,
+            string resolverId,
+            WorldOperationApproach approach)
+        {
             if (Status != WorldOpportunityStatus.Offered &&
                 Status != WorldOpportunityStatus.Accepted)
             {
                 return;
             }
 
-            Status = success
+            Outcome = outcome;
+            SelectedApproach = approach;
+            Status = outcome == WorldOperationOutcome.GreatSuccess ||
+                     outcome == WorldOperationOutcome.Success ||
+                     outcome == WorldOperationOutcome.Compromise
                 ? WorldOpportunityStatus.Resolved
                 : WorldOpportunityStatus.Failed;
             ResolverId = resolverId ?? string.Empty;
@@ -291,22 +610,31 @@ namespace Game.Domain.World
     {
         public bool Accepted { get; }
         public bool Success { get; }
+        public WorldOperationOutcome Outcome { get; }
+        public WorldOperationApproach Approach { get; }
         public string Message { get; }
         public decimal MoneyReward { get; }
         public decimal ReputationReward { get; }
+        public decimal UpfrontCost { get; }
 
         public PlayerInterventionResult(
             bool accepted,
             bool success,
             string message,
             decimal moneyReward,
-            decimal reputationReward)
+            decimal reputationReward,
+            WorldOperationOutcome outcome = WorldOperationOutcome.None,
+            WorldOperationApproach approach = WorldOperationApproach.Negotiation,
+            decimal upfrontCost = 0m)
         {
             Accepted = accepted;
             Success = success;
+            Outcome = outcome;
+            Approach = approach;
             Message = message ?? string.Empty;
             MoneyReward = Math.Max(0m, moneyReward);
             ReputationReward = Math.Max(0m, reputationReward);
+            UpfrontCost = Math.Max(0m, upfrontCost);
         }
     }
 

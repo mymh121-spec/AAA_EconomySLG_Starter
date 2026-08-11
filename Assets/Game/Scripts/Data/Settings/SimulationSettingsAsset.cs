@@ -1,5 +1,6 @@
 using UnityEngine;
 using Game.Domain.Campaign;
+using Game.Domain.Common;
 using Game.Domain.Economy;
 using Game.Domain.Market;
 using Game.Domain.Military;
@@ -38,10 +39,12 @@ namespace Game.Data
         [SerializeField, Range(1, 64)] private int maxRealtimeStepsPerFrame = 16;
 
         [Header("캠페인 승패")]
-        [SerializeField, Min(1)] private int maxCampaignTurns = 30;
-        [SerializeField, Min(1)] private int dominanceCheckStartTurn = 15;
+        [SerializeField, Min(1)] private int maxCampaignTurns =
+            GameCalendarDate.DaysPerYear;
+        [SerializeField, Min(1)] private int dominanceCheckStartTurn = 181;
         [SerializeField, Min(1f)] private float dominanceMultiplier = 3f;
-        [SerializeField, Min(1)] private int dominanceRequiredTurns = 2;
+        [SerializeField, Min(1)] private int dominanceRequiredTurns =
+            GameCalendarDate.DaysPerMonth * 2;
         [SerializeField, Min(0f)] private float recentProfitMultiplier = 5f;
 
         [Header("경제력 자산 평가")]

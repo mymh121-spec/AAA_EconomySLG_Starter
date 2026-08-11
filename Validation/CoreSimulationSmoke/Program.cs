@@ -18,6 +18,18 @@ var realtimeClock = new RealtimeSimulationClock(
 RealtimeAdvanceResult realtimeDay = realtimeClock.Advance(12d);
 Check(realtimeDay.CompletedGameDays == 1,
     "5배속에서 현실 12초마다 게임 하루 진행");
+Check(GameCalendarDate.FromDayNumber(31).ToString() == "2월 1일" &&
+      GameCalendarDate.FromDayNumber(360).ToString() == "12월 30일",
+    "30일제 12개월 달력 변환");
+foreach (WorldOpportunityKind kind in Enum.GetValues<WorldOpportunityKind>())
+{
+    IReadOnlyList<WorldOperationApproachProfile> approaches =
+        WorldOperationCatalog.GetApproaches(kind);
+    Check(approaches.Count == 3 &&
+          approaches[0].Approach != approaches[1].Approach &&
+          approaches[1].Approach != approaches[2].Approach,
+        $"{kind} 경제 작전 해결 방식 3종");
+}
 Check(realtimeClock.CurrentDayNumber == 2,
     "실시간 날짜 증가");
 realtimeClock.TogglePause();
@@ -468,7 +480,7 @@ var worldService = new WorldEconomyTurnService(
 
 bool sawArmyDemand = false;
 bool sawMission = false;
-for (int turn = 1; turn <= 30; turn++)
+for (int turn = 1; turn <= GameCalendarDate.DaysPerYear; turn++)
 {
     IReadOnlyList<PhysicalFlow> flows = worldService.PrepareTurn(
         new TurnNumber(turn),

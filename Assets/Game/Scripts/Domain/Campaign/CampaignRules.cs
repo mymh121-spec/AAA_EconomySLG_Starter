@@ -34,10 +34,11 @@ namespace Game.Domain.Campaign
         public decimal RecentProfitMultiplier { get; }
 
         public CampaignRuleSet(
-            int maxTurns = 30,
-            int dominanceCheckStartTurn = 15,
+            int maxTurns = GameCalendarDate.DaysPerYear,
+            int dominanceCheckStartTurn = 181,
             decimal dominanceMultiplier = 3m,
-            int dominanceRequiredConsecutiveTurns = 2,
+            int dominanceRequiredConsecutiveTurns =
+                GameCalendarDate.DaysPerMonth * 2,
             decimal recentProfitMultiplier = 5m)
         {
             MaxTurns = Math.Max(1, maxTurns);

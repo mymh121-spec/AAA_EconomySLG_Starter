@@ -77,6 +77,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - See `LAND_SEA_MOVEMENT_KO.md` for port-based embarkation, sea transport, landing, and authoritative-server rules.
 - See `GAME_SCOPE_REVIEW_KO.md` for what to add next, what to defer, and the recommended mine-density reduction.
 - See `REALTIME_GAME_CONTINUATION_README_KO.md` for the pause/1–5× realtime handoff state and the copy-ready continuation prompt.
+- See `ECONOMIC_OPERATION_SYSTEM_KO.md` for the 12-month calendar and multi-approach economic operation rules.
 
 ## Architecture
 

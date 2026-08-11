@@ -103,6 +103,11 @@ namespace Game.Presentation
         [SerializeField] private bool createCameraIfMissing = true;
         [SerializeField] private bool createLightIfMissing = true;
 
+        [Header("유닛 이동 경로")]
+        [SerializeField, Min(0.03f)] private float movementPathWidth = 0.12f;
+        [SerializeField, Min(0.01f)] private float movementPathHeight = 0.13f;
+        [SerializeField, Range(0f, 1f)] private float movementPathAlpha = 0.92f;
+
         [Header("세력과 거점 색상")]
         [SerializeField] private Color playerFactionColor =
             new Color(0.05f, 0.42f, 1.00f, 1f);
@@ -136,8 +141,10 @@ namespace Game.Presentation
         private Sprite _normalMineSprite;
         private Sprite _goldMineSprite;
         private Texture2D _mapTexture;
+        private Texture2D _movementPathTexture;
         private Material _mapMaterial;
         private Material _blockMaterial;
+        private Material _movementPathMaterial;
         private Mesh _mapMesh;
         private Vector3 _cameraFocus;
         private Vector3 _lastMousePosition;
@@ -1245,12 +1252,79 @@ namespace Game.Presentation
                     unit.Id,
                     _selectedPlayerUnitId,
                     StringComparison.Ordinal);
+                if (unit.IsMoving && unit.PlannedPath.Count > 1)
+                    CreateMovementPath(unit, color);
+
                 ForEachSurfaceCopy(xOffset =>
                 {
                     Vector3 position = ToWorldPosition(unit.Coordinate, xOffset);
                     CreateUnitMarker(unit, position, color, selected);
                 });
             }
+        }
+
+        private void CreateMovementPath(MapUnitState unit, Color factionColor)
+        {
+            ForEachSurfaceCopy(xOffset => CreateMovementPathCopy(
+                unit,
+                factionColor,
+                xOffset));
+        }
+
+        private void CreateMovementPathCopy(
+            MapUnitState unit,
+            Color factionColor,
+            float xOffset)
+        {
+            IReadOnlyList<GridCoordinate> path = unit.PlannedPath;
+            if (path.Count < 2 || CurrentLayout == null)
+                return;
+
+            var positions = new Vector3[path.Count];
+            Vector3 first = ToWorldPosition(path[0], xOffset);
+            positions[0] = new Vector3(
+                first.x,
+                movementPathHeight,
+                first.z);
+
+            float unwrappedX = first.x;
+            int previousX = path[0].X;
+            int wrapThreshold = CurrentLayout.Width / 2;
+            for (int i = 1; i < path.Count; i++)
+            {
+                int deltaX = path[i].X - previousX;
+                if (deltaX > wrapThreshold)
+                    deltaX -= CurrentLayout.Width;
+                else if (deltaX < -wrapThreshold)
+                    deltaX += CurrentLayout.Width;
+
+                unwrappedX += deltaX * tileSize;
+                Vector3 tilePosition = ToWorldPosition(path[i], xOffset);
+                positions[i] = new Vector3(
+                    unwrappedX,
+                    movementPathHeight,
+                    tilePosition.z);
+                previousX = path[i].X;
+            }
+
+            var pathObject = new GameObject(unit.Id + "_이동 점선");
+            pathObject.transform.SetParent(_gameplayMarkerRoot, false);
+            var line = pathObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = true;
+            line.loop = false;
+            line.alignment = LineAlignment.View;
+            line.textureMode = LineTextureMode.Tile;
+            line.widthMultiplier = tileSize * movementPathWidth;
+            line.numCornerVertices = 2;
+            line.numCapVertices = 2;
+            line.sharedMaterial = GetOrCreateMovementPathMaterial();
+
+            Color pathColor = Color.Lerp(factionColor, Color.white, 0.35f);
+            pathColor.a = movementPathAlpha;
+            line.startColor = pathColor;
+            line.endColor = pathColor;
+            line.positionCount = positions.Length;
+            line.SetPositions(positions);
         }
 
         private void CreateCastleControlMarker(
@@ -1676,6 +1750,79 @@ namespace Game.Presentation
             return _blockMaterial;
         }
 
+        private Material GetOrCreateMovementPathMaterial()
+        {
+            if (_movementPathMaterial != null)
+                return _movementPathMaterial;
+
+            _movementPathTexture = CreateMovementPathTexture();
+            Shader shader =
+                Shader.Find("Sprites/Default") ??
+                Shader.Find("Unlit/Transparent") ??
+                Shader.Find("Universal Render Pipeline/Unlit") ??
+                Shader.Find("Standard");
+            if (shader == null)
+            {
+                throw new InvalidOperationException(
+                    "유닛 이동 점선 표시용 셰이더를 찾지 못했습니다.");
+            }
+
+            _movementPathMaterial = new Material(shader)
+            {
+                name = "유닛 이동 점선 공유 재질",
+                mainTexture = _movementPathTexture
+            };
+            if (_movementPathMaterial.HasProperty("_BaseMap"))
+            {
+                _movementPathMaterial.SetTexture(
+                    "_BaseMap",
+                    _movementPathTexture);
+            }
+            if (_movementPathMaterial.HasProperty("_BaseColor"))
+                _movementPathMaterial.SetColor("_BaseColor", Color.white);
+            if (_movementPathMaterial.HasProperty("_Color"))
+                _movementPathMaterial.SetColor("_Color", Color.white);
+            return _movementPathMaterial;
+        }
+
+        private static Texture2D CreateMovementPathTexture()
+        {
+            const int width = 16;
+            const int height = 8;
+            var texture = new Texture2D(
+                width,
+                height,
+                TextureFormat.RGBA32,
+                false)
+            {
+                name = "유닛 이동 점선 무늬",
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Bilinear
+            };
+
+            var pixels = new Color32[width * height];
+            const float centerX = 3.5f;
+            const float centerY = 3.5f;
+            const float radiusSquared = 10.5f;
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float dx = x - centerX;
+                    float dy = y - centerY;
+                    byte alpha = dx * dx + dy * dy <= radiusSquared
+                        ? (byte)255
+                        : (byte)0;
+                    pixels[y * width + x] =
+                        new Color32(255, 255, 255, alpha);
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
+        }
+
         private GameObject CreateBlock(
             string objectName,
             Vector3 position,
@@ -1883,11 +2030,15 @@ namespace Game.Presentation
             _iconBillboards.Clear();
             DestroyRuntimeAsset(_mapMaterial);
             DestroyRuntimeAsset(_blockMaterial);
+            DestroyRuntimeAsset(_movementPathMaterial);
             DestroyRuntimeAsset(_mapTexture);
+            DestroyRuntimeAsset(_movementPathTexture);
             DestroyRuntimeAsset(_mapMesh);
             _mapMaterial = null;
             _blockMaterial = null;
+            _movementPathMaterial = null;
             _mapTexture = null;
+            _movementPathTexture = null;
             _mapMesh = null;
         }
 
@@ -1960,7 +2111,9 @@ namespace Game.Presentation
             DestroyRuntimeAsset(_goldMineSprite);
             DestroyRuntimeAsset(_mapMaterial);
             DestroyRuntimeAsset(_blockMaterial);
+            DestroyRuntimeAsset(_movementPathMaterial);
             DestroyRuntimeAsset(_mapTexture);
+            DestroyRuntimeAsset(_movementPathTexture);
             DestroyRuntimeAsset(_mapMesh);
         }
     }
