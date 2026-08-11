@@ -41,7 +41,8 @@ GridMapLayout wrappedMap = gridGenerator.Generate(
         new GridCoordinate(30, 32),
         new GridCoordinate(57, 16)
     },
-    true);
+    true,
+    neutralCastleCount: 8);
 Check(wrappedMap.Width == 80 && wrappedMap.Height == 48,
     "대형 80×48 월드 생성");
 Check(wrappedMap.Move(new GridCoordinate(79, 10), 1, 0).Equals(
@@ -53,6 +54,12 @@ Check(wrappedMap.ManhattanDistance(
     "가로 래핑 최단 거리");
 Check(wrappedMap.Mines.All(x => wrappedMap.IsLand(x.Coordinate)),
     "광산은 육지에만 배치");
+Check(wrappedMap.NeutralCastles.Count == 8 &&
+      wrappedMap.NeutralCastles.All(wrappedMap.IsLand),
+    "중립 빈 성 8개를 육지에 배치");
+Check(wrappedMap.NeutralCastles.All(castle =>
+      wrappedMap.Mines.All(mine => !mine.Coordinate.Equals(castle))),
+    "중립 빈 성과 광산 좌표 분리");
 
 var mapGameplay = new RealtimeMapGameplayService(
     wrappedMap,

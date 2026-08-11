@@ -12,6 +12,7 @@ namespace Game.Presentation
         Empty,
         PlayerBase,
         EnemyBase,
+        NeutralCastle,
         NormalMine,
         GoldMine
     }
@@ -73,6 +74,7 @@ namespace Game.Presentation
         [SerializeField, Range(40, 160)] private int mapWidth = 80;
         [SerializeField, Range(24, 100)] private int mapHeight = 48;
         [SerializeField, Range(20, 400)] private int mineCount = 160;
+        [SerializeField, Range(0, 24)] private int neutralCastleCount = 8;
         [SerializeField, Min(0.5f)] private float tileSize = 1.15f;
         [SerializeField] private int playerStartX = 4;
         [SerializeField] private int playerStartY = 24;
@@ -395,7 +397,8 @@ namespace Game.Presentation
                 seed,
                 playerStart,
                 opponentStarts,
-                true);
+                true,
+                Mathf.Clamp(neutralCastleCount, 0, 24));
 
             var rootObject = new GameObject(
                 $"대형 평면 경제 월드_{width}x{height}");
@@ -407,6 +410,7 @@ namespace Game.Presentation
             BuildFlatMapCopies(CurrentLayout);
             BuildPlayerStart(CurrentLayout.PlayerStart);
             BuildOpponentStarts(CurrentLayout.OpponentStarts);
+            BuildNeutralCastles(CurrentLayout.NeutralCastles);
             BuildMines(CurrentLayout);
             RefreshGameplayMarkers();
             FocusCameraOn(CurrentLayout.PlayerStart);
@@ -697,6 +701,16 @@ namespace Game.Presentation
                 }
             }
 
+            if (layout.IsNeutralCastle(coordinate))
+            {
+                return CreateSelection(
+                    coordinate,
+                    MapCellContent.NeutralCastle,
+                    "주인 없는 빈 성",
+                    "소유 세력이 없는 중립 거점입니다. 정찰 후 점령하면 " +
+                    "전초기지·보급 거점·항구 후보로 활용할 수 있습니다.");
+            }
+
             if (mineKind.HasValue)
             {
                 return mineKind.Value == MineKind.Gold
@@ -837,7 +851,26 @@ namespace Game.Presentation
             }
         }
 
-        private void CreateCastle(string name, Vector3 position, Color color)
+        private void BuildNeutralCastles(
+            IReadOnlyList<GridCoordinate> neutralCastles)
+        {
+            for (int i = 0; i < neutralCastles.Count; i++)
+            {
+                int castleIndex = i;
+                GridCoordinate coordinate = neutralCastles[i];
+                ForEachSurfaceCopy(xOffset => CreateCastle(
+                    $"빈 성 {castleIndex + 1}_{coordinate.X}_{coordinate.Y}",
+                    ToWorldPosition(coordinate, xOffset),
+                    neutralFactionColor,
+                    showBanner: false));
+            }
+        }
+
+        private void CreateCastle(
+            string name,
+            Vector3 position,
+            Color color,
+            bool showBanner = true)
         {
             // Castle architecture and ownership are separate visual layers.
             // The wide floor plate remains visible even when zoomed out and
@@ -885,21 +918,24 @@ namespace Game.Presentation
                 }
             }
 
-            Color accent = Color.Lerp(color, Color.white, 0.45f);
-            CreateBlock(
-                name + "_깃대",
-                position + new Vector3(0f, 1.24f, 0f),
-                new Vector3(tileSize * 0.04f, 0.62f, tileSize * 0.04f),
-                accent,
-                _generatedRoot,
-                false);
-            CreateBlock(
-                name + "_깃발",
-                position + new Vector3(tileSize * 0.13f, 1.43f, 0f),
-                new Vector3(tileSize * 0.24f, 0.16f, tileSize * 0.04f),
-                color,
-                _generatedRoot,
-                false);
+            if (showBanner)
+            {
+                Color accent = Color.Lerp(color, Color.white, 0.45f);
+                CreateBlock(
+                    name + "_깃대",
+                    position + new Vector3(0f, 1.24f, 0f),
+                    new Vector3(tileSize * 0.04f, 0.62f, tileSize * 0.04f),
+                    accent,
+                    _generatedRoot,
+                    false);
+                CreateBlock(
+                    name + "_깃발",
+                    position + new Vector3(tileSize * 0.13f, 1.43f, 0f),
+                    new Vector3(tileSize * 0.24f, 0.16f, tileSize * 0.04f),
+                    color,
+                    _generatedRoot,
+                    false);
+            }
         }
 
         private void BuildMines(GridMapLayout layout)

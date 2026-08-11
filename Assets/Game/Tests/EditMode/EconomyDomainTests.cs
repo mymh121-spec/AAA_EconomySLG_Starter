@@ -150,7 +150,8 @@ namespace Game.Tests
                 12345,
                 playerStart,
                 opponentStarts,
-                true);
+                true,
+                neutralCastleCount: 8);
 
             Assert.That(layout.Width, Is.EqualTo(80));
             Assert.That(layout.Height, Is.EqualTo(48));
@@ -158,9 +159,45 @@ namespace Game.Tests
             Assert.That(layout.Terrain.Count, Is.EqualTo(80 * 48));
             Assert.That(layout.PlayerStart, Is.EqualTo(playerStart));
             Assert.That(layout.OpponentStarts.Count, Is.EqualTo(3));
+            Assert.That(layout.NeutralCastles.Count, Is.EqualTo(8));
             Assert.That(layout.Mines.Count, Is.EqualTo(160));
 
-            var uniqueCoordinates = new HashSet<GridCoordinate>();
+            var uniqueCoordinates = new HashSet<GridCoordinate>
+            {
+                playerStart
+            };
+            for (int i = 0; i < opponentStarts.Length; i++)
+                Assert.That(uniqueCoordinates.Add(opponentStarts[i]), Is.True);
+
+            for (int i = 0; i < layout.NeutralCastles.Count; i++)
+            {
+                GridCoordinate castle = layout.NeutralCastles[i];
+                Assert.That(uniqueCoordinates.Add(castle), Is.True);
+                Assert.That(layout.IsLand(castle), Is.True);
+                Assert.That(layout.IsNeutralCastle(castle), Is.True);
+                Assert.That(
+                    layout.ManhattanDistance(castle, playerStart),
+                    Is.GreaterThanOrEqualTo(7));
+                for (int opponentIndex = 0;
+                     opponentIndex < opponentStarts.Length;
+                     opponentIndex++)
+                {
+                    Assert.That(
+                        layout.ManhattanDistance(
+                            castle,
+                            opponentStarts[opponentIndex]),
+                        Is.GreaterThanOrEqualTo(7));
+                }
+                for (int otherIndex = 0; otherIndex < i; otherIndex++)
+                {
+                    Assert.That(
+                        layout.ManhattanDistance(
+                            castle,
+                            layout.NeutralCastles[otherIndex]),
+                        Is.GreaterThanOrEqualTo(6));
+                }
+            }
+
             for (int i = 0; i < layout.Mines.Count; i++)
             {
                 Assert.That(

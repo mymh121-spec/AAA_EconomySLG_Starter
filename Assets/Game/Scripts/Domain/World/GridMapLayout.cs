@@ -64,6 +64,7 @@ namespace Game.Domain.World
         public int Seed { get; }
         public GridCoordinate PlayerStart { get; }
         public IReadOnlyList<GridCoordinate> OpponentStarts { get; }
+        public IReadOnlyList<GridCoordinate> NeutralCastles { get; }
         public IReadOnlyList<MinePlacement> Mines { get; }
         public IReadOnlyList<GridTerrainKind> Terrain { get; }
 
@@ -93,7 +94,8 @@ namespace Game.Domain.World
             IReadOnlyList<GridCoordinate> opponentStarts,
             IReadOnlyList<MinePlacement> mines,
             bool wrapHorizontally,
-            IReadOnlyList<GridTerrainKind> terrain = null)
+            IReadOnlyList<GridTerrainKind> terrain = null,
+            IReadOnlyList<GridCoordinate> neutralCastles = null)
         {
             if (width < 2)
                 throw new ArgumentOutOfRangeException(nameof(width));
@@ -106,6 +108,8 @@ namespace Game.Domain.World
             Seed = seed;
             PlayerStart = playerStart;
             OpponentStarts = opponentStarts ??
+                Array.Empty<GridCoordinate>();
+            NeutralCastles = neutralCastles ??
                 Array.Empty<GridCoordinate>();
             Mines = mines ?? Array.Empty<MinePlacement>();
             Terrain = terrain != null && terrain.Count == width * height
@@ -180,6 +184,20 @@ namespace Game.Domain.World
         public bool IsLand(GridCoordinate coordinate) =>
             GetTerrain(coordinate) != GridTerrainKind.Ocean;
 
+        public bool IsNeutralCastle(GridCoordinate coordinate)
+        {
+            if (!TryNormalize(coordinate, out GridCoordinate normalized))
+                return false;
+
+            for (int i = 0; i < NeutralCastles.Count; i++)
+            {
+                if (NeutralCastles[i].Equals(normalized))
+                    return true;
+            }
+
+            return false;
+        }
+
         private static GridTerrainKind[] CreateDefaultTerrain(int count)
         {
             var terrain = new GridTerrainKind[count];
@@ -237,7 +255,8 @@ namespace Game.Domain.World
             int seed,
             GridCoordinate playerStart,
             IReadOnlyList<GridCoordinate> opponentStarts,
-            bool wrapHorizontally = true)
+            bool wrapHorizontally = true,
+            int neutralCastleCount = 0)
         {
             if (width < 2)
                 throw new ArgumentOutOfRangeException(nameof(width));
@@ -305,17 +324,70 @@ namespace Game.Domain.World
                 candidates[swapIndex] = temporary;
             }
 
+            int clampedNeutralCastleCount = Math.Min(
+                Math.Max(0, neutralCastleCount),
+                candidates.Count);
+            var neutralCastles = new List<GridCoordinate>(
+                clampedNeutralCastleCount);
+            var neutralCastleSet = new HashSet<GridCoordinate>();
+            const int minimumDistanceFromFactionStart = 7;
+            const int minimumNeutralCastleSpacing = 6;
+
+            for (int i = 0;
+                 i < candidates.Count &&
+                 neutralCastles.Count < clampedNeutralCastleCount;
+                 i++)
+            {
+                GridCoordinate candidate = candidates[i];
+                if (!IsFarEnoughFrom(
+                        candidate,
+                        blockedStarts,
+                        minimumDistanceFromFactionStart,
+                        width,
+                        wrapHorizontally) ||
+                    !IsFarEnoughFrom(
+                        candidate,
+                        neutralCastles,
+                        minimumNeutralCastleSpacing,
+                        width,
+                        wrapHorizontally))
+                {
+                    continue;
+                }
+
+                neutralCastles.Add(candidate);
+                neutralCastleSet.Add(candidate);
+            }
+
+            // 아주 작은 맵에서도 요청 개수는 가능한 범위까지 채우되,
+            // 시작 성이나 다른 빈 성과 좌표가 겹치지는 않게 한다.
+            for (int i = 0;
+                 i < candidates.Count &&
+                 neutralCastles.Count < clampedNeutralCastleCount;
+                 i++)
+            {
+                if (neutralCastleSet.Add(candidates[i]))
+                    neutralCastles.Add(candidates[i]);
+            }
+
             int clampedMineCount = Math.Min(
                 Math.Max(0, mineCount),
-                candidates.Count);
+                candidates.Count - neutralCastles.Count);
             var mines = new MinePlacement[clampedMineCount];
-            for (int i = 0; i < clampedMineCount; i++)
+            int mineIndex = 0;
+            for (int i = 0;
+                 i < candidates.Count && mineIndex < clampedMineCount;
+                 i++)
             {
-                mines[i] = new MinePlacement(
+                if (neutralCastleSet.Contains(candidates[i]))
+                    continue;
+
+                mines[mineIndex] = new MinePlacement(
                     candidates[i],
                     random.Next(0, 5) == 0
                         ? MineKind.Gold
                         : MineKind.Normal);
+                mineIndex++;
             }
 
             return new GridMapLayout(
@@ -326,7 +398,29 @@ namespace Game.Domain.World
                 validOpponentStarts,
                 mines,
                 wrapHorizontally,
-                terrain);
+                terrain,
+                neutralCastles);
+        }
+
+        private static bool IsFarEnoughFrom(
+            GridCoordinate candidate,
+            IEnumerable<GridCoordinate> others,
+            int minimumDistance,
+            int width,
+            bool wrapHorizontally)
+        {
+            foreach (GridCoordinate other in others)
+            {
+                int directX = Math.Abs(candidate.X - other.X);
+                int xDistance = wrapHorizontally
+                    ? Math.Min(directX, width - directX)
+                    : directX;
+                int distance = xDistance + Math.Abs(candidate.Y - other.Y);
+                if (distance < minimumDistance)
+                    return false;
+            }
+
+            return true;
         }
 
         private static GridTerrainKind[] GenerateTerrain(

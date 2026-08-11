@@ -1004,9 +1004,16 @@ namespace Game.Presentation
                 !string.IsNullOrEmpty(selection.UnitId));
             ConfigureCaptureMineButton(selection);
 
-            bool missionTarget = selection.Content == MapCellContent.EnemyBase;
+            bool neutralCastle =
+                selection.Content == MapCellContent.NeutralCastle;
+            bool missionTarget =
+                selection.Content == MapCellContent.EnemyBase ||
+                neutralCastle;
             SetVisible(_contextMissionButton, missionTarget);
             _contextMissionButton.SetEnabled(missionTarget);
+            _contextMissionButton.text = neutralCastle
+                ? "빈 성 정보 · 정찰 / 점령 준비"
+                : "미션 정보 · 정찰 / 봉쇄 / 공격";
 
             PositionMapContextMenu(screenPosition);
             SetVisible(_mapContextMenu, true);
@@ -1506,13 +1513,20 @@ namespace Game.Presentation
                 return;
 
             MapCellSelection selection = gameplayMap.CurrentSelection.Value;
-            SetMapActionFeedback(
-                $"{selection.DisplayName}: 정찰·봉쇄·공격 미션 대상입니다. " +
-                "유닛을 선택한 뒤 우클릭 메뉴에서 목표 위치로 이동하세요.");
+            bool neutralCastle =
+                selection.Content == MapCellContent.NeutralCastle;
+            SetMapActionFeedback(neutralCastle
+                ? $"{selection.DisplayName}: 현재 주인이 없는 확장 거점입니다. " +
+                  "유닛을 이동시켜 정찰할 수 있으며, 실제 점령·주둔·보급 " +
+                  "전환은 공성 시스템 단계에서 연결합니다."
+                : $"{selection.DisplayName}: 정찰·봉쇄·공격 미션 대상입니다. " +
+                  "유닛을 선택한 뒤 우클릭 메뉴에서 목표 위치로 이동하세요.");
             if (_mapContextHint != null)
             {
-                _mapContextHint.text =
-                    "미션 준비: 유닛 선택 → 목표로 이동 → 도착 후 임무 수행";
+                _mapContextHint.text = neutralCastle
+                    ? "빈 성 확보 준비: 유닛 선택 → 빈 성으로 이동 → " +
+                      "향후 점령·주둔 명령"
+                    : "미션 준비: 유닛 선택 → 목표로 이동 → 도착 후 임무 수행";
             }
         }
 

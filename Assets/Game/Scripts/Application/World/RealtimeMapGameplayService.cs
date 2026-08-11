@@ -759,7 +759,8 @@ namespace Game.Application.World
                     index / _layout.Width);
                 if (!_layout.IsLand(candidate) ||
                     FindMine(candidate) != null ||
-                    IsFactionBase(candidate))
+                    IsFactionBase(candidate) ||
+                    _layout.IsNeutralCastle(candidate))
                 {
                     continue;
                 }
