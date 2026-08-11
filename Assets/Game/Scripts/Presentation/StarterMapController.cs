@@ -13,6 +13,8 @@ namespace Game.Presentation
         PlayerBase,
         EnemyBase,
         NeutralCastle,
+        PlayerCastle,
+        EnemyCastle,
         NormalMine,
         GoldMine
     }
@@ -29,6 +31,10 @@ namespace Game.Presentation
         public string CapturingFactionId { get; }
         public int CaptureProgress { get; }
         public int CaptureRequired { get; }
+        public string CastleOwnerFactionId { get; }
+        public MapCastleRole CastleRole { get; }
+        public MapCastleConflictKind CastleConflictKind { get; }
+        public int CastleGarrisonUnitCount { get; }
 
         public MapCellSelection(
             GridCoordinate coordinate,
@@ -40,7 +46,12 @@ namespace Game.Presentation
             string mineOwnerFactionId = "",
             string capturingFactionId = "",
             int captureProgress = 0,
-            int captureRequired = 0)
+            int captureRequired = 0,
+            string castleOwnerFactionId = "",
+            MapCastleRole castleRole = MapCastleRole.Unassigned,
+            MapCastleConflictKind castleConflictKind =
+                MapCastleConflictKind.None,
+            int castleGarrisonUnitCount = 0)
         {
             Coordinate = coordinate;
             Content = content;
@@ -52,6 +63,10 @@ namespace Game.Presentation
             CapturingFactionId = capturingFactionId ?? string.Empty;
             CaptureProgress = Math.Max(0, captureProgress);
             CaptureRequired = Math.Max(0, captureRequired);
+            CastleOwnerFactionId = castleOwnerFactionId ?? string.Empty;
+            CastleRole = castleRole;
+            CastleConflictKind = castleConflictKind;
+            CastleGarrisonUnitCount = Math.Max(0, castleGarrisonUnitCount);
         }
 
         public override string ToString() =>
@@ -144,6 +159,8 @@ namespace Game.Presentation
         public event Action GameplayStateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
+        public event Action<MapCastleCaptureRecord> CastleCaptured;
+        public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
 
         public void Initialize()
         {
@@ -352,6 +369,60 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public MapCastleControlState FindCastleAt(GridCoordinate coordinate)
+        {
+            return _gameplayService?.FindCastle(coordinate);
+        }
+
+        public bool CanCaptureOrSiegeSelectedCastle(
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 점령에 사용할 플레이어 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanIssueCastleOccupation(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out reason);
+        }
+
+        public bool TryCaptureOrSiegeSelectedCastle(
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (!CanCaptureOrSiegeSelectedCastle(coordinate, out reason))
+                return false;
+
+            return _gameplayService.TryIssueCastleOccupation(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out reason);
+        }
+
+        public bool TrySetPlayerCastleRole(
+            GridCoordinate coordinate,
+            MapCastleRole role,
+            out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.TrySetCastleRole(
+                _gameplayService.PlayerFactionId,
+                coordinate,
+                role,
+                out reason);
+        }
+
         public void AdvanceGameplayFixedSteps(int fixedStepCount)
         {
             _gameplayService?.AdvanceFixedSteps(fixedStepCount);
@@ -461,6 +532,8 @@ namespace Game.Presentation
             _gameplayService.StateChanged += HandleGameplayStateChanged;
             _gameplayService.MineCaptured += HandleMineCaptured;
             _gameplayService.MineSpawned += HandleMineSpawned;
+            _gameplayService.CastleCaptured += HandleCastleCaptured;
+            _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
 
             if (_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
@@ -483,6 +556,8 @@ namespace Game.Presentation
                 _gameplayService.StateChanged -= HandleGameplayStateChanged;
                 _gameplayService.MineCaptured -= HandleMineCaptured;
                 _gameplayService.MineSpawned -= HandleMineSpawned;
+                _gameplayService.CastleCaptured -= HandleCastleCaptured;
+                _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
             }
 
             _gameplayService = null;
@@ -703,12 +778,43 @@ namespace Game.Presentation
 
             if (layout.IsNeutralCastle(coordinate))
             {
+                MapCastleControlState castle =
+                    _gameplayService?.FindCastle(coordinate);
+                string ownerFactionId = castle?.OwnerFactionId ?? string.Empty;
+                if (string.IsNullOrEmpty(ownerFactionId))
+                {
+                    return CreateSelection(
+                        coordinate,
+                        MapCellContent.NeutralCastle,
+                        "주인 없는 빈 성",
+                        "선택한 부대를 이동시키면 점령을 시작합니다. " +
+                        "점령 중에는 부대가 성에 머물러야 합니다.");
+                }
+
+                string roleName = MapCastleRoleNames.GetKoreanName(
+                    castle.Role);
+                if (string.Equals(
+                    ownerFactionId,
+                    _gameplayService.PlayerFactionId,
+                    StringComparison.Ordinal))
+                {
+                    return CreateSelection(
+                        coordinate,
+                        MapCellContent.PlayerCastle,
+                        $"플레이어 {roleName}",
+                        "소유한 성입니다. 역할을 선택하고 주둔군을 배치해 " +
+                        "거점과 보급로를 방어할 수 있습니다.");
+                }
+
                 return CreateSelection(
                     coordinate,
-                    MapCellContent.NeutralCastle,
-                    "주인 없는 빈 성",
-                    "소유 세력이 없는 중립 거점입니다. 정찰 후 점령하면 " +
-                    "전초기지·보급 거점·항구 후보로 활용할 수 있습니다.");
+                    MapCellContent.EnemyCastle,
+                    $"{GetFactionDisplayName(ownerFactionId)} {roleName}",
+                    castle.IsUnderSiege
+                        ? "현재 공성 중인 적성입니다. 수비대가 남아 있으면 " +
+                          "향후 전투 판정으로 제거해야 합니다."
+                        : "적 세력이 점령한 성입니다. 부대를 이동시키면 " +
+                          "공성 대상으로 전환됩니다.");
             }
 
             if (mineKind.HasValue)
@@ -744,6 +850,7 @@ namespace Game.Presentation
         {
             MapUnitState unit = null;
             MapMineControlState mine = null;
+            MapCastleControlState castle = null;
             if (_gameplayService != null)
             {
                 unit = _gameplayService.FindOwnedUnitAt(
@@ -761,6 +868,7 @@ namespace Game.Presentation
                     }
                 }
                 mine = _gameplayService.FindMine(coordinate);
+                castle = _gameplayService.FindCastle(coordinate);
             }
 
             string detail = interactionHint;
@@ -792,6 +900,37 @@ namespace Game.Presentation
                               _gameplayService.FixedStepsToCapture;
                 }
             }
+            if (castle != null)
+            {
+                string ownerName = string.IsNullOrEmpty(castle.OwnerFactionId)
+                    ? "중립"
+                    : GetFactionDisplayName(castle.OwnerFactionId) + " 소유";
+                detail += "\n성 상태: " + ownerName +
+                          " · 역할 " +
+                          MapCastleRoleNames.GetKoreanName(castle.Role) +
+                          $" · 주둔군 {castle.GarrisonUnitCount}개 부대";
+                if (castle.ConflictKind != MapCastleConflictKind.None)
+                {
+                    string conflictName = castle.IsUnderSiege
+                        ? "공성"
+                        : "점령";
+                    string attacker = string.IsNullOrEmpty(
+                        castle.CapturingFactionId)
+                        ? "여러 세력 경합"
+                        : GetFactionDisplayName(castle.CapturingFactionId);
+                    detail += $" · {conflictName} {attacker} " +
+                              $"{castle.CaptureProgress}/" +
+                              _gameplayService.GetCastleCaptureRequired(castle);
+                }
+            }
+
+            string capturingFactionId = castle?.CapturingFactionId ??
+                mine?.CapturingFactionId;
+            int captureProgress = castle?.CaptureProgress ??
+                mine?.CaptureProgress ?? 0;
+            int captureRequired = castle != null
+                ? _gameplayService.GetCastleCaptureRequired(castle)
+                : _gameplayService?.FixedStepsToCapture ?? 0;
 
             return new MapCellSelection(
                 coordinate,
@@ -801,9 +940,13 @@ namespace Game.Presentation
                 unit?.Id,
                 unit?.OwnerFactionId,
                 mine?.OwnerFactionId,
-                mine?.CapturingFactionId,
-                mine?.CaptureProgress ?? 0,
-                _gameplayService?.FixedStepsToCapture ?? 0);
+                capturingFactionId,
+                captureProgress,
+                captureRequired,
+                castle?.OwnerFactionId,
+                castle?.Role ?? MapCastleRole.Unassigned,
+                castle?.ConflictKind ?? MapCastleConflictKind.None,
+                castle?.GarrisonUnitCount ?? 0);
         }
 
         private static string GetFactionDisplayName(string factionId)
@@ -992,6 +1135,14 @@ namespace Game.Presentation
             markerRoot.transform.SetParent(_generatedRoot, false);
             _gameplayMarkerRoot = markerRoot.transform;
 
+            for (int i = 0; i < _gameplayService.Castles.Count; i++)
+            {
+                MapCastleControlState castle = _gameplayService.Castles[i];
+                ForEachSurfaceCopy(xOffset => CreateCastleControlMarker(
+                    castle,
+                    ToWorldPosition(castle.Coordinate, xOffset)));
+            }
+
             for (int i = 0; i < _gameplayService.Mines.Count; i++)
             {
                 MapMineControlState mine = _gameplayService.Mines[i];
@@ -1023,6 +1174,86 @@ namespace Game.Presentation
                     CreateUnitMarker(unit, position, color, selected);
                 });
             }
+        }
+
+        private void CreateCastleControlMarker(
+            MapCastleControlState castle,
+            Vector3 position)
+        {
+            if (castle.IsNeutral &&
+                castle.ConflictKind == MapCastleConflictKind.None)
+            {
+                return;
+            }
+
+            Color controlColor = GetCastleControlColor(castle);
+            CreateBlock(
+                $"성 소유권_{castle.Coordinate.X}_{castle.Coordinate.Y}",
+                position + new Vector3(0f, 0.12f, 0f),
+                new Vector3(tileSize * 1.13f, 0.08f, tileSize * 1.13f),
+                controlColor,
+                _gameplayMarkerRoot,
+                false);
+
+            if (string.IsNullOrEmpty(castle.OwnerFactionId))
+                return;
+
+            Color ownerColor = GetFactionColor(castle.OwnerFactionId);
+            Color accent = Color.Lerp(ownerColor, Color.white, 0.45f);
+            CreateBlock(
+                $"성 깃대_{castle.Coordinate.X}_{castle.Coordinate.Y}",
+                position + new Vector3(0f, 1.24f, 0f),
+                new Vector3(tileSize * 0.04f, 0.62f, tileSize * 0.04f),
+                accent,
+                _gameplayMarkerRoot,
+                false);
+            CreateBlock(
+                $"성 깃발_{castle.Coordinate.X}_{castle.Coordinate.Y}",
+                position + new Vector3(tileSize * 0.13f, 1.43f, 0f),
+                new Vector3(tileSize * 0.24f, 0.16f, tileSize * 0.04f),
+                ownerColor,
+                _gameplayMarkerRoot,
+                false);
+
+            Vector3 roleScale;
+            switch (castle.Role)
+            {
+                case MapCastleRole.SupplyHub:
+                    roleScale = new Vector3(
+                        tileSize * 0.34f,
+                        0.10f,
+                        tileSize * 0.34f);
+                    break;
+                case MapCastleRole.IndustrialCity:
+                    roleScale = new Vector3(
+                        tileSize * 0.28f,
+                        0.30f,
+                        tileSize * 0.28f);
+                    break;
+                case MapCastleRole.MilitaryFortress:
+                    roleScale = new Vector3(
+                        tileSize * 0.42f,
+                        0.18f,
+                        tileSize * 0.42f);
+                    break;
+                case MapCastleRole.Port:
+                    roleScale = new Vector3(
+                        tileSize * 0.52f,
+                        0.09f,
+                        tileSize * 0.20f);
+                    break;
+                default:
+                    return;
+            }
+
+            CreateBlock(
+                $"성 역할_{MapCastleRoleNames.GetKoreanName(castle.Role)}_" +
+                $"{castle.Coordinate.X}_{castle.Coordinate.Y}",
+                position + new Vector3(0f, 1.02f, -tileSize * 0.25f),
+                roleScale,
+                accent,
+                _gameplayMarkerRoot,
+                false);
         }
 
         private void CreateUnitMarker(
@@ -1164,6 +1395,25 @@ namespace Game.Presentation
                 0.35f + progress * 0.65f);
         }
 
+        private Color GetCastleControlColor(MapCastleControlState castle)
+        {
+            Color currentColor = string.IsNullOrEmpty(castle.OwnerFactionId)
+                ? neutralFactionColor
+                : GetFactionColor(castle.OwnerFactionId);
+            if (string.IsNullOrEmpty(castle.CapturingFactionId))
+                return currentColor;
+
+            float progress = Mathf.Clamp01(
+                castle.CaptureProgress /
+                Mathf.Max(
+                    1f,
+                    _gameplayService.GetCastleCaptureRequired(castle)));
+            return Color.Lerp(
+                currentColor,
+                GetFactionColor(castle.CapturingFactionId),
+                0.30f + progress * 0.70f);
+        }
+
         private Color GetFactionColor(string factionId)
         {
             if (string.Equals(factionId, "player", StringComparison.Ordinal))
@@ -1224,6 +1474,18 @@ namespace Game.Presentation
             BuildMineVisual(new MinePlacement(record.Coordinate, record.Kind));
             RefreshCurrentSelection();
             MineSpawned?.Invoke(record);
+        }
+
+        private void HandleCastleCaptured(MapCastleCaptureRecord record)
+        {
+            RefreshCurrentSelection();
+            CastleCaptured?.Invoke(record);
+        }
+
+        private void HandleCastleRoleChanged(MapCastleRoleChangedRecord record)
+        {
+            RefreshCurrentSelection();
+            CastleRoleChanged?.Invoke(record);
         }
 
         private void RefreshCurrentSelection()

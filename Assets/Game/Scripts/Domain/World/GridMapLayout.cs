@@ -333,6 +333,35 @@ namespace Game.Domain.World
             const int minimumDistanceFromFactionStart = 7;
             const int minimumNeutralCastleSpacing = 6;
 
+            // 항구 역할을 실제로 선택할 수 있도록 가능한 경우 첫 빈 성은
+            // 반드시 해안 육지에 배치한다.
+            if (clampedNeutralCastleCount > 0)
+            {
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    GridCoordinate candidate = candidates[i];
+                    if (!IsCoastalLand(
+                            candidate,
+                            terrain,
+                            width,
+                            height,
+                            wrapHorizontally) ||
+                        !IsFarEnoughFrom(
+                            candidate,
+                            blockedStarts,
+                            minimumDistanceFromFactionStart,
+                            width,
+                            wrapHorizontally))
+                    {
+                        continue;
+                    }
+
+                    neutralCastles.Add(candidate);
+                    neutralCastleSet.Add(candidate);
+                    break;
+                }
+            }
+
             for (int i = 0;
                  i < candidates.Count &&
                  neutralCastles.Count < clampedNeutralCastleCount;
@@ -421,6 +450,38 @@ namespace Game.Domain.World
             }
 
             return true;
+        }
+
+        private static bool IsCoastalLand(
+            GridCoordinate coordinate,
+            IReadOnlyList<GridTerrainKind> terrain,
+            int width,
+            int height,
+            bool wrapHorizontally)
+        {
+            GridCoordinate[] offsets =
+            {
+                new GridCoordinate(1, 0),
+                new GridCoordinate(-1, 0),
+                new GridCoordinate(0, 1),
+                new GridCoordinate(0, -1)
+            };
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                int x = coordinate.X + offsets[i].X;
+                int y = coordinate.Y + offsets[i].Y;
+                if (y < 0 || y >= height)
+                    continue;
+                if (wrapHorizontally)
+                    x = ((x % width) + width) % width;
+                else if (x < 0 || x >= width)
+                    continue;
+
+                if (terrain[y * width + x] == GridTerrainKind.Ocean)
+                    return true;
+            }
+
+            return false;
         }
 
         private static GridTerrainKind[] GenerateTerrain(

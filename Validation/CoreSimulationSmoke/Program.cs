@@ -60,6 +60,9 @@ Check(wrappedMap.NeutralCastles.Count == 8 &&
 Check(wrappedMap.NeutralCastles.All(castle =>
       wrappedMap.Mines.All(mine => !mine.Coordinate.Equals(castle))),
     "중립 빈 성과 광산 좌표 분리");
+Check(wrappedMap.NeutralCastles.Any(castle =>
+      IsCoastal(wrappedMap, castle)),
+    "항구 역할용 해안 빈 성 최소 1개 확보");
 
 var mapGameplay = new RealtimeMapGameplayService(
     wrappedMap,
@@ -155,6 +158,80 @@ aiCaptureGameplay.AdvanceFixedSteps(2);
 Check(aiCaptureGameplay.FindMine(new GridCoordinate(4, 1)).OwnerFactionId ==
       "ai_1",
     "AI가 동일한 이동·점령 규칙 사용");
+
+var castleTerrain = new GridTerrainKind[6 * 3];
+Array.Fill(castleTerrain, GridTerrainKind.Plains);
+var castleCoordinate = new GridCoordinate(4, 1);
+var castleLayout = new GridMapLayout(
+    6,
+    3,
+    79,
+    new GridCoordinate(0, 1),
+    new[] { new GridCoordinate(5, 1) },
+    Array.Empty<MinePlacement>(),
+    false,
+    castleTerrain,
+    new[] { castleCoordinate });
+var castleGameplay = new RealtimeMapGameplayService(
+    castleLayout,
+    "player",
+    new[] { "ai_1" },
+    new MapGameplayTuning(
+        fixedStepsPerMove: 1,
+        aiDecisionIntervalSteps: 1000,
+        fixedStepsToCaptureCastle: 1,
+        fixedStepsToSiegeUndefendedCastle: 2));
+Check(castleGameplay.TryCreateUnit(
+        "ai_1",
+        out MapUnitState castleDefender,
+        out _),
+    "AI 성 점령 부대 생성");
+Check(castleGameplay.TryIssueCastleOccupation(
+        "ai_1",
+        castleDefender.Id,
+        castleCoordinate,
+        out _),
+    "AI 빈 성 점령 명령");
+castleGameplay.AdvanceFixedSteps(1);
+MapCastleControlState controlledCastle =
+    castleGameplay.FindCastle(castleCoordinate);
+Check(controlledCastle.OwnerFactionId == "ai_1" &&
+      controlledCastle.GarrisonUnitCount == 1,
+    "빈 성 소유권과 주둔군 기록");
+Check(castleGameplay.TryCreateUnit(
+        "player",
+        out MapUnitState castleAttacker,
+        out _),
+    "플레이어 공성 부대 생성");
+Check(castleGameplay.TryIssueCastleOccupation(
+        "player",
+        castleAttacker.Id,
+        castleCoordinate,
+        out _),
+    "적성 공성 명령");
+castleGameplay.AdvanceFixedSteps(4);
+Check(controlledCastle.IsUnderSiege &&
+      controlledCastle.OwnerFactionId == "ai_1" &&
+      controlledCastle.CaptureProgress == 0,
+    "수비대가 있는 적성은 자동 점령 대신 공성 대상으로 유지");
+Check(castleGameplay.TryIssueMove(
+        "ai_1",
+        castleDefender.Id,
+        new GridCoordinate(5, 1),
+        out _),
+    "적성 수비대 철수");
+castleGameplay.AdvanceFixedSteps(2);
+Check(controlledCastle.OwnerFactionId == "player" &&
+      controlledCastle.GarrisonUnitIds.Contains(castleAttacker.Id),
+    "무방비 적성 공성 완료와 주둔군 갱신");
+Check(castleGameplay.TrySetCastleRole(
+        "player",
+        castleCoordinate,
+        MapCastleRole.IndustrialCity,
+        out _),
+    "점령 성 역할 선택");
+Check(controlledCastle.Role == MapCastleRole.IndustrialCity,
+    "성 역할 상태 저장");
 
 var resources = new List<ResourceId>
 {
@@ -410,4 +487,34 @@ static void Check(bool condition, string name)
 {
     if (!condition)
         throw new InvalidOperationException("검증 실패: " + name);
+}
+
+static bool IsCoastal(
+    GridMapLayout layout,
+    GridCoordinate coordinate)
+{
+    GridCoordinate[] offsets =
+    {
+        new GridCoordinate(1, 0),
+        new GridCoordinate(-1, 0),
+        new GridCoordinate(0, 1),
+        new GridCoordinate(0, -1)
+    };
+    for (int i = 0; i < offsets.Length; i++)
+    {
+        try
+        {
+            GridCoordinate neighbor = layout.Move(
+                coordinate,
+                offsets[i].X,
+                offsets[i].Y);
+            if (!layout.IsLand(neighbor))
+                return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+        }
+    }
+
+    return false;
 }

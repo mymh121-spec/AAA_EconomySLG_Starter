@@ -369,6 +369,156 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_CapturesCastleStoresGarrisonAndRole()
+        {
+            var terrain = new GridTerrainKind[5 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var castleCoordinate = new GridCoordinate(2, 1);
+            var layout = new GridMapLayout(
+                5,
+                3,
+                43,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { castleCoordinate });
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    fixedStepsToCaptureCastle: 2,
+                    fixedStepsToSiegeUndefendedCastle: 3));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "player",
+                    unit.Id,
+                    castleCoordinate,
+                    out _),
+                Is.True);
+
+            service.AdvanceFixedSteps(2);
+
+            MapCastleControlState castle = service.FindCastle(castleCoordinate);
+            Assert.That(castle.OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(castle.GarrisonUnitIds, Does.Contain(unit.Id));
+            Assert.That(castle.ConflictKind, Is.EqualTo(MapCastleConflictKind.None));
+            Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
+            Assert.That(
+                service.TrySetCastleRole(
+                    "player",
+                    castleCoordinate,
+                    MapCastleRole.Port,
+                    out string portReason),
+                Is.False);
+            Assert.That(portReason, Does.Contain("바다"));
+            Assert.That(
+                service.TrySetCastleRole(
+                    "player",
+                    castleCoordinate,
+                    MapCastleRole.IndustrialCity,
+                    out _),
+                Is.True);
+            Assert.That(castle.Role, Is.EqualTo(MapCastleRole.IndustrialCity));
+
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(3, 1),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+            Assert.That(castle.GarrisonUnitCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_DefendedCastleBecomesSiegeTarget()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var castleCoordinate = new GridCoordinate(4, 1);
+            var layout = new GridMapLayout(
+                6,
+                3,
+                47,
+                new GridCoordinate(0, 1),
+                new[] { new GridCoordinate(5, 1) },
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { castleCoordinate });
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    fixedStepsToCaptureCastle: 1,
+                    fixedStepsToSiegeUndefendedCastle: 2));
+
+            Assert.That(
+                service.TryCreateUnit("ai_1", out MapUnitState defender, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "ai_1",
+                    defender.Id,
+                    castleCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+            MapCastleControlState castle = service.FindCastle(castleCoordinate);
+            Assert.That(castle.OwnerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(castle.GarrisonUnitCount, Is.EqualTo(1));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState attacker, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "player",
+                    attacker.Id,
+                    castleCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(4);
+
+            Assert.That(castle.OwnerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(castle.IsUnderSiege, Is.True);
+            Assert.That(castle.CapturingFactionId, Is.EqualTo("player"));
+            Assert.That(castle.CaptureProgress, Is.EqualTo(0));
+
+            MapCastleCaptureRecord captureRecord = default;
+            service.CastleCaptured += record => captureRecord = record;
+            Assert.That(
+                service.TryIssueMove(
+                    "ai_1",
+                    defender.Id,
+                    new GridCoordinate(5, 1),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(2);
+
+            Assert.That(castle.OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(castle.GarrisonUnitIds, Does.Contain(attacker.Id));
+            Assert.That(captureRecord.WasSiege, Is.True);
+            Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
+        }
+
+        [Test]
         public void MineProduction_AutomaticallyDepositsIntoHeadquartersWarehouse()
         {
             var iron = new ResourceDefinition(

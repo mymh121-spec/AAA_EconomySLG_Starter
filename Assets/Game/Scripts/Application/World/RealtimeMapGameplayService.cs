@@ -11,6 +11,8 @@ namespace Game.Application.World
     {
         public int FixedStepsPerMove { get; }
         public int FixedStepsToCapture { get; }
+        public int FixedStepsToCaptureCastle { get; }
+        public int FixedStepsToSiegeUndefendedCastle { get; }
         public int AiDecisionIntervalSteps { get; }
         public int MaxUnitsPerFaction { get; }
         public int MaxUnitStamina { get; }
@@ -34,10 +36,18 @@ namespace Game.Application.World
             decimal goldMineCashPerDay = 1500m,
             int mineSpawnIntervalDays = 5,
             decimal mineDailyDepletionRate = 0.03m,
-            decimal minimumMineYieldMultiplier = 0.25m)
+            decimal minimumMineYieldMultiplier = 0.25m,
+            int fixedStepsToCaptureCastle = 60,
+            int fixedStepsToSiegeUndefendedCastle = 120)
         {
             FixedStepsPerMove = Math.Max(1, fixedStepsPerMove);
             FixedStepsToCapture = Math.Max(1, fixedStepsToCapture);
+            FixedStepsToCaptureCastle = Math.Max(
+                1,
+                fixedStepsToCaptureCastle);
+            FixedStepsToSiegeUndefendedCastle = Math.Max(
+                FixedStepsToCaptureCastle,
+                fixedStepsToSiegeUndefendedCastle);
             AiDecisionIntervalSteps = Math.Max(1, aiDecisionIntervalSteps);
             MaxUnitsPerFaction = Math.Max(1, maxUnitsPerFaction);
             MaxUnitStamina = Math.Max(1, maxUnitStamina);
@@ -310,6 +320,8 @@ namespace Game.Application.World
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
         private readonly List<MapMineControlState> _mines =
             new List<MapMineControlState>();
+        private readonly List<MapCastleControlState> _castles =
+            new List<MapCastleControlState>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -317,11 +329,18 @@ namespace Game.Application.World
         public string PlayerFactionId { get; }
         public IReadOnlyList<MapUnitState> Units => _units;
         public IReadOnlyList<MapMineControlState> Mines => _mines;
+        public IReadOnlyList<MapCastleControlState> Castles => _castles;
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
+        public int FixedStepsToCaptureCastle =>
+            _tuning.FixedStepsToCaptureCastle;
+        public int FixedStepsToSiegeUndefendedCastle =>
+            _tuning.FixedStepsToSiegeUndefendedCastle;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
+        public event Action<MapCastleCaptureRecord> CastleCaptured;
+        public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
 
         public RealtimeMapGameplayService(
             GridMapLayout layout,
@@ -349,6 +368,8 @@ namespace Game.Application.World
 
             for (int i = 0; i < layout.Mines.Count; i++)
                 _mines.Add(new MapMineControlState(layout.Mines[i]));
+            for (int i = 0; i < layout.NeutralCastles.Count; i++)
+                _castles.Add(new MapCastleControlState(layout.NeutralCastles[i]));
         }
 
         public MapUnitState FindUnit(string unitId)
@@ -405,6 +426,28 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public MapCastleControlState FindCastle(GridCoordinate coordinate)
+        {
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                if (_castles[i].Coordinate.Equals(coordinate))
+                    return _castles[i];
+            }
+
+            return null;
+        }
+
+        public int GetCastleCaptureRequired(MapCastleControlState castle)
+        {
+            if (castle == null)
+                return 0;
+
+            return castle.ConflictKind == MapCastleConflictKind.Siege ||
+                   !string.IsNullOrEmpty(castle.OwnerFactionId)
+                ? _tuning.FixedStepsToSiegeUndefendedCastle
+                : _tuning.FixedStepsToCaptureCastle;
         }
 
         public bool CanCreateUnit(string ownerFactionId, out string reason)
@@ -633,6 +676,171 @@ namespace Game.Application.World
             return true;
         }
 
+        public bool CanIssueCastleOccupation(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null)
+            {
+                reason = "해당 위치에는 점령할 성이 없습니다.";
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null)
+            {
+                reason = "먼저 점령에 사용할 부대를 선택하세요.";
+                return false;
+            }
+
+            if (!string.Equals(
+                unit.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 부대에는 명령할 수 없습니다.";
+                return false;
+            }
+
+            if (string.Equals(
+                castle.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "이미 우리 세력이 소유한 성입니다.";
+                return false;
+            }
+
+            if (!unit.Coordinate.Equals(castle.Coordinate))
+            {
+                return CanIssueMove(
+                    ownerFactionId,
+                    unitId,
+                    castle.Coordinate,
+                    out _,
+                    out reason);
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryIssueCastleOccupation(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (!CanIssueCastleOccupation(
+                ownerFactionId,
+                unitId,
+                coordinate,
+                out reason))
+            {
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (!unit.Coordinate.Equals(coordinate))
+            {
+                return TryIssueMove(
+                    ownerFactionId,
+                    unitId,
+                    coordinate,
+                    out reason);
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            BeginCastleConflict(castle, ownerFactionId);
+            reason = castle.IsUnderSiege
+                ? "적성 공성을 시작했습니다. 수비대가 있으면 전투 판정이 필요합니다."
+                : "빈 성 점령을 시작했습니다. 부대가 성에 머무는 동안 진행됩니다.";
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TrySetCastleRole(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            MapCastleRole role,
+            out string reason)
+        {
+            if (!CanSetCastleRole(
+                ownerFactionId,
+                coordinate,
+                role,
+                out reason))
+            {
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            MapCastleRole previousRole = castle.Role;
+            castle.Role = role;
+            reason = string.Empty;
+            CastleRoleChanged?.Invoke(new MapCastleRoleChangedRecord(
+                castle.Coordinate,
+                castle.OwnerFactionId,
+                previousRole,
+                castle.Role));
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool CanSetCastleRole(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            MapCastleRole role,
+            out string reason)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null)
+            {
+                reason = "해당 위치에는 역할을 지정할 성이 없습니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                castle.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "우리 세력이 소유한 성만 역할을 지정할 수 있습니다.";
+                return false;
+            }
+
+            if (castle.IsUnderSiege)
+            {
+                reason = "공성 중인 성은 역할을 변경할 수 없습니다.";
+                return false;
+            }
+
+            if (role == MapCastleRole.Unassigned)
+            {
+                reason = "보급 거점·산업 도시·군사 요새·항구 중 하나를 선택하세요.";
+                return false;
+            }
+
+            if (role == MapCastleRole.Port &&
+                !IsCoastalCastle(castle.Coordinate))
+            {
+                reason = "항구는 바다와 맞닿은 성에만 지정할 수 있습니다.";
+                return false;
+            }
+
+            if (castle.Role == role)
+            {
+                reason = "이미 같은 역할로 운영 중입니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
         public void AdvanceFixedSteps(int fixedStepCount)
         {
             int safeStepCount = Math.Max(0, fixedStepCount);
@@ -644,6 +852,7 @@ namespace Game.Application.World
                 if (_fixedStepSequence % _tuning.AiDecisionIntervalSteps == 0)
                     changed |= RunAiDecisions();
                 changed |= MoveUnitsOneFixedStep();
+                changed |= AdvanceCastleCaptures();
                 changed |= AdvanceMineCaptures();
                 changed |= RecoverUnitStamina();
                 anyChanged |= changed;
@@ -804,13 +1013,37 @@ namespace Game.Application.World
                     changed = true;
                 }
 
-                if (unit.IsMoving || IsStandingOnEnemyMine(unit))
+                if (unit.IsMoving || IsStandingOnCapturableObjective(unit))
                     continue;
 
+                MapCastleControlState castleTarget =
+                    FindClosestTargetCastle(factionId, unit.Coordinate);
                 MapMineControlState target = FindClosestTargetMine(
                     factionId,
                     unit.Coordinate);
-                if (target != null && TryIssueMove(
+                int castleDistance = castleTarget == null
+                    ? int.MaxValue
+                    : _layout.ManhattanDistance(
+                        unit.Coordinate,
+                        castleTarget.Coordinate);
+                int mineDistance = target == null
+                    ? int.MaxValue
+                    : _layout.ManhattanDistance(
+                        unit.Coordinate,
+                        target.Coordinate);
+
+                if (castleTarget != null && castleDistance <= mineDistance)
+                {
+                    if (TryIssueCastleOccupation(
+                        factionId,
+                        unit.Id,
+                        castleTarget.Coordinate,
+                        out _))
+                    {
+                        changed = true;
+                    }
+                }
+                else if (target != null && TryIssueMove(
                     factionId,
                     unit.Id,
                     target.Coordinate,
@@ -839,13 +1072,52 @@ namespace Game.Application.World
             return null;
         }
 
-        private bool IsStandingOnEnemyMine(MapUnitState unit)
+        private bool IsStandingOnCapturableObjective(MapUnitState unit)
         {
             MapMineControlState mine = FindMine(unit.Coordinate);
-            return mine != null && !string.Equals(
-                mine.OwnerFactionId,
-                unit.OwnerFactionId,
-                StringComparison.Ordinal);
+            if (mine != null && !string.Equals(
+                    mine.OwnerFactionId,
+                    unit.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            MapCastleControlState castle = FindCastle(unit.Coordinate);
+            return castle != null && !string.Equals(
+                    castle.OwnerFactionId,
+                    unit.OwnerFactionId,
+                    StringComparison.Ordinal);
+        }
+
+        private MapCastleControlState FindClosestTargetCastle(
+            string factionId,
+            GridCoordinate origin)
+        {
+            MapCastleControlState best = null;
+            int bestDistance = int.MaxValue;
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState castle = _castles[i];
+                if (string.Equals(
+                    castle.OwnerFactionId,
+                    factionId,
+                    StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int distance = _layout.ManhattanDistance(
+                    origin,
+                    castle.Coordinate);
+                if (distance < bestDistance)
+                {
+                    best = castle;
+                    bestDistance = distance;
+                }
+            }
+
+            return best;
         }
 
         private MapMineControlState FindClosestTargetMine(
@@ -914,6 +1186,239 @@ namespace Game.Application.World
             }
 
             return changed;
+        }
+
+        private bool AdvanceCastleCaptures()
+        {
+            bool changed = false;
+            for (int castleIndex = 0; castleIndex < _castles.Count; castleIndex++)
+            {
+                MapCastleControlState castle = _castles[castleIndex];
+                changed |= RefreshCastleGarrison(castle);
+
+                var occupyingFactions = new List<string>();
+                for (int unitIndex = 0; unitIndex < _units.Count; unitIndex++)
+                {
+                    MapUnitState unit = _units[unitIndex];
+                    if (!unit.Coordinate.Equals(castle.Coordinate) ||
+                        occupyingFactions.Contains(unit.OwnerFactionId))
+                    {
+                        continue;
+                    }
+
+                    occupyingFactions.Add(unit.OwnerFactionId);
+                }
+
+                if (occupyingFactions.Count == 0)
+                {
+                    changed |= ClearCastleConflict(castle);
+                    continue;
+                }
+
+                if (castle.IsNeutral)
+                {
+                    if (occupyingFactions.Count != 1)
+                    {
+                        changed |= ClearCastleConflict(castle);
+                        continue;
+                    }
+
+                    changed |= BeginCastleConflict(
+                        castle,
+                        occupyingFactions[0]);
+                    castle.CaptureProgress++;
+                    changed = true;
+                    if (castle.CaptureProgress >=
+                        _tuning.FixedStepsToCaptureCastle)
+                    {
+                        CompleteCastleCapture(castle, wasSiege: false);
+                    }
+                    continue;
+                }
+
+                bool ownerPresent = occupyingFactions.Contains(
+                    castle.OwnerFactionId);
+                var attackingFactions = new List<string>();
+                for (int i = 0; i < occupyingFactions.Count; i++)
+                {
+                    if (!string.Equals(
+                        occupyingFactions[i],
+                        castle.OwnerFactionId,
+                        StringComparison.Ordinal))
+                    {
+                        attackingFactions.Add(occupyingFactions[i]);
+                    }
+                }
+
+                if (attackingFactions.Count == 0)
+                {
+                    changed |= ClearCastleConflict(castle);
+                    continue;
+                }
+
+                if (attackingFactions.Count > 1)
+                {
+                    changed |= SetContestedSiege(castle);
+                    continue;
+                }
+
+                changed |= BeginCastleConflict(castle, attackingFactions[0]);
+                if (ownerPresent || castle.GarrisonUnitCount > 0)
+                {
+                    if (castle.CaptureProgress != 0)
+                    {
+                        castle.CaptureProgress = 0;
+                        changed = true;
+                    }
+                    continue;
+                }
+
+                castle.CaptureProgress++;
+                changed = true;
+                if (castle.CaptureProgress >=
+                    _tuning.FixedStepsToSiegeUndefendedCastle)
+                {
+                    CompleteCastleCapture(castle, wasSiege: true);
+                }
+            }
+
+            return changed;
+        }
+
+        private bool BeginCastleConflict(
+            MapCastleControlState castle,
+            string attackingFactionId)
+        {
+            MapCastleConflictKind kind = castle.IsNeutral
+                ? MapCastleConflictKind.Occupation
+                : MapCastleConflictKind.Siege;
+            bool changed = castle.ConflictKind != kind ||
+                !string.Equals(
+                    castle.CapturingFactionId,
+                    attackingFactionId,
+                    StringComparison.Ordinal);
+            if (!changed)
+                return false;
+
+            castle.ConflictKind = kind;
+            castle.CapturingFactionId = attackingFactionId ?? string.Empty;
+            castle.CaptureProgress = 0;
+            return true;
+        }
+
+        private static bool ClearCastleConflict(MapCastleControlState castle)
+        {
+            if (castle.ConflictKind == MapCastleConflictKind.None &&
+                string.IsNullOrEmpty(castle.CapturingFactionId) &&
+                castle.CaptureProgress == 0)
+            {
+                return false;
+            }
+
+            castle.ConflictKind = MapCastleConflictKind.None;
+            castle.CapturingFactionId = string.Empty;
+            castle.CaptureProgress = 0;
+            return true;
+        }
+
+        private static bool SetContestedSiege(MapCastleControlState castle)
+        {
+            bool changed = castle.ConflictKind != MapCastleConflictKind.Siege ||
+                !string.IsNullOrEmpty(castle.CapturingFactionId) ||
+                castle.CaptureProgress != 0;
+            castle.ConflictKind = MapCastleConflictKind.Siege;
+            castle.CapturingFactionId = string.Empty;
+            castle.CaptureProgress = 0;
+            return changed;
+        }
+
+        private void CompleteCastleCapture(
+            MapCastleControlState castle,
+            bool wasSiege)
+        {
+            string previousOwner = castle.OwnerFactionId;
+            string newOwner = castle.CapturingFactionId;
+            castle.OwnerFactionId = newOwner;
+            castle.Role = string.Equals(
+                newOwner,
+                PlayerFactionId,
+                StringComparison.Ordinal)
+                ? MapCastleRole.Unassigned
+                : SelectAiCastleRole(castle.Coordinate);
+            ClearCastleConflict(castle);
+            RefreshCastleGarrison(castle);
+            CastleCaptured?.Invoke(new MapCastleCaptureRecord(
+                castle.Coordinate,
+                previousOwner,
+                castle.OwnerFactionId,
+                wasSiege));
+        }
+
+        private bool RefreshCastleGarrison(MapCastleControlState castle)
+        {
+            var garrison = new List<string>();
+            if (!string.IsNullOrEmpty(castle.OwnerFactionId))
+            {
+                for (int i = 0; i < _units.Count; i++)
+                {
+                    MapUnitState unit = _units[i];
+                    if (unit.Coordinate.Equals(castle.Coordinate) &&
+                        string.Equals(
+                            unit.OwnerFactionId,
+                            castle.OwnerFactionId,
+                            StringComparison.Ordinal))
+                    {
+                        garrison.Add(unit.Id);
+                    }
+                }
+            }
+
+            return castle.SetGarrison(garrison);
+        }
+
+        private MapCastleRole SelectAiCastleRole(GridCoordinate coordinate)
+        {
+            MapCastleRole[] roles = IsCoastalCastle(coordinate)
+                ? new[]
+                {
+                    MapCastleRole.SupplyHub,
+                    MapCastleRole.IndustrialCity,
+                    MapCastleRole.MilitaryFortress,
+                    MapCastleRole.Port
+                }
+                : new[]
+                {
+                    MapCastleRole.SupplyHub,
+                    MapCastleRole.IndustrialCity,
+                    MapCastleRole.MilitaryFortress
+                };
+            int index = PositiveModulo(
+                coordinate.X * 17 + coordinate.Y * 31,
+                roles.Length);
+            return roles[index];
+        }
+
+        private bool IsCoastalCastle(GridCoordinate coordinate)
+        {
+            for (int i = 0; i < NeighborOffsets.Length; i++)
+            {
+                GridCoordinate offset = NeighborOffsets[i];
+                try
+                {
+                    GridCoordinate neighbor = _layout.Move(
+                        coordinate,
+                        offset.X,
+                        offset.Y);
+                    if (!_layout.IsLand(neighbor))
+                        return true;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // 세로 경계 밖은 지도 외부이지 바다가 아니다.
+                }
+            }
+
+            return false;
         }
 
         private bool AdvanceMineCaptures()

@@ -58,6 +58,8 @@ namespace Game.Presentation
         private Button _contextInspectUnitButton;
         private Button _contextMoveUnitButton;
         private Button _contextCaptureMineButton;
+        private Button _contextCastleActionButton;
+        private Button _contextCastleRoleButton;
         private Button _contextMissionButton;
         private Button _neutralNpcTopButton;
         private VisualElement _neutralNpcView;
@@ -243,6 +245,8 @@ namespace Game.Presentation
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
             gameplayMap.MineCaptured += HandleMineCaptured;
             gameplayMap.MineSpawned += HandleMineSpawned;
+            gameplayMap.CastleCaptured += HandleCastleCaptured;
+            gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             _mapEventsBound = true;
         }
 
@@ -1003,17 +1007,13 @@ namespace Game.Presentation
                 _contextInspectUnitButton,
                 !string.IsNullOrEmpty(selection.UnitId));
             ConfigureCaptureMineButton(selection);
+            ConfigureCastleButtons(selection);
 
-            bool neutralCastle =
-                selection.Content == MapCellContent.NeutralCastle;
             bool missionTarget =
-                selection.Content == MapCellContent.EnemyBase ||
-                neutralCastle;
+                selection.Content == MapCellContent.EnemyBase;
             SetVisible(_contextMissionButton, missionTarget);
             _contextMissionButton.SetEnabled(missionTarget);
-            _contextMissionButton.text = neutralCastle
-                ? "빈 성 정보 · 정찰 / 점령 준비"
-                : "미션 정보 · 정찰 / 봉쇄 / 공격";
+            _contextMissionButton.text = "미션 정보 · 정찰 / 봉쇄 / 공격";
 
             PositionMapContextMenu(screenPosition);
             SetVisible(_mapContextMenu, true);
@@ -1055,6 +1055,40 @@ namespace Game.Presentation
             _singleMapActionFeedback.text =
                 $"{record.EconomicDay}일: 새로운 {mineName}이(가) " +
                 $"{record.Coordinate}에서 발견되었습니다.";
+        }
+
+        private void HandleCastleCaptured(MapCastleCaptureRecord record)
+        {
+            if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+                return;
+
+            bool playerCaptured = string.Equals(
+                record.NewOwnerFactionId,
+                "player",
+                StringComparison.Ordinal);
+            string owner = playerCaptured
+                ? "플레이어"
+                : "경쟁 세력 " + record.NewOwnerFactionId;
+            string action = record.WasSiege
+                ? "공성을 마치고 성을 점령했습니다"
+                : "빈 성을 점령했습니다";
+            _singleMapActionFeedback.text =
+                $"{owner}이(가) {record.Coordinate}에서 {action}." +
+                (playerCaptured
+                    ? " 우클릭 메뉴에서 거점 역할을 선택하세요."
+                    : string.Empty);
+        }
+
+        private void HandleCastleRoleChanged(
+            MapCastleRoleChangedRecord record)
+        {
+            if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+                return;
+
+            _singleMapActionFeedback.text =
+                $"{record.Coordinate} 성의 역할을 " +
+                $"{MapCastleRoleNames.GetKoreanName(record.NewRole)}(으)로 " +
+                "지정했습니다.";
         }
 
         private void HandleRealtimeFixedStepsAdvanced(int fixedStepCount)
@@ -1428,6 +1462,7 @@ namespace Game.Presentation
                 SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
                 ConfigureCaptureMineButton(selection);
+                ConfigureCastleButtons(selection);
             }
 
             if (_neutralNpcView != null &&
@@ -1468,6 +1503,61 @@ namespace Game.Presentation
                 : "채광·점령한다";
         }
 
+        private void ConfigureCastleButtons(MapCellSelection selection)
+        {
+            if (_contextCastleActionButton == null ||
+                _contextCastleRoleButton == null)
+            {
+                return;
+            }
+
+            bool isNeutralCastle =
+                selection.Content == MapCellContent.NeutralCastle;
+            bool isPlayerCastle =
+                selection.Content == MapCellContent.PlayerCastle;
+            bool isEnemyCastle =
+                selection.Content == MapCellContent.EnemyCastle;
+            bool isCastle = isNeutralCastle || isPlayerCastle || isEnemyCastle;
+            if (!isCastle)
+            {
+                SetVisible(_contextCastleActionButton, false);
+                SetVisible(_contextCastleRoleButton, false);
+                return;
+            }
+
+            bool canOrder = !isPlayerCastle &&
+                gameplayMap.CanCaptureOrSiegeSelectedCastle(
+                    selection.Coordinate,
+                    out _);
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            bool unitAtCastle = selectedUnit != null &&
+                selectedUnit.Coordinate.Equals(selection.Coordinate);
+
+            SetVisible(_contextCastleActionButton, !isPlayerCastle);
+            _contextCastleActionButton.SetEnabled(canOrder);
+            if (isNeutralCastle)
+            {
+                _contextCastleActionButton.text = unitAtCastle
+                    ? "빈 성 점령 시작"
+                    : "빈 성으로 이동·점령";
+            }
+            else if (isEnemyCastle)
+            {
+                _contextCastleActionButton.text = unitAtCastle
+                    ? "적성 공성전 시작"
+                    : "적성으로 이동·공성 준비";
+            }
+
+            SetVisible(_contextCastleRoleButton, isPlayerCastle);
+            _contextCastleRoleButton.SetEnabled(
+                isPlayerCastle &&
+                selection.CastleConflictKind != MapCastleConflictKind.Siege);
+            _contextCastleRoleButton.text =
+                "거점 역할: " +
+                MapCastleRoleNames.GetKoreanName(selection.CastleRole) +
+                " · 클릭해 변경";
+        }
+
         private void ConfigureMapActionButtons(
             MapCellSelection selection,
             Button createButton,
@@ -1492,6 +1582,10 @@ namespace Game.Presentation
             bool hasSelectedUnit = gameplayMap.SelectedPlayerUnit != null;
             bool isMine = selection.Content == MapCellContent.NormalMine ||
                           selection.Content == MapCellContent.GoldMine;
+            bool isCastle =
+                selection.Content == MapCellContent.NeutralCastle ||
+                selection.Content == MapCellContent.PlayerCastle ||
+                selection.Content == MapCellContent.EnemyCastle;
 
             SetVisible(createButton, atPlayerBase);
             createButton.SetEnabled(canCreate);
@@ -1502,9 +1596,81 @@ namespace Game.Presentation
             // both buttons issue effectively the same order.
             SetVisible(
                 moveButton,
-                hasSelectedUnit && !canSelect && !isMine);
+                hasSelectedUnit && !canSelect && !isMine && !isCastle);
             moveButton.SetEnabled(canMove);
             moveButton.text = "이 칸으로 이동 · 체력 1";
+        }
+
+        private void CaptureOrSiegeSelectedCastle()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            bool alreadyAtCastle = selectedUnit != null &&
+                selectedUnit.Coordinate.Equals(selection.Coordinate);
+            if (!gameplayMap.TryCaptureOrSiegeSelectedCastle(
+                selection.Coordinate,
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            bool siege = selection.Content == MapCellContent.EnemyCastle;
+            SetMapActionFeedback(alreadyAtCastle
+                ? siege
+                    ? "적성 공성을 시작했습니다. 수비대가 있으면 전투 판정을 기다립니다."
+                    : "빈 성 점령을 시작했습니다. 점령이 끝날 때까지 주둔하세요."
+                : siege
+                    ? $"{selection.Coordinate} 적성으로 이동합니다. 도착하면 공성 대상으로 전환됩니다."
+                    : $"{selection.Coordinate} 빈 성으로 이동합니다. 도착하면 점령을 시작합니다.");
+        }
+
+        private void CycleSelectedCastleRole()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            MapCastleRole[] order =
+            {
+                MapCastleRole.SupplyHub,
+                MapCastleRole.IndustrialCity,
+                MapCastleRole.MilitaryFortress,
+                MapCastleRole.Port
+            };
+            int currentIndex = Array.IndexOf(order, selection.CastleRole);
+            string lastReason = string.Empty;
+            for (int offset = 1; offset <= order.Length; offset++)
+            {
+                int nextIndex = (currentIndex + offset) % order.Length;
+                MapCastleRole nextRole = order[nextIndex];
+                if (!gameplayMap.TrySetPlayerCastleRole(
+                    selection.Coordinate,
+                    nextRole,
+                    out lastReason))
+                {
+                    continue;
+                }
+
+                SetMapActionFeedback(
+                    $"{selection.Coordinate} 성을 " +
+                    $"{MapCastleRoleNames.GetKoreanName(nextRole)}(으)로 " +
+                    "운영합니다.");
+                if (gameplayMap.CurrentSelection.HasValue)
+                    ConfigureCastleButtons(gameplayMap.CurrentSelection.Value);
+                return;
+            }
+
+            SetMapActionFeedback(lastReason);
         }
 
         private void ShowSelectedMissionInformation()
@@ -1773,6 +1939,16 @@ namespace Game.Presentation
                     CaptureSelectedMine();
                     HideMapContextMenu();
                 });
+            _contextCastleActionButton = CreateMapActionButton(
+                "빈 성으로 이동·점령",
+                () =>
+                {
+                    CaptureOrSiegeSelectedCastle();
+                    HideMapContextMenu();
+                });
+            _contextCastleRoleButton = CreateMapActionButton(
+                "성 역할 선택",
+                CycleSelectedCastleRole);
             _contextMissionButton = CreateMapActionButton(
                 "미션 정보 · 정찰 / 봉쇄 / 공격",
                 ShowSelectedMissionInformation);
@@ -1788,6 +1964,8 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextInspectUnitButton);
             _mapContextMenu.Add(_contextMoveUnitButton);
             _mapContextMenu.Add(_contextCaptureMineButton);
+            _mapContextMenu.Add(_contextCastleActionButton);
+            _mapContextMenu.Add(_contextCastleRoleButton);
             _mapContextMenu.Add(_contextMissionButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);
@@ -2354,6 +2532,8 @@ namespace Game.Presentation
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;
                 gameplayMap.MineCaptured -= HandleMineCaptured;
                 gameplayMap.MineSpawned -= HandleMineSpawned;
+                gameplayMap.CastleCaptured -= HandleCastleCaptured;
+                gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
                 _mapEventsBound = false;
             }
             if (_panelSettings != null)
