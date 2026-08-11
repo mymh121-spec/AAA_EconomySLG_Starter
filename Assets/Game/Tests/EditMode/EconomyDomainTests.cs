@@ -272,6 +272,64 @@ namespace Game.Tests
         }
 
         [Test]
+        public void MineProduction_AutomaticallyDepositsIntoHeadquartersWarehouse()
+        {
+            var iron = new ResourceDefinition(
+                new ResourceId("iron"),
+                "철광석",
+                100m,
+                ResourceRarity.Common,
+                1m,
+                false);
+            var catalog = new ResourceCatalog();
+            catalog.Register(iron);
+
+            CampaignState campaign = CreateCampaign(1000m, 1000m);
+            var warehouse = new Warehouse(
+                new WarehouseId("player_headquarters"),
+                campaign.Player.Company.Id,
+                new RegionId("starter"),
+                130m);
+            Assert.That(warehouse.TryAdd(iron.Id, 100m), Is.True);
+
+            var world = new WorldEconomyState();
+            world.RegisterCompany(new CompanyEconomyRuntime(
+                campaign.Player,
+                warehouse,
+                0,
+                0m,
+                0m));
+            var depositService = new MapMineProductionDepositService(
+                world,
+                catalog);
+
+            MapMineProductionDepositReport report = depositService.Deposit(
+                new[]
+                {
+                    new MapMineProductionRecord(
+                        "player",
+                        normalMineCount: 1,
+                        goldMineCount: 1,
+                        ironAmount: 50m,
+                        cashAmount: 250m)
+                });
+
+            Assert.That(report.StoredIronAmount, Is.EqualTo(30m));
+            Assert.That(report.RejectedIronAmount, Is.EqualTo(20m));
+            Assert.That(report.CreditedCashAmount, Is.EqualTo(250m));
+            Assert.That(warehouse.GetAvailable(iron.Id), Is.EqualTo(130m));
+            Assert.That(campaign.Player.Company.Cash, Is.EqualTo(1250m));
+
+            HeadquartersInventorySnapshot inventory =
+                new HeadquartersInventoryQuery(catalog).Execute(warehouse);
+            Assert.That(inventory.UsedCapacity, Is.EqualTo(130m));
+            Assert.That(inventory.AvailableCapacity, Is.EqualTo(0m));
+            Assert.That(inventory.Items.Count, Is.EqualTo(1));
+            Assert.That(inventory.Items[0].DisplayName, Is.EqualTo("철광석"));
+            Assert.That(inventory.Items[0].OnHand, Is.EqualTo(130m));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
         {
             var terrain = new GridTerrainKind[3 * 2];

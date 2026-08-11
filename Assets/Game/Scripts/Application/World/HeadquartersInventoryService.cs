@@ -1,0 +1,203 @@
+using System;
+using System.Collections.Generic;
+using Game.Domain.Common;
+using Game.Domain.Inventory;
+using Game.Domain.Resources;
+
+namespace Game.Application.World
+{
+    public readonly struct HeadquartersInventoryItem
+    {
+        public ResourceId ResourceId { get; }
+        public string DisplayName { get; }
+        public decimal OnHand { get; }
+        public decimal Reserved { get; }
+        public decimal Available { get; }
+
+        public HeadquartersInventoryItem(
+            ResourceId resourceId,
+            string displayName,
+            decimal onHand,
+            decimal reserved)
+        {
+            ResourceId = resourceId;
+            DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? resourceId.Value
+                : displayName;
+            OnHand = Math.Max(0m, onHand);
+            Reserved = Math.Clamp(reserved, 0m, OnHand);
+            Available = OnHand - Reserved;
+        }
+    }
+
+    public sealed class HeadquartersInventorySnapshot
+    {
+        public static HeadquartersInventorySnapshot Empty { get; } =
+            new HeadquartersInventorySnapshot(
+                0m,
+                0m,
+                Array.Empty<HeadquartersInventoryItem>());
+
+        public decimal Capacity { get; }
+        public decimal UsedCapacity { get; }
+        public decimal AvailableCapacity =>
+            Math.Max(0m, Capacity - UsedCapacity);
+        public IReadOnlyList<HeadquartersInventoryItem> Items { get; }
+
+        public HeadquartersInventorySnapshot(
+            decimal capacity,
+            decimal usedCapacity,
+            IReadOnlyList<HeadquartersInventoryItem> items)
+        {
+            Capacity = Math.Max(0m, capacity);
+            UsedCapacity = Math.Clamp(usedCapacity, 0m, Capacity);
+
+            if (items == null || items.Count == 0)
+            {
+                Items = Array.Empty<HeadquartersInventoryItem>();
+                return;
+            }
+
+            var copy = new HeadquartersInventoryItem[items.Count];
+            for (int i = 0; i < items.Count; i++)
+                copy[i] = items[i];
+            Items = copy;
+        }
+    }
+
+    public sealed class HeadquartersInventoryQuery
+    {
+        private readonly ResourceCatalog _catalog;
+
+        public HeadquartersInventoryQuery(ResourceCatalog catalog)
+        {
+            _catalog = catalog ??
+                throw new ArgumentNullException(nameof(catalog));
+        }
+
+        public HeadquartersInventorySnapshot Execute(Warehouse warehouse)
+        {
+            if (warehouse == null)
+                return HeadquartersInventorySnapshot.Empty;
+
+            var items = new List<HeadquartersInventoryItem>(
+                warehouse.Stocks.Count);
+            foreach (var pair in warehouse.Stocks)
+            {
+                InventoryPosition position = pair.Value;
+                if (position.OnHand <= 0m && position.Reserved <= 0m)
+                    continue;
+
+                string displayName = _catalog.TryGet(
+                    pair.Key,
+                    out ResourceDefinition definition)
+                    ? definition.DisplayName
+                    : pair.Key.Value;
+                items.Add(new HeadquartersInventoryItem(
+                    pair.Key,
+                    displayName,
+                    position.OnHand,
+                    position.Reserved));
+            }
+
+            items.Sort((left, right) => string.Compare(
+                left.DisplayName,
+                right.DisplayName,
+                StringComparison.Ordinal));
+            return new HeadquartersInventorySnapshot(
+                warehouse.Capacity,
+                warehouse.UsedCapacity,
+                items);
+        }
+    }
+
+    public readonly struct MapMineProductionDepositReport
+    {
+        public decimal StoredIronAmount { get; }
+        public decimal RejectedIronAmount { get; }
+        public decimal CreditedCashAmount { get; }
+
+        public MapMineProductionDepositReport(
+            decimal storedIronAmount,
+            decimal rejectedIronAmount,
+            decimal creditedCashAmount)
+        {
+            StoredIronAmount = Math.Max(0m, storedIronAmount);
+            RejectedIronAmount = Math.Max(0m, rejectedIronAmount);
+            CreditedCashAmount = Math.Max(0m, creditedCashAmount);
+        }
+    }
+
+    public sealed class MapMineProductionDepositService
+    {
+        private readonly WorldEconomyState _world;
+        private readonly ResourceCatalog _catalog;
+
+        public MapMineProductionDepositService(
+            WorldEconomyState world,
+            ResourceCatalog catalog)
+        {
+            _world = world ?? throw new ArgumentNullException(nameof(world));
+            _catalog = catalog ??
+                throw new ArgumentNullException(nameof(catalog));
+        }
+
+        public MapMineProductionDepositReport Deposit(
+            IReadOnlyList<MapMineProductionRecord> production)
+        {
+            if (production == null || production.Count == 0)
+                return default;
+
+            decimal storedIron = 0m;
+            decimal rejectedIron = 0m;
+            decimal creditedCash = 0m;
+            bool hasIron = _catalog.TryGet(
+                new ResourceId("iron"),
+                out ResourceDefinition iron);
+
+            for (int i = 0; i < production.Count; i++)
+            {
+                MapMineProductionRecord record = production[i];
+                if (!_world.TryGetCompany(
+                    new CompanyId(record.OwnerFactionId),
+                    out CompanyEconomyRuntime company))
+                {
+                    continue;
+                }
+
+                if (record.IronAmount > 0m)
+                {
+                    decimal storedForCompany = 0m;
+                    if (hasIron)
+                    {
+                        decimal storable = Math.Min(
+                            record.IronAmount,
+                            company.PrimaryWarehouse.AvailableCapacity /
+                            iron.StorageVolume);
+                        if (storable > 0m && company.PrimaryWarehouse.TryAdd(
+                            iron.Id,
+                            storable,
+                            iron.StorageVolume))
+                        {
+                            storedForCompany = storable;
+                            storedIron += storable;
+                        }
+                    }
+
+                    rejectedIron += record.IronAmount - storedForCompany;
+                }
+
+                if (record.CashAmount > 0m)
+                {
+                    company.Company.Receive(record.CashAmount);
+                    creditedCash += record.CashAmount;
+                }
+            }
+
+            return new MapMineProductionDepositReport(
+                storedIron,
+                rejectedIron,
+                creditedCash);
+        }
+    }
+}

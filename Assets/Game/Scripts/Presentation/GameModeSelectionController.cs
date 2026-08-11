@@ -695,6 +695,7 @@ namespace Game.Presentation
                 return;
 
             RefreshSinglePlayerStatus();
+            RefreshSelectedHeadquartersInventory();
             if (singlePlayerSimulation != null &&
                 singlePlayerSimulation.IsCampaignFinished)
             {
@@ -712,7 +713,7 @@ namespace Game.Presentation
             string description =
                 $"선택: {selection.DisplayName} " +
                 $"({selection.Coordinate.X}, {selection.Coordinate.Y})\n" +
-                selection.InteractionHint;
+                BuildMapInteractionDetails(selection);
 
             if (_singleMapSelectionStatus != null)
                 _singleMapSelectionStatus.text = description;
@@ -720,6 +721,83 @@ namespace Game.Presentation
                 _multiplayerMapSelectionStatus.text = description;
 
             RefreshSinglePlayerMapActions(selection);
+        }
+
+        private string BuildMapInteractionDetails(MapCellSelection selection)
+        {
+            if (!_selection.IsSinglePlayer ||
+                selection.Content != MapCellContent.PlayerBase ||
+                singlePlayerSimulation == null)
+            {
+                return selection.InteractionHint;
+            }
+
+            HeadquartersInventorySnapshot inventory =
+                singlePlayerSimulation.GetPlayerHeadquartersInventory();
+            var builder = new StringBuilder(320);
+            builder.Append(selection.InteractionHint)
+                .Append("\n\n내 성 창고")
+                .Append("\n용량 ")
+                .Append(inventory.UsedCapacity.ToString("N2"))
+                .Append(" / ")
+                .Append(inventory.Capacity.ToString("N2"))
+                .Append(" · 남음 ")
+                .Append(inventory.AvailableCapacity.ToString("N2"));
+
+            if (inventory.Items.Count == 0)
+            {
+                builder.Append("\n- 보관 중인 물품 없음");
+            }
+            else
+            {
+                for (int i = 0; i < inventory.Items.Count; i++)
+                {
+                    HeadquartersInventoryItem item = inventory.Items[i];
+                    builder.Append("\n- ")
+                        .Append(item.DisplayName)
+                        .Append(": ")
+                        .Append(item.OnHand.ToString("N2"));
+                    if (item.Reserved > 0m)
+                    {
+                        builder.Append(" · 사용 가능 ")
+                            .Append(item.Available.ToString("N2"))
+                            .Append(" · 예약 ")
+                            .Append(item.Reserved.ToString("N2"));
+                    }
+                }
+            }
+
+            builder.Append("\n점령한 철광산의 철광석은 매일 자정 자동 입고됩니다.")
+                .Append("\n금광 수익은 보유 자금으로 자동 정산됩니다.");
+            return builder.ToString();
+        }
+
+        private void RefreshSelectedHeadquartersInventory()
+        {
+            if (gameplayMap == null ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                return;
+            }
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            if (selection.Content != MapCellContent.PlayerBase)
+                return;
+
+            if (_singleMapSelectionStatus != null)
+            {
+                _singleMapSelectionStatus.text =
+                    $"선택: {selection.DisplayName} " +
+                    $"({selection.Coordinate.X}, {selection.Coordinate.Y})\n" +
+                    BuildMapInteractionDetails(selection);
+            }
+
+            if (_mapContextHint != null &&
+                _mapContextMenu != null &&
+                _mapContextMenu.resolvedStyle.display == DisplayStyle.Flex)
+            {
+                _mapContextHint.text = BuildMapInteractionDetails(selection);
+            }
         }
 
         private void HandleMapActionRequested(
@@ -732,7 +810,7 @@ namespace Game.Presentation
             _mapContextTitle.text =
                 $"{selection.DisplayName} ({selection.Coordinate.X}, " +
                 $"{selection.Coordinate.Y})";
-            _mapContextHint.text = selection.InteractionHint;
+            _mapContextHint.text = BuildMapInteractionDetails(selection);
             ConfigureMapActionButtons(
                 selection,
                 _contextCreateUnitButton,
@@ -809,6 +887,7 @@ namespace Game.Presentation
 
             singlePlayerSimulation.ApplyMapMineProduction(
                 gameplayMap.CreateDailyMineProduction());
+            RefreshSelectedHeadquartersInventory();
             gameplayMap.AdvanceEconomicDay(out _);
         }
 

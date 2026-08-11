@@ -285,34 +285,38 @@ namespace Game.Presentation
                 _simulation.TryCancelLastPlayerCommand();
         }
 
-        public void ApplyMapMineProduction(
+        public HeadquartersInventorySnapshot GetPlayerHeadquartersInventory()
+        {
+            if (_simulation == null || _worldEconomy == null ||
+                _catalog == null)
+            {
+                BuildSimulation();
+            }
+
+            if (_playerCampaignState?.Company == null ||
+                !_worldEconomy.TryGetCompany(
+                    _playerCampaignState.Company.Id,
+                    out CompanyEconomyRuntime company))
+            {
+                return HeadquartersInventorySnapshot.Empty;
+            }
+
+            return new HeadquartersInventoryQuery(_catalog).Execute(
+                company.PrimaryWarehouse);
+        }
+
+        public MapMineProductionDepositReport ApplyMapMineProduction(
             IReadOnlyList<MapMineProductionRecord> production)
         {
-            if (_worldEconomy == null || production == null)
-                return;
-
-            for (int i = 0; i < production.Count; i++)
+            if (_simulation == null || _worldEconomy == null ||
+                _catalog == null)
             {
-                MapMineProductionRecord record = production[i];
-                if (!_worldEconomy.TryGetCompany(
-                    new CompanyId(record.OwnerFactionId),
-                    out CompanyEconomyRuntime company))
-                {
-                    continue;
-                }
-
-                if (record.IronAmount > 0m &&
-                    _catalog.TryGet("iron", out ResourceDefinition iron))
-                {
-                    company.PrimaryWarehouse.TryAdd(
-                        iron.Id,
-                        record.IronAmount,
-                        iron.StorageVolume);
-                }
-
-                if (record.CashAmount > 0m)
-                    company.Company.Receive(record.CashAmount);
+                BuildSimulation();
             }
+
+            return new MapMineProductionDepositService(
+                _worldEconomy,
+                _catalog).Deposit(production);
         }
 
         public bool TryQueueWorldIntervention(
