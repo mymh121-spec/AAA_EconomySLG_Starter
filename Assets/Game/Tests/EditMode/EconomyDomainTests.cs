@@ -198,6 +198,80 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var initialMine = new GridCoordinate(1, 1);
+            var playerBase = new GridCoordinate(0, 1);
+            var layout = new GridMapLayout(
+                6,
+                3,
+                37,
+                playerBase,
+                new GridCoordinate[0],
+                new[] { new MinePlacement(initialMine, MineKind.Normal) },
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCapture: 1,
+                    aiDecisionIntervalSteps: 100,
+                    normalMineIronPerDay: 100m,
+                    goldMineCashPerDay: 1000m,
+                    mineSpawnIntervalDays: 2,
+                    mineDailyDepletionRate: 0.5m,
+                    minimumMineYieldMultiplier: 0.25m));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove("player", unit.Id, initialMine, out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            MapMineControlState capturedMine = service.FindMine(initialMine);
+            Assert.That(capturedMine.OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(
+                service.CreateDailyProduction()[0].IronAmount,
+                Is.EqualTo(100m));
+            Assert.That(capturedMine.YieldMultiplier, Is.EqualTo(0.5m));
+            Assert.That(
+                service.CreateDailyProduction()[0].IronAmount,
+                Is.EqualTo(50m));
+            Assert.That(capturedMine.YieldMultiplier, Is.EqualTo(0.25m));
+            Assert.That(
+                service.CreateDailyProduction()[0].IronAmount,
+                Is.EqualTo(25m));
+            Assert.That(capturedMine.YieldMultiplier, Is.EqualTo(0.25m));
+
+            Assert.That(service.AdvanceEconomicDay(out _), Is.False);
+            Assert.That(
+                service.AdvanceEconomicDay(out MapMineSpawnRecord ironSpawn),
+                Is.True);
+            Assert.That(ironSpawn.Kind, Is.EqualTo(MineKind.Normal));
+            Assert.That(ironSpawn.EconomicDay, Is.EqualTo(2));
+            Assert.That(ironSpawn.Coordinate, Is.Not.EqualTo(playerBase));
+            Assert.That(ironSpawn.Coordinate, Is.Not.EqualTo(initialMine));
+            Assert.That(service.FindMine(ironSpawn.Coordinate).IsDynamic, Is.True);
+
+            Assert.That(service.AdvanceEconomicDay(out _), Is.False);
+            Assert.That(
+                service.AdvanceEconomicDay(out MapMineSpawnRecord goldSpawn),
+                Is.True);
+            Assert.That(goldSpawn.Kind, Is.EqualTo(MineKind.Gold));
+            Assert.That(goldSpawn.EconomicDay, Is.EqualTo(4));
+            Assert.That(goldSpawn.Coordinate, Is.Not.EqualTo(playerBase));
+            Assert.That(goldSpawn.Coordinate, Is.Not.EqualTo(initialMine));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
         {
             var terrain = new GridTerrainKind[3 * 2];

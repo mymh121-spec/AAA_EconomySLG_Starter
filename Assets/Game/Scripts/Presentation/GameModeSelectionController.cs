@@ -64,6 +64,11 @@ namespace Game.Presentation
         private Button _npcArmorButton;
         private Button _npcRecruitButton;
         private Button _npcEquipButton;
+        private VisualElement _timeHudView;
+        private Label _timeHudLabel;
+        private VisualElement _pauseMenuOverlay;
+        private VisualElement _keyGuideView;
+        private bool _resumeRealtimeAfterPauseMenu;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
@@ -109,6 +114,12 @@ namespace Game.Presentation
         {
 #if ENABLE_LEGACY_INPUT_MANAGER
             if (_selection.IsSinglePlayer &&
+                UnityEngine.Input.GetKeyDown(KeyCode.Escape))
+            {
+                HandleEscapePressed();
+            }
+            else if (_selection.IsSinglePlayer &&
+                !IsPauseMenuOpen() &&
                 singlePlayerSimulation != null &&
                 UnityEngine.Input.GetKeyDown(KeyCode.Space))
             {
@@ -225,6 +236,7 @@ namespace Game.Presentation
             gameplayMap.CellActionRequested += HandleMapActionRequested;
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
             gameplayMap.MineCaptured += HandleMineCaptured;
+            gameplayMap.MineSpawned += HandleMineSpawned;
             _mapEventsBound = true;
         }
 
@@ -290,15 +302,6 @@ namespace Game.Presentation
             _singleMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
             BuildSinglePlayerMapActionPanel(_singlePlayerView);
-            AddDescription(
-                _singlePlayerView,
-                "배속은 아래 버튼으로 변경하고 Space로 일시정지/재개합니다. " +
-                "L: 내 세력 중앙, " +
-                "WASD/방향키 또는 가운데 버튼 드래그: 지도 이동, " +
-                "우클릭: 부대 확인·미션·이동·채광/점령 행동. " +
-                "경제는 자정마다 정산됩니다.");
-            AddRealtimeSpeedControls(_singlePlayerView);
-            AddButton(_singlePlayerView, "모드 선택으로", ShowModeSelection);
             StyleGameplayHud(_singlePlayerView);
             RegisterMapInputGuard(_singlePlayerView);
 
@@ -328,6 +331,7 @@ namespace Game.Presentation
             RegisterMapInputGuard(_multiplayerView);
             BuildMapContextMenu(_uiRoot);
             BuildNeutralNpcInterface(_uiRoot);
+            BuildTimeHudAndPauseMenu(_uiRoot);
         }
 
         private void SelectSinglePlayer()
@@ -577,8 +581,10 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.035f, 0.047f, 0.07f, 0.98f);
             _uiRoot.style.alignItems = Align.Center;
@@ -590,8 +596,10 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.68f);
             _uiRoot.style.alignItems = Align.Center;
@@ -603,8 +611,10 @@ namespace Game.Presentation
             if (_uiRoot == null)
                 return;
 
+            HidePauseMenuWithoutResuming();
             CloseNeutralNpcView();
             SetVisible(_neutralNpcTopButton, false);
+            SetVisible(_timeHudView, false);
             _uiRoot.style.backgroundColor =
                 new Color(0.025f, 0.035f, 0.055f, 0.76f);
             _uiRoot.style.alignItems = Align.Center;
@@ -622,6 +632,10 @@ namespace Game.Presentation
             _uiRoot.style.alignItems = Align.FlexStart;
             _uiRoot.style.justifyContent = Justify.FlexStart;
             SetVisible(_neutralNpcTopButton, _selection.IsSinglePlayer);
+            SetVisible(_timeHudView, _selection.IsSinglePlayer);
+            SetVisible(_pauseMenuOverlay, false);
+            SetVisible(_keyGuideView, false);
+            _resumeRealtimeAfterPauseMenu = false;
         }
 
         private void RefreshSinglePlayerStatus()
@@ -629,22 +643,29 @@ namespace Game.Presentation
             if (_singlePlayerStatus == null || singlePlayerSimulation == null)
                 return;
 
-            var builder = new StringBuilder(220);
-            builder.Append("현재 ")
-                .Append(singlePlayerSimulation.RealtimeDayNumber)
-                .Append("일 ")
-                .Append(singlePlayerSimulation.RealtimeHour.ToString("D2"))
-                .Append(':')
-                .Append(singlePlayerSimulation.RealtimeMinute.ToString("D2"))
-                .Append(" · ")
-                .Append(singlePlayerSimulation.IsRealtimePaused
-                    ? "일시정지"
-                    : singlePlayerSimulation.RealtimeSpeedMultiplier + "배속")
-                .Append("\n다음 경제 정산 ")
-                .Append(singlePlayerSimulation.CurrentTurn.Value)
-                .Append("일 / 총 ")
-                .Append(singlePlayerSimulation.MaxCampaignTurns)
-                .Append("일\n보유 자금 ")
+            if (_timeHudLabel != null)
+            {
+                _timeHudLabel.text = new StringBuilder(96)
+                    .Append("현재 ")
+                    .Append(singlePlayerSimulation.RealtimeDayNumber)
+                    .Append("일 ")
+                    .Append(singlePlayerSimulation.RealtimeHour.ToString("D2"))
+                    .Append(':')
+                    .Append(singlePlayerSimulation.RealtimeMinute.ToString("D2"))
+                    .Append(" · ")
+                    .Append(singlePlayerSimulation.IsRealtimePaused
+                        ? "일시정지"
+                        : singlePlayerSimulation.RealtimeSpeedMultiplier + "배속")
+                    .Append("\n다음 경제 정산 ")
+                    .Append(singlePlayerSimulation.CurrentTurn.Value)
+                    .Append("일 / 총 ")
+                    .Append(singlePlayerSimulation.MaxCampaignTurns)
+                    .Append("일")
+                    .ToString();
+            }
+
+            var builder = new StringBuilder(180);
+            builder.Append("보유 자금 ")
                 .Append(singlePlayerSimulation.PlayerCash.ToString("N0"))
                 .Append("원");
 
@@ -758,6 +779,19 @@ namespace Game.Presentation
                 $"{owner}이(가) {record.Coordinate} 광산을 점령했습니다.";
         }
 
+        private void HandleMineSpawned(MapMineSpawnRecord record)
+        {
+            if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+                return;
+
+            string mineName = record.Kind == MineKind.Gold
+                ? "금광"
+                : "철광산";
+            _singleMapActionFeedback.text =
+                $"{record.EconomicDay}일: 새로운 {mineName}이(가) " +
+                $"{record.Coordinate}에서 발견되었습니다.";
+        }
+
         private void HandleRealtimeFixedStepsAdvanced(int fixedStepCount)
         {
             if (_selection.IsSinglePlayer)
@@ -775,6 +809,7 @@ namespace Game.Presentation
 
             singlePlayerSimulation.ApplyMapMineProduction(
                 gameplayMap.CreateDailyMineProduction());
+            gameplayMap.AdvanceEconomicDay(out _);
         }
 
         private void CreatePlayerUnit()
@@ -1045,15 +1080,6 @@ namespace Game.Presentation
                 return;
             }
 
-            if (string.Equals(
-                selection.MineOwnerFactionId,
-                "player",
-                StringComparison.Ordinal))
-            {
-                SetMapActionFeedback("이미 플레이어가 점령한 자원 거점입니다.");
-                return;
-            }
-
             MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
             if (selectedUnit == null)
             {
@@ -1061,11 +1087,16 @@ namespace Game.Presentation
                 return;
             }
 
+            bool alreadyOwned = string.Equals(
+                selection.MineOwnerFactionId,
+                "player",
+                StringComparison.Ordinal);
             if (selectedUnit.Coordinate.Equals(selection.Coordinate))
             {
-                SetMapActionFeedback(
-                    $"{selection.DisplayName} 점령을 진행합니다. " +
-                    "부대를 이 위치에 유지하면 점령이 완료됩니다.");
+                SetMapActionFeedback(alreadyOwned
+                    ? $"{selection.DisplayName}에서 채광 거점을 방어하고 있습니다."
+                    : $"{selection.DisplayName} 점령을 진행합니다. " +
+                      "부대를 이 위치에 유지하면 점령이 완료됩니다.");
                 return;
             }
 
@@ -1077,9 +1108,10 @@ namespace Game.Presentation
                 return;
             }
 
-            SetMapActionFeedback(
-                $"{selection.DisplayName} 점령 명령을 내렸습니다. " +
-                "부대가 도착하면 점령이 시작됩니다.");
+            SetMapActionFeedback(alreadyOwned
+                ? $"소유 중인 {selection.DisplayName}(으)로 이동 명령을 내렸습니다."
+                : $"{selection.DisplayName} 점령 명령을 내렸습니다. " +
+                  "부대가 도착하면 점령이 시작됩니다.");
             RefreshSinglePlayerStatus();
             RefreshSelectedMapActions();
         }
@@ -1150,14 +1182,24 @@ namespace Game.Presentation
                 selection.MineOwnerFactionId,
                 "player",
                 StringComparison.Ordinal);
-            bool hasSelectedUnit = gameplayMap?.SelectedPlayerUnit != null;
+            MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+            bool hasSelectedUnit = selectedUnit != null;
+            bool unitAlreadyAtMine = hasSelectedUnit &&
+                selectedUnit.Coordinate.Equals(selection.Coordinate);
+            bool canMoveToMine = hasSelectedUnit &&
+                gameplayMap.CanMoveSelectedPlayerUnit(
+                    selection.Coordinate,
+                    out _);
 
             SetVisible(_contextCaptureMineButton, isMine);
             _contextCaptureMineButton.SetEnabled(
-                isMine && !alreadyOwned && hasSelectedUnit);
+                isMine && hasSelectedUnit &&
+                ((!alreadyOwned && unitAlreadyAtMine) || canMoveToMine));
             _contextCaptureMineButton.text = alreadyOwned
-                ? "점령 완료 · 플레이어 소유"
-                : "점령한다";
+                ? unitAlreadyAtMine
+                    ? "채광 거점 방어 중"
+                    : "소유 광산으로 이동"
+                : "채광·점령한다";
         }
 
         private void ConfigureMapActionButtons(
@@ -1189,11 +1231,14 @@ namespace Game.Presentation
             createButton.SetEnabled(canCreate);
             SetVisible(selectButton, canSelect);
             selectButton.SetEnabled(canSelect);
-            SetVisible(moveButton, hasSelectedUnit && !canSelect);
+            // A mine uses the single consolidated capture button in the
+            // right-click menu. Showing the generic move action as well made
+            // both buttons issue effectively the same order.
+            SetVisible(
+                moveButton,
+                hasSelectedUnit && !canSelect && !isMine);
             moveButton.SetEnabled(canMove);
-            moveButton.text = isMine
-                ? "채광·점령하러 이동 · 체력 1"
-                : "이 칸으로 이동 · 체력 1";
+            moveButton.text = "이 칸으로 이동 · 체력 1";
         }
 
         private void ShowSelectedMissionInformation()
@@ -1597,7 +1642,7 @@ namespace Game.Presentation
         private void CloseNeutralNpcView()
         {
             SetVisible(_neutralNpcView, false);
-            if (gameplayMap != null)
+            if (gameplayMap != null && !IsPauseMenuOpen())
                 gameplayMap.PointerSelectionBlocked = false;
         }
 
@@ -1660,6 +1705,175 @@ namespace Game.Presentation
                 _neutralNpcFeedback.text = message ?? string.Empty;
         }
 
+        private void BuildTimeHudAndPauseMenu(VisualElement root)
+        {
+            _timeHudView = new VisualElement();
+            _timeHudView.style.position = Position.Absolute;
+            _timeHudView.style.top = 16;
+            _timeHudView.style.right = 24;
+            _timeHudView.style.width = 350;
+            _timeHudView.style.paddingLeft = 14;
+            _timeHudView.style.paddingRight = 14;
+            _timeHudView.style.paddingTop = 12;
+            _timeHudView.style.paddingBottom = 12;
+            _timeHudView.style.backgroundColor =
+                new Color(0.045f, 0.065f, 0.095f, 0.96f);
+            _timeHudView.style.borderTopLeftRadius = 10;
+            _timeHudView.style.borderTopRightRadius = 10;
+            _timeHudView.style.borderBottomLeftRadius = 10;
+            _timeHudView.style.borderBottomRightRadius = 10;
+
+            _timeHudLabel = new Label();
+            _timeHudLabel.style.fontSize = 16;
+            _timeHudLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            _timeHudLabel.style.color = Color.white;
+            _timeHudLabel.style.whiteSpace = WhiteSpace.Normal;
+            _timeHudLabel.style.marginBottom = 7;
+            _timeHudView.Add(_timeHudLabel);
+            AddRealtimeSpeedControls(_timeHudView);
+            root.Add(_timeHudView);
+
+            _pauseMenuOverlay = new VisualElement();
+            _pauseMenuOverlay.style.position = Position.Absolute;
+            _pauseMenuOverlay.style.left = 0;
+            _pauseMenuOverlay.style.right = 0;
+            _pauseMenuOverlay.style.top = 0;
+            _pauseMenuOverlay.style.bottom = 0;
+            _pauseMenuOverlay.style.flexDirection = FlexDirection.Row;
+            _pauseMenuOverlay.style.alignItems = Align.Center;
+            _pauseMenuOverlay.style.justifyContent = Justify.Center;
+            _pauseMenuOverlay.style.backgroundColor =
+                new Color(0.015f, 0.022f, 0.035f, 0.82f);
+
+            VisualElement pauseCard = CreateCard(
+                _pauseMenuOverlay,
+                "일시정지",
+                "게임을 계속하거나 조작법을 확인할 수 있습니다.");
+            pauseCard.style.width = 460;
+            pauseCard.style.marginRight = 12;
+            AddButton(pauseCard, "계속하기", ClosePauseMenu);
+            AddButton(pauseCard, "키 설명", ToggleKeyGuide);
+            AddButton(
+                pauseCard,
+                "모드 선택으로 돌아가기",
+                ReturnToModeSelectionFromPause);
+
+            _keyGuideView = CreateCard(
+                _pauseMenuOverlay,
+                "키 설명",
+                "지도와 시간 조작");
+            _keyGuideView.style.width = 560;
+            _keyGuideView.style.marginLeft = 12;
+            AddDescription(
+                _keyGuideView,
+                "ESC: 일시정지 메뉴 열기/닫기\n" +
+                "Space: 시간 일시정지/재개\n" +
+                "WASD / 방향키: 지도 이동\n" +
+                "마우스 가운데 버튼 드래그: 지도 이동\n" +
+                "마우스 휠: 확대/축소\n" +
+                "L: 플레이어 본사로 이동\n" +
+                "좌클릭: 지도 칸 선택\n" +
+                "우클릭: 이동·점령·미션 메뉴\n" +
+                "경제와 광산 생산: 매일 자정 정산");
+            AddButton(_keyGuideView, "키 설명 닫기", ToggleKeyGuide);
+
+            root.Add(_pauseMenuOverlay);
+            RegisterMapInputGuard(_timeHudView);
+            RegisterMapInputGuard(_pauseMenuOverlay);
+            SetVisible(_timeHudView, false);
+            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuOverlay, false);
+        }
+
+        private void HandleEscapePressed()
+        {
+            if (IsNeutralNpcViewOpen())
+            {
+                CloseNeutralNpcView();
+                return;
+            }
+
+            if (_mapContextMenu != null &&
+                _mapContextMenu.resolvedStyle.display == DisplayStyle.Flex)
+            {
+                HideMapContextMenu();
+                return;
+            }
+
+            if (IsPauseMenuOpen())
+                ClosePauseMenu();
+            else
+                OpenPauseMenu();
+        }
+
+        private void OpenPauseMenu()
+        {
+            if (_pauseMenuOverlay == null || !_selection.IsSinglePlayer)
+                return;
+
+            HideMapContextMenu();
+            CloseNeutralNpcView();
+            _resumeRealtimeAfterPauseMenu =
+                singlePlayerSimulation != null &&
+                !singlePlayerSimulation.IsRealtimePaused;
+            if (_resumeRealtimeAfterPauseMenu)
+                singlePlayerSimulation.ToggleRealtimePause();
+
+            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuOverlay, true);
+            _pauseMenuOverlay.BringToFront();
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = true;
+        }
+
+        private void ClosePauseMenu()
+        {
+            SetVisible(_pauseMenuOverlay, false);
+            SetVisible(_keyGuideView, false);
+            if (gameplayMap != null)
+                gameplayMap.PointerSelectionBlocked = false;
+
+            if (_resumeRealtimeAfterPauseMenu &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.IsRealtimePaused &&
+                !singlePlayerSimulation.IsCampaignFinished)
+            {
+                singlePlayerSimulation.ToggleRealtimePause();
+            }
+            _resumeRealtimeAfterPauseMenu = false;
+        }
+
+        private void HidePauseMenuWithoutResuming()
+        {
+            SetVisible(_pauseMenuOverlay, false);
+            SetVisible(_keyGuideView, false);
+            _resumeRealtimeAfterPauseMenu = false;
+        }
+
+        private void ReturnToModeSelectionFromPause()
+        {
+            _resumeRealtimeAfterPauseMenu = false;
+            SetVisible(_pauseMenuOverlay, false);
+            SetVisible(_keyGuideView, false);
+            ShowModeSelection();
+        }
+
+        private void ToggleKeyGuide()
+        {
+            if (_keyGuideView == null)
+                return;
+
+            bool visible =
+                _keyGuideView.resolvedStyle.display == DisplayStyle.Flex;
+            SetVisible(_keyGuideView, !visible);
+        }
+
+        private bool IsPauseMenuOpen()
+        {
+            return _pauseMenuOverlay != null &&
+                _pauseMenuOverlay.resolvedStyle.display == DisplayStyle.Flex;
+        }
+
         private void PositionMapContextMenu(Vector2 screenPosition)
         {
             if (_uiRoot == null || _mapContextMenu == null)
@@ -1690,7 +1904,7 @@ namespace Game.Presentation
         private void HideMapContextMenu()
         {
             SetVisible(_mapContextMenu, false);
-            if (gameplayMap != null)
+            if (gameplayMap != null && !IsPauseMenuOpen())
                 gameplayMap.PointerSelectionBlocked = false;
         }
 
@@ -1774,8 +1988,12 @@ namespace Game.Presentation
             element.RegisterCallback<PointerLeaveEvent>(
                 _ =>
                 {
-                    if (gameplayMap != null && !IsNeutralNpcViewOpen())
+                    if (gameplayMap != null &&
+                        !IsNeutralNpcViewOpen() &&
+                        !IsPauseMenuOpen())
+                    {
                         gameplayMap.PointerSelectionBlocked = false;
+                    }
                 });
         }
 
@@ -1860,6 +2078,7 @@ namespace Game.Presentation
                 gameplayMap.CellActionRequested -= HandleMapActionRequested;
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;
                 gameplayMap.MineCaptured -= HandleMineCaptured;
+                gameplayMap.MineSpawned -= HandleMineSpawned;
                 _mapEventsBound = false;
             }
             if (_panelSettings != null)

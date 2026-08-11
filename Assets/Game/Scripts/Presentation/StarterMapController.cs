@@ -135,6 +135,7 @@ namespace Game.Presentation
         public event Action<MapCellSelection, Vector2> CellActionRequested;
         public event Action GameplayStateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
+        public event Action<MapMineSpawnRecord> MineSpawned;
 
         public void Initialize()
         {
@@ -354,6 +355,17 @@ namespace Game.Presentation
                 Array.Empty<MapMineProductionRecord>();
         }
 
+        public bool AdvanceEconomicDay(out MapMineSpawnRecord spawnedMine)
+        {
+            if (_gameplayService == null)
+            {
+                spawnedMine = default;
+                return false;
+            }
+
+            return _gameplayService.AdvanceEconomicDay(out spawnedMine);
+        }
+
         private void GenerateNewMap()
         {
             int width = Mathf.Clamp(mapWidth, 40, 160);
@@ -438,6 +450,7 @@ namespace Game.Presentation
                 aiFactionIds);
             _gameplayService.StateChanged += HandleGameplayStateChanged;
             _gameplayService.MineCaptured += HandleMineCaptured;
+            _gameplayService.MineSpawned += HandleMineSpawned;
 
             if (_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
@@ -459,6 +472,7 @@ namespace Game.Presentation
             {
                 _gameplayService.StateChanged -= HandleGameplayStateChanged;
                 _gameplayService.MineCaptured -= HandleMineCaptured;
+                _gameplayService.MineSpawned -= HandleMineSpawned;
             }
 
             _gameplayService = null;
@@ -662,23 +676,34 @@ namespace Game.Presentation
                 }
             }
 
-            for (int i = 0; i < layout.Mines.Count; i++)
+            MapMineControlState runtimeMine =
+                _gameplayService?.FindMine(coordinate);
+            MineKind? mineKind = runtimeMine?.Kind;
+            if (!mineKind.HasValue)
             {
-                MinePlacement mine = layout.Mines[i];
-                if (!coordinate.Equals(mine.Coordinate))
-                    continue;
+                for (int i = 0; i < layout.Mines.Count; i++)
+                {
+                    if (coordinate.Equals(layout.Mines[i].Coordinate))
+                    {
+                        mineKind = layout.Mines[i].Kind;
+                        break;
+                    }
+                }
+            }
 
-                return mine.Kind == MineKind.Gold
+            if (mineKind.HasValue)
+            {
+                return mineKind.Value == MineKind.Gold
                     ? CreateSelection(
                         coordinate,
                         MapCellContent.GoldMine,
                         "금광",
-                        "점령 후 금을 채굴하거나 적의 수송로를 습격할 수 있습니다.")
+                        "점령 후 금을 채굴합니다. 채굴할수록 생산성이 감소합니다.")
                     : CreateSelection(
                         coordinate,
                         MapCellContent.NormalMine,
-                        "일반 광산",
-                        "점령 후 철·석탄 같은 산업 자원을 채굴할 수 있습니다.");
+                        "철광산",
+                        "점령 후 철을 채굴합니다. 채굴할수록 생산성이 감소합니다.");
             }
 
             GridTerrainKind terrain = layout.GetTerrain(coordinate);
@@ -736,7 +761,10 @@ namespace Game.Presentation
                 string ownerName = string.IsNullOrEmpty(mine.OwnerFactionId)
                     ? "미점령"
                     : GetFactionDisplayName(mine.OwnerFactionId) + " 소유";
-                detail += "\n광산 상태: " + ownerName;
+                detail += "\n광산 상태: " + ownerName +
+                          $" · 생산성 {mine.YieldMultiplier:P0}";
+                if (mine.IsDynamic)
+                    detail += $" · {mine.SpawnedEconomicDay}일 발견";
                 if (!string.IsNullOrEmpty(mine.CapturingFactionId))
                 {
                     detail += $" · {GetFactionDisplayName(mine.CapturingFactionId)} " +
@@ -861,32 +889,34 @@ namespace Game.Presentation
         private void BuildMines(GridMapLayout layout)
         {
             for (int i = 0; i < layout.Mines.Count; i++)
+                BuildMineVisual(layout.Mines[i]);
+        }
+
+        private void BuildMineVisual(MinePlacement mine)
+        {
+            bool isGold = mine.Kind == MineKind.Gold;
+            string mineName = isGold ? "금광" : "철광산";
+            Color mineColor = isGold ? GoldMineColor : NormalMineColor;
+            ForEachSurfaceCopy(xOffset =>
             {
-                MinePlacement mine = layout.Mines[i];
-                bool isGold = mine.Kind == MineKind.Gold;
-                string mineName = isGold ? "금광" : "일반 광산";
-                Color mineColor = isGold ? GoldMineColor : NormalMineColor;
-                ForEachSurfaceCopy(xOffset =>
-                {
-                    Vector3 position = ToWorldPosition(
-                        mine.Coordinate,
-                        xOffset);
-                    CreateBlock(
-                        $"{mineName}_{mine.Coordinate.X}_{mine.Coordinate.Y}",
-                        position + new Vector3(0f, 0.22f, 0f),
-                        new Vector3(
-                            tileSize * 0.52f,
-                            0.32f,
-                            tileSize * 0.52f),
-                        mineColor,
-                        _generatedRoot,
-                        false);
-                    CreateMineIcon(
-                        mineName + " 아이콘",
-                        position + new Vector3(0f, 0.92f, 0f),
-                        isGold ? _goldMineSprite : _normalMineSprite);
-                });
-            }
+                Vector3 position = ToWorldPosition(
+                    mine.Coordinate,
+                    xOffset);
+                CreateBlock(
+                    $"{mineName}_{mine.Coordinate.X}_{mine.Coordinate.Y}",
+                    position + new Vector3(0f, 0.22f, 0f),
+                    new Vector3(
+                        tileSize * 0.52f,
+                        0.32f,
+                        tileSize * 0.52f),
+                    mineColor,
+                    _generatedRoot,
+                    false);
+                CreateMineIcon(
+                    mineName + " 아이콘",
+                    position + new Vector3(0f, 0.92f, 0f),
+                    isGold ? _goldMineSprite : _normalMineSprite);
+            });
         }
 
         private void RefreshGameplayMarkers()
@@ -1103,6 +1133,13 @@ namespace Game.Presentation
         private void HandleMineCaptured(MapMineCaptureRecord record)
         {
             MineCaptured?.Invoke(record);
+        }
+
+        private void HandleMineSpawned(MapMineSpawnRecord record)
+        {
+            BuildMineVisual(new MinePlacement(record.Coordinate, record.Kind));
+            RefreshCurrentSelection();
+            MineSpawned?.Invoke(record);
         }
 
         private void RefreshCurrentSelection()

@@ -18,6 +18,9 @@ namespace Game.Application.World
         public int StaminaRecoveryIntervalSteps { get; }
         public decimal NormalMineIronPerDay { get; }
         public decimal GoldMineCashPerDay { get; }
+        public int MineSpawnIntervalDays { get; }
+        public decimal MineDailyDepletionRate { get; }
+        public decimal MinimumMineYieldMultiplier { get; }
 
         public MapGameplayTuning(
             int fixedStepsPerMove = 8,
@@ -28,7 +31,10 @@ namespace Game.Application.World
             int moveStaminaCost = 1,
             int staminaRecoveryIntervalSteps = 150,
             decimal normalMineIronPerDay = 12m,
-            decimal goldMineCashPerDay = 1500m)
+            decimal goldMineCashPerDay = 1500m,
+            int mineSpawnIntervalDays = 5,
+            decimal mineDailyDepletionRate = 0.03m,
+            decimal minimumMineYieldMultiplier = 0.25m)
         {
             FixedStepsPerMove = Math.Max(1, fixedStepsPerMove);
             FixedStepsToCapture = Math.Max(1, fixedStepsToCapture);
@@ -41,6 +47,15 @@ namespace Game.Application.World
                 staminaRecoveryIntervalSteps);
             NormalMineIronPerDay = Math.Max(0m, normalMineIronPerDay);
             GoldMineCashPerDay = Math.Max(0m, goldMineCashPerDay);
+            MineSpawnIntervalDays = Math.Max(1, mineSpawnIntervalDays);
+            MineDailyDepletionRate = Math.Clamp(
+                mineDailyDepletionRate,
+                0m,
+                0.95m);
+            MinimumMineYieldMultiplier = Math.Clamp(
+                minimumMineYieldMultiplier,
+                0.01m,
+                1m);
         }
     }
 
@@ -176,13 +191,53 @@ namespace Game.Application.World
         public string OwnerFactionId { get; internal set; }
         public string CapturingFactionId { get; internal set; }
         public int CaptureProgress { get; internal set; }
+        public int SpawnedEconomicDay { get; }
+        public bool IsDynamic { get; }
+        public decimal YieldMultiplier { get; private set; }
 
-        public MapMineControlState(MinePlacement placement)
+        public MapMineControlState(
+            MinePlacement placement,
+            int spawnedEconomicDay = 0,
+            bool isDynamic = false)
         {
             Coordinate = placement.Coordinate;
             Kind = placement.Kind;
             OwnerFactionId = string.Empty;
             CapturingFactionId = string.Empty;
+            SpawnedEconomicDay = Math.Max(0, spawnedEconomicDay);
+            IsDynamic = isDynamic;
+            YieldMultiplier = 1m;
+        }
+
+        internal void Deplete(
+            decimal dailyDepletionRate,
+            decimal minimumYieldMultiplier)
+        {
+            decimal minimum = Math.Clamp(
+                minimumYieldMultiplier,
+                0.01m,
+                1m);
+            decimal rate = Math.Clamp(dailyDepletionRate, 0m, 0.95m);
+            YieldMultiplier = Math.Max(
+                minimum,
+                YieldMultiplier * (1m - rate));
+        }
+    }
+
+    public readonly struct MapMineSpawnRecord
+    {
+        public GridCoordinate Coordinate { get; }
+        public MineKind Kind { get; }
+        public int EconomicDay { get; }
+
+        public MapMineSpawnRecord(
+            GridCoordinate coordinate,
+            MineKind kind,
+            int economicDay)
+        {
+            Coordinate = coordinate;
+            Kind = kind;
+            EconomicDay = Math.Max(1, economicDay);
         }
     }
 
@@ -231,6 +286,14 @@ namespace Game.Application.World
 
     public sealed class RealtimeMapGameplayService
     {
+        private sealed class MineProductionAccumulator
+        {
+            public int NormalMineCount;
+            public int GoldMineCount;
+            public decimal IronAmount;
+            public decimal CashAmount;
+        }
+
         private static readonly GridCoordinate[] NeighborOffsets =
         {
             new GridCoordinate(1, 0),
@@ -249,6 +312,7 @@ namespace Game.Application.World
             new List<MapMineControlState>();
         private int _unitSequence;
         private int _fixedStepSequence;
+        private int _economicDaySequence;
 
         public string PlayerFactionId { get; }
         public IReadOnlyList<MapUnitState> Units => _units;
@@ -257,6 +321,7 @@ namespace Game.Application.World
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
+        public event Action<MapMineSpawnRecord> MineSpawned;
 
         public RealtimeMapGameplayService(
             GridMapLayout layout,
@@ -588,40 +653,140 @@ namespace Game.Application.World
                 StateChanged?.Invoke();
         }
 
+        public bool AdvanceEconomicDay(out MapMineSpawnRecord spawnedMine)
+        {
+            _economicDaySequence++;
+            spawnedMine = default;
+            if (_economicDaySequence % _tuning.MineSpawnIntervalDays != 0 ||
+                !TryFindDynamicMineCoordinate(
+                    _economicDaySequence,
+                    out GridCoordinate coordinate))
+            {
+                return false;
+            }
+
+            int spawnSequence =
+                _economicDaySequence / _tuning.MineSpawnIntervalDays;
+            MineKind kind = spawnSequence % 2 == 0
+                ? MineKind.Gold
+                : MineKind.Normal;
+            var placement = new MinePlacement(coordinate, kind);
+            _mines.Add(new MapMineControlState(
+                placement,
+                _economicDaySequence,
+                true));
+            spawnedMine = new MapMineSpawnRecord(
+                coordinate,
+                kind,
+                _economicDaySequence);
+            MineSpawned?.Invoke(spawnedMine);
+            StateChanged?.Invoke();
+            return true;
+        }
+
         public IReadOnlyList<MapMineProductionRecord> CreateDailyProduction()
         {
-            var counts = new Dictionary<string, int[]>(StringComparer.Ordinal);
+            var counts = new Dictionary<string, MineProductionAccumulator>(
+                StringComparer.Ordinal);
             var ownerOrder = new List<string>();
+            bool depletedAnyMine = false;
             for (int i = 0; i < _mines.Count; i++)
             {
                 MapMineControlState mine = _mines[i];
                 if (string.IsNullOrWhiteSpace(mine.OwnerFactionId))
                     continue;
 
-                if (!counts.TryGetValue(mine.OwnerFactionId, out int[] value))
+                if (!counts.TryGetValue(
+                    mine.OwnerFactionId,
+                    out MineProductionAccumulator value))
                 {
-                    value = new int[2];
+                    value = new MineProductionAccumulator();
                     counts.Add(mine.OwnerFactionId, value);
                     ownerOrder.Add(mine.OwnerFactionId);
                 }
 
-                value[mine.Kind == MineKind.Gold ? 1 : 0]++;
+                if (mine.Kind == MineKind.Gold)
+                {
+                    value.GoldMineCount++;
+                    value.CashAmount +=
+                        _tuning.GoldMineCashPerDay * mine.YieldMultiplier;
+                }
+                else
+                {
+                    value.NormalMineCount++;
+                    value.IronAmount +=
+                        _tuning.NormalMineIronPerDay * mine.YieldMultiplier;
+                }
+
+                decimal previousYield = mine.YieldMultiplier;
+                mine.Deplete(
+                    _tuning.MineDailyDepletionRate,
+                    _tuning.MinimumMineYieldMultiplier);
+                depletedAnyMine |= mine.YieldMultiplier != previousYield;
             }
 
             var records = new List<MapMineProductionRecord>(counts.Count);
             for (int i = 0; i < ownerOrder.Count; i++)
             {
                 string ownerFactionId = ownerOrder[i];
-                int[] value = counts[ownerFactionId];
+                MineProductionAccumulator value = counts[ownerFactionId];
                 records.Add(new MapMineProductionRecord(
                     ownerFactionId,
-                    value[0],
-                    value[1],
-                    value[0] * _tuning.NormalMineIronPerDay,
-                    value[1] * _tuning.GoldMineCashPerDay));
+                    value.NormalMineCount,
+                    value.GoldMineCount,
+                    value.IronAmount,
+                    value.CashAmount));
             }
 
+            if (depletedAnyMine)
+                StateChanged?.Invoke();
             return records;
+        }
+
+        private bool TryFindDynamicMineCoordinate(
+            int economicDay,
+            out GridCoordinate coordinate)
+        {
+            int cellCount = _layout.Width * _layout.Height;
+            int startIndex = PositiveModulo(
+                unchecked(_layout.Seed * 31 + economicDay * 997),
+                cellCount);
+            for (int offset = 0; offset < cellCount; offset++)
+            {
+                int index = (startIndex + offset) % cellCount;
+                var candidate = new GridCoordinate(
+                    index % _layout.Width,
+                    index / _layout.Width);
+                if (!_layout.IsLand(candidate) ||
+                    FindMine(candidate) != null ||
+                    IsFactionBase(candidate))
+                {
+                    continue;
+                }
+
+                coordinate = candidate;
+                return true;
+            }
+
+            coordinate = default;
+            return false;
+        }
+
+        private bool IsFactionBase(GridCoordinate coordinate)
+        {
+            foreach (GridCoordinate factionBase in _factionBases.Values)
+            {
+                if (factionBase.Equals(coordinate))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static int PositiveModulo(int value, int modulus)
+        {
+            int result = value % modulus;
+            return result < 0 ? result + modulus : result;
         }
 
         private bool RunAiDecisions()
