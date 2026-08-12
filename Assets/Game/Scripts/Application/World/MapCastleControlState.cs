@@ -20,6 +20,30 @@ namespace Game.Application.World
         Siege
     }
 
+    public enum MapSiegeAction
+    {
+        None,
+        Assault,
+        Encirclement,
+        Blockade,
+        Negotiation
+    }
+
+    public static class MapSiegeActionNames
+    {
+        public static string GetKoreanName(MapSiegeAction action)
+        {
+            switch (action)
+            {
+                case MapSiegeAction.Assault: return "강습";
+                case MapSiegeAction.Encirclement: return "포위";
+                case MapSiegeAction.Blockade: return "봉쇄";
+                case MapSiegeAction.Negotiation: return "협상";
+                default: return "미지정";
+            }
+        }
+    }
+
     public static class MapCastleRoleNames
     {
         public static string GetKoreanName(MapCastleRole role)
@@ -268,6 +292,7 @@ namespace Game.Application.World
         public int GarrisonUnitCount => _garrisonUnitIds.Count;
         public bool IsNeutral => string.IsNullOrEmpty(OwnerFactionId);
         public bool IsUnderSiege => ConflictKind == MapCastleConflictKind.Siege;
+        public MapSiegeAction SiegeAction { get; internal set; }
         public int WallDurability { get; private set; }
         public int MaxWallDurability =>
             MapCastleRules.GetMaxWallDurability(Role);
@@ -299,6 +324,7 @@ namespace Game.Application.World
             CapturingFactionId = string.Empty;
             Role = MapCastleRole.Unassigned;
             ConflictKind = MapCastleConflictKind.None;
+            SiegeAction = MapSiegeAction.None;
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
         }

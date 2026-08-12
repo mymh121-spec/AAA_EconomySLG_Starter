@@ -856,6 +856,38 @@ namespace Game.Tests
             Assert.That(castle.IsUnderSiege, Is.True);
             Assert.That(castle.CapturingFactionId, Is.EqualTo("player"));
             Assert.That(castle.CaptureProgress, Is.EqualTo(0));
+            Assert.That(
+                castle.SiegeAction,
+                Is.EqualTo(MapSiegeAction.Encirclement));
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attacker.Id,
+                    castleCoordinate,
+                    MapSiegeAction.Assault,
+                    out _),
+                Is.True);
+            Assert.That(castle.SiegeAction, Is.EqualTo(MapSiegeAction.Assault));
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attacker.Id,
+                    castleCoordinate,
+                    MapSiegeAction.Blockade,
+                    out _),
+                Is.True);
+            Assert.That(castle.SiegeAction, Is.EqualTo(MapSiegeAction.Blockade));
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attacker.Id,
+                    castleCoordinate,
+                    MapSiegeAction.Negotiation,
+                    out _),
+                Is.True);
+            Assert.That(
+                castle.SiegeAction,
+                Is.EqualTo(MapSiegeAction.Negotiation));
 
             MapCastleCaptureRecord captureRecord = default;
             service.CastleCaptured += record => captureRecord = record;
@@ -872,6 +904,7 @@ namespace Game.Tests
             Assert.That(castle.GarrisonUnitIds, Does.Contain(attacker.Id));
             Assert.That(captureRecord.WasSiege, Is.True);
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
+            Assert.That(castle.SiegeAction, Is.EqualTo(MapSiegeAction.None));
         }
 
         [Test]

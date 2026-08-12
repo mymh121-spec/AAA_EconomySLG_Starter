@@ -1364,6 +1364,85 @@ namespace Game.Application.World
             return true;
         }
 
+        public bool CanSetSiegeAction(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            out string reason)
+        {
+            if (action == MapSiegeAction.None)
+            {
+                reason = "공성 행동을 선택하세요.";
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                unit.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "공성 행동을 지시할 아군 부대를 선택하세요.";
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null || !castle.IsUnderSiege)
+            {
+                reason = "이 위치에서는 진행 중인 공성이 없습니다.";
+                return false;
+            }
+
+            if (!unit.Coordinate.Equals(coordinate))
+            {
+                reason = "선택한 부대가 공성 중인 성에 도착해야 합니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                castle.CapturingFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "다른 세력이 진행하는 공성 행동은 변경할 수 없습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TrySetSiegeAction(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            out string reason)
+        {
+            if (!CanSetSiegeAction(
+                ownerFactionId,
+                unitId,
+                coordinate,
+                action,
+                out reason))
+            {
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle.SiegeAction == action)
+            {
+                reason = "이미 선택한 공성 행동입니다.";
+                return false;
+            }
+
+            castle.SiegeAction = action;
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
         public bool TryGetRecruitmentSiteSnapshot(
             string ownerFactionId,
             GridCoordinate coordinate,
@@ -1986,6 +2065,9 @@ namespace Game.Application.World
             castle.ConflictKind = kind;
             castle.CapturingFactionId = attackingFactionId ?? string.Empty;
             castle.CaptureProgress = 0;
+            castle.SiegeAction = kind == MapCastleConflictKind.Siege
+                ? MapSiegeAction.Encirclement
+                : MapSiegeAction.None;
             return true;
         }
 
@@ -2001,6 +2083,7 @@ namespace Game.Application.World
             castle.ConflictKind = MapCastleConflictKind.None;
             castle.CapturingFactionId = string.Empty;
             castle.CaptureProgress = 0;
+            castle.SiegeAction = MapSiegeAction.None;
             return true;
         }
 
@@ -2012,6 +2095,7 @@ namespace Game.Application.World
             castle.ConflictKind = MapCastleConflictKind.Siege;
             castle.CapturingFactionId = string.Empty;
             castle.CaptureProgress = 0;
+            castle.SiegeAction = MapSiegeAction.None;
             return changed;
         }
 

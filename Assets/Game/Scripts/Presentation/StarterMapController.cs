@@ -701,6 +701,46 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public bool CanSetSelectedPlayerSiegeAction(
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "공성 행동을 지시할 아군 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanSetSiegeAction(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                action,
+                out reason);
+        }
+
+        public bool TrySetSelectedPlayerSiegeAction(
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            out string reason)
+        {
+            if (!CanSetSelectedPlayerSiegeAction(
+                coordinate,
+                action,
+                out reason))
+            {
+                return false;
+            }
+
+            return _gameplayService.TrySetSiegeAction(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                action,
+                out reason);
+        }
+
         public void AdvanceGameplayFixedSteps(int fixedStepCount)
         {
             _gameplayService?.AdvanceFixedSteps(fixedStepCount);
@@ -1221,6 +1261,12 @@ namespace Game.Presentation
                     detail += $" · {conflictName} {attacker} " +
                               $"{castle.CaptureProgress}/" +
                               _gameplayService.GetCastleCaptureRequired(castle);
+                    if (castle.IsUnderSiege)
+                    {
+                        detail += " · 행동 " +
+                            MapSiegeActionNames.GetKoreanName(
+                                castle.SiegeAction);
+                    }
                 }
             }
             if (content == MapCellContent.PlayerBase &&

@@ -63,6 +63,7 @@ namespace Game.Presentation
         private Button _contextCaptureMineButton;
         private Button _contextCastleActionButton;
         private Button _contextCastleRoleButton;
+        private Button _contextSiegeActionButton;
         private Button _contextMissionButton;
         private Button _neutralNpcTopButton;
         private VisualElement _neutralNpcView;
@@ -1685,7 +1686,8 @@ namespace Game.Presentation
         private void ConfigureCastleButtons(MapCellSelection selection)
         {
             if (_contextCastleActionButton == null ||
-                _contextCastleRoleButton == null)
+                _contextCastleRoleButton == null ||
+                _contextSiegeActionButton == null)
             {
                 return;
             }
@@ -1701,6 +1703,7 @@ namespace Game.Presentation
             {
                 SetVisible(_contextCastleActionButton, false);
                 SetVisible(_contextCastleRoleButton, false);
+                SetVisible(_contextSiegeActionButton, false);
                 return;
             }
 
@@ -1735,6 +1738,69 @@ namespace Game.Presentation
                 "거점 역할: " +
                 MapCastleRoleNames.GetKoreanName(selection.CastleRole) +
                 " · 클릭해 변경";
+
+            MapCastleControlState castle = gameplayMap.FindCastleAt(
+                selection.Coordinate);
+            bool canChooseSiegeAction = castle != null &&
+                castle.IsUnderSiege &&
+                selectedUnit != null &&
+                selectedUnit.Coordinate.Equals(selection.Coordinate) &&
+                string.Equals(
+                    castle.CapturingFactionId,
+                    "player",
+                    StringComparison.Ordinal);
+            SetVisible(_contextSiegeActionButton, canChooseSiegeAction);
+            _contextSiegeActionButton.SetEnabled(canChooseSiegeAction);
+            _contextSiegeActionButton.text = canChooseSiegeAction
+                ? "공성 행동: " +
+                  MapSiegeActionNames.GetKoreanName(castle.SiegeAction) +
+                  " · 클릭해 변경"
+                : "공성 행동 선택";
+        }
+
+        private void CycleSelectedSiegeAction()
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            GridCoordinate coordinate =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            MapCastleControlState castle = gameplayMap.FindCastleAt(coordinate);
+            if (castle == null)
+                return;
+
+            MapSiegeAction[] order =
+            {
+                MapSiegeAction.Assault,
+                MapSiegeAction.Encirclement,
+                MapSiegeAction.Blockade,
+                MapSiegeAction.Negotiation
+            };
+            int currentIndex = Array.IndexOf(order, castle.SiegeAction);
+            for (int offset = 1; offset <= order.Length; offset++)
+            {
+                MapSiegeAction next = order[
+                    (Math.Max(-1, currentIndex) + offset) % order.Length];
+                if (!gameplayMap.TrySetSelectedPlayerSiegeAction(
+                    coordinate,
+                    next,
+                    out string reason))
+                {
+                    if (!string.IsNullOrEmpty(reason) &&
+                        !reason.Contains("이미 선택"))
+                    {
+                        SetMapActionFeedback(reason);
+                        return;
+                    }
+                    continue;
+                }
+
+                SetMapActionFeedback(
+                    $"{coordinate} 공성 행동을 " +
+                    $"{MapSiegeActionNames.GetKoreanName(next)}(으)로 변경했습니다.");
+                RefreshSelectedMapActions();
+                return;
+            }
         }
 
         private void ConfigureMapActionButtons(
@@ -2164,6 +2230,9 @@ namespace Game.Presentation
             _contextCastleRoleButton = CreateMapActionButton(
                 "성 역할 선택",
                 CycleSelectedCastleRole);
+            _contextSiegeActionButton = CreateMapActionButton(
+                "공성 행동 선택",
+                CycleSelectedSiegeAction);
             _contextMissionButton = CreateMapActionButton(
                 "미션 정보 · 정찰 / 봉쇄 / 공격",
                 ShowSelectedMissionInformation);
@@ -2182,6 +2251,7 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextCaptureMineButton);
             _mapContextMenu.Add(_contextCastleActionButton);
             _mapContextMenu.Add(_contextCastleRoleButton);
+            _mapContextMenu.Add(_contextSiegeActionButton);
             _mapContextMenu.Add(_contextMissionButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);
