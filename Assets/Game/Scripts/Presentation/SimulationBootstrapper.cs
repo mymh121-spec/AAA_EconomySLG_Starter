@@ -91,6 +91,19 @@ namespace Game.Presentation
             _realtimeClock?.SpeedMultiplier ?? 0;
         public bool IsRealtimePaused =>
             _realtimeClock?.IsPaused ?? true;
+        public double GameMinutesPerRealtimeFixedStep
+        {
+            get
+            {
+                double realSecondsPerDay = simulationSettings != null
+                    ? simulationSettings.RealSecondsPerGameDay
+                    : 60d;
+                double fixedStepSeconds = simulationSettings != null
+                    ? simulationSettings.FixedRealtimeStepSeconds
+                    : 0.1d;
+                return fixedStepSeconds / realSecondsPerDay * 24d * 60d;
+            }
+        }
 
         public event Action RealtimeStateChanged;
         public event Action<int> RealtimeFixedStepsAdvanced;

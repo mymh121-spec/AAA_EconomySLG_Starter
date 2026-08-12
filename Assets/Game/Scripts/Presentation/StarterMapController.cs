@@ -73,6 +73,29 @@ namespace Game.Presentation
             $"{DisplayName} {Coordinate}\n{InteractionHint}";
     }
 
+    public readonly struct MapMovementPreview
+    {
+        public string UnitId { get; }
+        public GridCoordinate Destination { get; }
+        public IReadOnlyList<GridCoordinate> Path { get; }
+        public int RemainingTileCount { get; }
+        public int EstimatedFixedSteps { get; }
+
+        public MapMovementPreview(
+            string unitId,
+            GridCoordinate destination,
+            IReadOnlyList<GridCoordinate> path,
+            int remainingTileCount,
+            int estimatedFixedSteps)
+        {
+            UnitId = unitId ?? string.Empty;
+            Destination = destination;
+            Path = path ?? Array.Empty<GridCoordinate>();
+            RemainingTileCount = Math.Max(0, remainingTileCount);
+            EstimatedFixedSteps = Math.Max(0, estimatedFixedSteps);
+        }
+    }
+
     /// <summary>
     /// 문명식 평면 월드 맵을 표시한다.
     /// 논리 좌표와 카메라는 가로로 래핑되고 세로는 극지 경계에서 막힌다.
@@ -107,6 +130,8 @@ namespace Game.Presentation
         [SerializeField, Min(0.03f)] private float movementPathWidth = 0.12f;
         [SerializeField, Min(0.01f)] private float movementPathHeight = 0.13f;
         [SerializeField, Range(0f, 1f)] private float movementPathAlpha = 0.92f;
+        [SerializeField] private Color movementPreviewColor =
+            new Color(1.00f, 0.86f, 0.12f, 1f);
 
         [Header("세력과 거점 색상")]
         [SerializeField] private Color playerFactionColor =
@@ -134,6 +159,8 @@ namespace Game.Presentation
             new HashSet<Collider>();
         private readonly List<Transform> _iconBillboards =
             new List<Transform>();
+        private readonly List<GridCoordinate> _movementPreviewPath =
+            new List<GridCoordinate>();
 
         private Transform _generatedRoot;
         private Transform _gameplayMarkerRoot;
@@ -152,6 +179,7 @@ namespace Game.Presentation
         private int _generationSequence;
         private RealtimeMapGameplayService _gameplayService;
         private string _selectedPlayerUnitId = string.Empty;
+        private string _movementPreviewUnitId = string.Empty;
 
         public GridMapLayout CurrentLayout { get; private set; }
         public MapCellSelection? CurrentSelection { get; private set; }
@@ -160,7 +188,9 @@ namespace Game.Presentation
         public bool PointerSelectionBlocked { get; set; }
         public MapUnitState SelectedPlayerUnit =>
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
+        public MapMovementPreview? CurrentMovementPreview { get; private set; }
         public event Action<MapCellSelection> CellSelected;
+        public event Action<MapCellSelection> CellMovementPreviewRequested;
         public event Action PrimaryCellSelected;
         public event Action<MapCellSelection, Vector2> CellActionRequested;
         public event Action GameplayStateChanged;
@@ -387,6 +417,7 @@ namespace Game.Presentation
                 _gameplayService.PlayerFactionId,
                 coordinate);
             _selectedPlayerUnitId = unit.Id;
+            ClearMovementPreviewState();
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
             return true;
@@ -410,6 +441,69 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public bool TryPreviewSelectedPlayerUnitMove(
+            GridCoordinate destination,
+            out MapMovementPreview preview,
+            out string reason)
+        {
+            preview = default;
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                ClearMovementPreview();
+                reason = "먼저 아군 유닛을 선택하세요.";
+                return false;
+            }
+
+            if (!_gameplayService.CanIssueMove(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                destination,
+                out IReadOnlyList<GridCoordinate> route,
+                out reason))
+            {
+                ClearMovementPreview();
+                return false;
+            }
+
+            _movementPreviewPath.Clear();
+            _movementPreviewPath.Add(SelectedPlayerUnit.Coordinate);
+            for (int i = 0; i < route.Count; i++)
+                _movementPreviewPath.Add(route[i]);
+
+            _movementPreviewUnitId = _selectedPlayerUnitId;
+            int estimatedSteps = route.Count *
+                _gameplayService.GetRequiredMovementStepsPerTile(
+                    SelectedPlayerUnit);
+            preview = new MapMovementPreview(
+                _movementPreviewUnitId,
+                destination,
+                _movementPreviewPath,
+                route.Count,
+                estimatedSteps);
+            CurrentMovementPreview = preview;
+            RefreshGameplayMarkers();
+            return true;
+        }
+
+        public void ClearMovementPreview()
+        {
+            if (_movementPreviewPath.Count == 0 &&
+                !CurrentMovementPreview.HasValue)
+            {
+                return;
+            }
+
+            ClearMovementPreviewState();
+            RefreshGameplayMarkers();
+        }
+
+        private void ClearMovementPreviewState()
+        {
+            _movementPreviewPath.Clear();
+            _movementPreviewUnitId = string.Empty;
+            CurrentMovementPreview = null;
+        }
+
         public bool TryMoveSelectedPlayerUnit(
             GridCoordinate destination,
             out string reason)
@@ -417,11 +511,17 @@ namespace Game.Presentation
             if (!CanMoveSelectedPlayerUnit(destination, out reason))
                 return false;
 
-            return _gameplayService.TryIssueMove(
+            bool moved = _gameplayService.TryIssueMove(
                 _gameplayService.PlayerFactionId,
                 _selectedPlayerUnitId,
                 destination,
                 out reason);
+            if (moved)
+            {
+                ClearMovementPreviewState();
+                RefreshGameplayMarkers();
+            }
+            return moved;
         }
 
         public MapCastleControlState FindCastleAt(GridCoordinate coordinate)
@@ -453,11 +553,17 @@ namespace Game.Presentation
             if (!CanCaptureOrSiegeSelectedCastle(coordinate, out reason))
                 return false;
 
-            return _gameplayService.TryIssueCastleOccupation(
+            bool ordered = _gameplayService.TryIssueCastleOccupation(
                 _gameplayService.PlayerFactionId,
                 _selectedPlayerUnitId,
                 coordinate,
                 out reason);
+            if (ordered)
+            {
+                ClearMovementPreviewState();
+                RefreshGameplayMarkers();
+            }
+            return ordered;
         }
 
         public bool TrySetPlayerCastleRole(
@@ -617,6 +723,7 @@ namespace Game.Presentation
 
             _gameplayService = null;
             _selectedPlayerUnitId = string.Empty;
+            ClearMovementPreviewState();
         }
 
         private void BuildFlatMapCopies(GridMapLayout layout)
@@ -1261,22 +1368,56 @@ namespace Game.Presentation
                     CreateUnitMarker(unit, position, color, selected);
                 });
             }
+
+            if (_movementPreviewPath.Count > 1 &&
+                string.Equals(
+                    _movementPreviewUnitId,
+                    _selectedPlayerUnitId,
+                    StringComparison.Ordinal))
+            {
+                CreateMovementPath(
+                    "이동_미리보기",
+                    _movementPreviewPath,
+                    movementPreviewColor,
+                    movementPathWidth * 1.18f,
+                    movementPathAlpha);
+            }
         }
 
         private void CreateMovementPath(MapUnitState unit, Color factionColor)
         {
+            CreateMovementPath(
+                unit.Id,
+                unit.PlannedPath,
+                Color.Lerp(factionColor, Color.white, 0.35f),
+                movementPathWidth,
+                movementPathAlpha);
+        }
+
+        private void CreateMovementPath(
+            string pathId,
+            IReadOnlyList<GridCoordinate> path,
+            Color color,
+            float width,
+            float alpha)
+        {
             ForEachSurfaceCopy(xOffset => CreateMovementPathCopy(
-                unit,
-                factionColor,
+                pathId,
+                path,
+                color,
+                width,
+                alpha,
                 xOffset));
         }
 
         private void CreateMovementPathCopy(
-            MapUnitState unit,
-            Color factionColor,
+            string pathId,
+            IReadOnlyList<GridCoordinate> path,
+            Color color,
+            float width,
+            float alpha,
             float xOffset)
         {
-            IReadOnlyList<GridCoordinate> path = unit.PlannedPath;
             if (path.Count < 2 || CurrentLayout == null)
                 return;
 
@@ -1307,20 +1448,20 @@ namespace Game.Presentation
                 previousX = path[i].X;
             }
 
-            var pathObject = new GameObject(unit.Id + "_이동 점선");
+            var pathObject = new GameObject(pathId + "_이동 점선");
             pathObject.transform.SetParent(_gameplayMarkerRoot, false);
             var line = pathObject.AddComponent<LineRenderer>();
             line.useWorldSpace = true;
             line.loop = false;
             line.alignment = LineAlignment.View;
             line.textureMode = LineTextureMode.Tile;
-            line.widthMultiplier = tileSize * movementPathWidth;
+            line.widthMultiplier = tileSize * width;
             line.numCornerVertices = 2;
             line.numCapVertices = 2;
             line.sharedMaterial = GetOrCreateMovementPathMaterial();
 
-            Color pathColor = Color.Lerp(factionColor, Color.white, 0.35f);
-            pathColor.a = movementPathAlpha;
+            Color pathColor = color;
+            pathColor.a = alpha;
             line.startColor = pathColor;
             line.endColor = pathColor;
             line.positionCount = positions.Length;
@@ -1946,6 +2087,7 @@ namespace Game.Presentation
                 CurrentLayout,
                 coordinate);
             CurrentSelection = selection;
+            CellMovementPreviewRequested?.Invoke(selection);
             if (leftClicked)
                 PrimaryCellSelected?.Invoke();
             CellSelected?.Invoke(selection);

@@ -95,6 +95,9 @@ namespace Game.Application.World
         public GridCoordinate Coordinate { get; internal set; }
         public GridCoordinate? Destination { get; internal set; }
         public int MovementProgress { get; internal set; }
+        public int TotalMovementTileCount { get; private set; }
+        public int CompletedMovementTileCount { get; private set; }
+        public int RemainingMovementTileCount => _path.Count;
         public int MaxStamina { get; }
         public int Stamina { get; private set; }
         public int StaminaRecoveryProgress { get; private set; }
@@ -190,6 +193,8 @@ namespace Game.Application.World
                 ? path[path.Count - 1]
                 : (GridCoordinate?)null;
             MovementProgress = 0;
+            TotalMovementTileCount = path.Count;
+            CompletedMovementTileCount = 0;
         }
 
         internal bool TryAdvanceOneTile()
@@ -198,6 +203,9 @@ namespace Game.Application.World
                 return false;
 
             Coordinate = _path.Dequeue();
+            CompletedMovementTileCount++;
+            if (_plannedPath.Count > 0)
+                _plannedPath.RemoveAt(0);
             if (_path.Count == 0)
             {
                 Destination = null;
@@ -350,6 +358,7 @@ namespace Game.Application.World
         public IReadOnlyList<MapMineControlState> Mines => _mines;
         public IReadOnlyList<MapCastleControlState> Castles => _castles;
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
+        public int FixedStepsPerMove => _tuning.FixedStepsPerMove;
         public int FixedStepsToCaptureCastle =>
             _tuning.FixedStepsToCaptureCastle;
         public int FixedStepsToSiegeUndefendedCastle =>
@@ -801,6 +810,31 @@ namespace Game.Application.World
             path = route;
             reason = string.Empty;
             return true;
+        }
+
+        public int GetRequiredMovementStepsPerTile(MapUnitState unit)
+        {
+            if (unit == null)
+                return _tuning.FixedStepsPerMove;
+
+            return Math.Max(
+                1,
+                (int)Math.Round(
+                    _tuning.FixedStepsPerMove /
+                    (double)unit.MobilityModifier,
+                    MidpointRounding.AwayFromZero));
+        }
+
+        public int GetRemainingMovementFixedSteps(MapUnitState unit)
+        {
+            if (unit == null || !unit.IsMoving)
+                return 0;
+
+            int stepsPerTile = GetRequiredMovementStepsPerTile(unit);
+            return Math.Max(
+                0,
+                unit.RemainingMovementTileCount * stepsPerTile -
+                unit.MovementProgress);
         }
 
         public bool TryIssueMove(
@@ -1466,12 +1500,7 @@ namespace Game.Application.World
                     continue;
 
                 unit.MovementProgress++;
-                int requiredSteps = Math.Max(
-                    1,
-                    (int)Math.Round(
-                        _tuning.FixedStepsPerMove /
-                        (double)unit.MobilityModifier,
-                        MidpointRounding.AwayFromZero));
+                int requiredSteps = GetRequiredMovementStepsPerTile(unit);
                 if (unit.MovementProgress < requiredSteps)
                     continue;
 

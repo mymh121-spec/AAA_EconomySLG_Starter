@@ -252,6 +252,8 @@ namespace Game.Presentation
                 return;
 
             gameplayMap.CellSelected += HandleMapCellSelected;
+            gameplayMap.CellMovementPreviewRequested +=
+                HandleMapMovementPreviewRequested;
             gameplayMap.PrimaryCellSelected += HideMapContextMenu;
             gameplayMap.CellActionRequested += HandleMapActionRequested;
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
@@ -864,6 +866,32 @@ namespace Game.Presentation
                     .Append(" / ")
                     .Append(selectedUnit.ArmorDisplayName)
                     .Append(" · 게임 시간 6시간마다 1 회복");
+
+                if (selectedUnit.IsMoving && gameplayMap.GameplayService != null)
+                {
+                    RealtimeMapGameplayService mapService =
+                        gameplayMap.GameplayService;
+                    int stepsPerTile =
+                        mapService.GetRequiredMovementStepsPerTile(selectedUnit);
+                    int remainingSteps =
+                        mapService.GetRemainingMovementFixedSteps(selectedUnit);
+                    double completedTiles = selectedUnit.CompletedMovementTileCount +
+                        selectedUnit.MovementProgress / (double)stepsPerTile;
+                    int progressPercent = selectedUnit.TotalMovementTileCount > 0
+                        ? Mathf.Clamp(
+                            Mathf.RoundToInt(
+                                (float)(completedTiles /
+                                    selectedUnit.TotalMovementTileCount * 100d)),
+                            0,
+                            100)
+                        : 0;
+                    builder.Append("\n이동 진행 ")
+                        .Append(progressPercent)
+                        .Append("% · 남은 ")
+                        .Append(selectedUnit.RemainingMovementTileCount)
+                        .Append("칸 · 도착 예상 ")
+                        .Append(FormatMovementArrival(remainingSteps));
+                }
             }
 
             builder.Append('\n')
@@ -932,6 +960,64 @@ namespace Game.Presentation
                 _multiplayerMapSelectionStatus.text = description;
 
             RefreshSinglePlayerMapActions(selection);
+        }
+
+        private void HandleMapMovementPreviewRequested(
+            MapCellSelection selection)
+        {
+            RefreshMovementPreview(selection);
+        }
+
+        private void RefreshMovementPreview(MapCellSelection selection)
+        {
+            if (!_selection.IsSinglePlayer || gameplayMap == null)
+                return;
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            if (selectedUnit == null ||
+                selectedUnit.Coordinate.Equals(selection.Coordinate) ||
+                gameplayMap.CanSelectPlayerUnitAt(selection.Coordinate, out _))
+            {
+                gameplayMap.ClearMovementPreview();
+                return;
+            }
+
+            if (!gameplayMap.TryPreviewSelectedPlayerUnitMove(
+                selection.Coordinate,
+                out MapMovementPreview preview,
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(
+                $"이동 미리보기 · {preview.RemainingTileCount}칸 · " +
+                $"도착 예상 {FormatMovementArrival(preview.EstimatedFixedSteps)}\n" +
+                "점선 경로를 확인한 뒤 이동 버튼을 눌러 확정하세요.");
+        }
+
+        private string FormatMovementArrival(int remainingFixedSteps)
+        {
+            if (singlePlayerSimulation == null)
+                return "계산 중";
+
+            long currentMinute =
+                (long)(singlePlayerSimulation.RealtimeDayNumber - 1) * 24L * 60L +
+                singlePlayerSimulation.RealtimeHour * 60L +
+                singlePlayerSimulation.RealtimeMinute;
+            long travelMinutes = Math.Max(
+                1L,
+                (long)Math.Ceiling(
+                    remainingFixedSteps *
+                    singlePlayerSimulation.GameMinutesPerRealtimeFixedStep));
+            long arrivalMinute = currentMinute + travelMinutes;
+            int arrivalDay = (int)(arrivalMinute / (24L * 60L)) + 1;
+            int minuteOfDay = (int)(arrivalMinute % (24L * 60L));
+            int hour = minuteOfDay / 60;
+            int minute = minuteOfDay % 60;
+            return $"{GameCalendarDate.FromDayNumber(arrivalDay)} " +
+                $"{hour:D2}:{minute:D2}";
         }
 
         private string BuildMapInteractionDetails(MapCellSelection selection)
@@ -2910,6 +2996,8 @@ namespace Game.Presentation
             if (gameplayMap != null && _mapEventsBound)
             {
                 gameplayMap.CellSelected -= HandleMapCellSelected;
+                gameplayMap.CellMovementPreviewRequested -=
+                    HandleMapMovementPreviewRequested;
                 gameplayMap.PrimaryCellSelected -= HideMapContextMenu;
                 gameplayMap.CellActionRequested -= HandleMapActionRequested;
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;

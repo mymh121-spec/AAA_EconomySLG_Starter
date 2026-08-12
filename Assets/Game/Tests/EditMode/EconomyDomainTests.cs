@@ -303,6 +303,61 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_TracksMovementProgressAndRemainingRoute()
+        {
+            var terrain = new GridTerrainKind[5 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                5,
+                3,
+                17,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 2,
+                    aiDecisionIntervalSteps: 100));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(2, 1),
+                    out _),
+                Is.True);
+            Assert.That(unit.TotalMovementTileCount, Is.EqualTo(2));
+            Assert.That(unit.CompletedMovementTileCount, Is.Zero);
+            Assert.That(unit.RemainingMovementTileCount, Is.EqualTo(2));
+
+            service.AdvanceFixedSteps(1);
+
+            Assert.That(unit.MovementProgress, Is.EqualTo(1));
+            Assert.That(
+                service.GetRemainingMovementFixedSteps(unit),
+                Is.EqualTo(3));
+
+            service.AdvanceFixedSteps(1);
+
+            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(1, 1)));
+            Assert.That(unit.CompletedMovementTileCount, Is.EqualTo(1));
+            Assert.That(unit.RemainingMovementTileCount, Is.EqualTo(1));
+            Assert.That(unit.PlannedPath.Count, Is.EqualTo(2));
+            Assert.That(unit.PlannedPath[0], Is.EqualTo(unit.Coordinate));
+            Assert.That(
+                service.GetRemainingMovementFixedSteps(unit),
+                Is.EqualTo(2));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];
@@ -414,7 +469,7 @@ namespace Game.Tests
                     out _),
                 Is.True);
 
-            service.AdvanceFixedSteps(2);
+            service.AdvanceFixedSteps(3);
 
             MapCastleControlState castle = service.FindCastle(castleCoordinate);
             Assert.That(castle.OwnerFactionId, Is.EqualTo("player"));
