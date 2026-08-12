@@ -1470,8 +1470,14 @@ namespace Game.Presentation
                     unit.Id,
                     _selectedPlayerUnitId,
                     StringComparison.Ordinal);
-                if (unit.IsMoving && unit.PlannedPath.Count > 1)
+                if (unit.IsMoving &&
+                    unit.PlannedPath.Count > 1 &&
+                    _gameplayService.CanViewMovementPath(
+                        _gameplayService.PlayerFactionId,
+                        unit))
+                {
                     CreateMovementPath(unit, color);
+                }
 
                 ForEachSurfaceCopy(xOffset =>
                 {

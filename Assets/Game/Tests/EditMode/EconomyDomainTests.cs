@@ -487,6 +487,59 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_HidesEnemyPathOutsideScoutingRange()
+        {
+            var terrain = new GridTerrainKind[20 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                20,
+                3,
+                29,
+                new GridCoordinate(0, 1),
+                new[] { new GridCoordinate(8, 1) },
+                new MinePlacement[0],
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 100,
+                    unitScoutingRange: 3));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState scout, out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit("ai_1", out MapUnitState enemy, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "ai_1",
+                    enemy.Id,
+                    new GridCoordinate(2, 1),
+                    out _),
+                Is.True);
+            Assert.That(
+                service.CanViewMovementPath("player", scout),
+                Is.True);
+            Assert.That(
+                service.CanViewMovementPath("player", enemy),
+                Is.False);
+
+            service.AdvanceFixedSteps(5);
+
+            Assert.That(enemy.Coordinate, Is.EqualTo(new GridCoordinate(3, 1)));
+            Assert.That(enemy.IsMoving, Is.True);
+            Assert.That(
+                service.CanViewMovementPath("player", enemy),
+                Is.True);
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];

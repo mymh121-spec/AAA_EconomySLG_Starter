@@ -23,6 +23,7 @@ namespace Game.Application.World
         public int MineSpawnIntervalDays { get; }
         public decimal MineDailyDepletionRate { get; }
         public decimal MinimumMineYieldMultiplier { get; }
+        public int UnitScoutingRange { get; }
 
         public MapGameplayTuning(
             int fixedStepsPerMove = 8,
@@ -38,7 +39,8 @@ namespace Game.Application.World
             decimal mineDailyDepletionRate = 0.03m,
             decimal minimumMineYieldMultiplier = 0.25m,
             int fixedStepsToCaptureCastle = 60,
-            int fixedStepsToSiegeUndefendedCastle = 120)
+            int fixedStepsToSiegeUndefendedCastle = 120,
+            int unitScoutingRange = 5)
         {
             FixedStepsPerMove = Math.Max(1, fixedStepsPerMove);
             FixedStepsToCapture = Math.Max(1, fixedStepsToCapture);
@@ -66,6 +68,7 @@ namespace Game.Application.World
                 minimumMineYieldMultiplier,
                 0.01m,
                 1m);
+            UnitScoutingRange = Math.Max(1, unitScoutingRange);
         }
     }
 
@@ -389,6 +392,7 @@ namespace Game.Application.World
         public IReadOnlyList<MapCastleControlState> Castles => _castles;
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
         public int FixedStepsPerMove => _tuning.FixedStepsPerMove;
+        public int UnitScoutingRange => _tuning.UnitScoutingRange;
         public int FixedStepsToCaptureCastle =>
             _tuning.FixedStepsToCaptureCastle;
         public int FixedStepsToSiegeUndefendedCastle =>
@@ -499,6 +503,43 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public bool CanViewMovementPath(
+            string viewerFactionId,
+            MapUnitState unit)
+        {
+            if (unit == null || string.IsNullOrWhiteSpace(viewerFactionId))
+                return false;
+
+            if (string.Equals(
+                viewerFactionId,
+                unit.OwnerFactionId,
+                StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState scout = _units[i];
+                if (!string.Equals(
+                    scout.OwnerFactionId,
+                    viewerFactionId,
+                    StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (_layout.ManhattanDistance(
+                    scout.Coordinate,
+                    unit.Coordinate) <= _tuning.UnitScoutingRange)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public MapMineControlState FindMine(GridCoordinate coordinate)
