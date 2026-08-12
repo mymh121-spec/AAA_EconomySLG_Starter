@@ -1,8 +1,10 @@
 # PvP 초대 코드 방 시스템 TODO
 
-작성일: 2026-08-12  
-대상: Unity 6.3 LTS / ASP.NET Core 권위 서버 / NCP Ubuntu 24.04  
-개발 PC 메모리: RAM 16GB + Windows 가상 메모리 사용  
+작성일: 2026-08-12
+
+대상: Unity 6.3 LTS / ASP.NET Core 권위 서버 / NCP Ubuntu 24.04
+
+개발 PC 메모리: RAM 16GB + Windows 가상 메모리 사용
 데이터 저장 방침: SQL 미사용, JSON 스냅샷 + append-only 저널 사용
 
 ## 현재 확인된 상태
