@@ -1194,7 +1194,12 @@ namespace Game.Presentation
                           " · 역할 " +
                           MapCastleRoleNames.GetKoreanName(castle.Role) +
                           $" · 주둔군 {castle.GarrisonUnitCount}/" +
-                          MapCastleRules.GetGarrisonCapacity(castle.Role);
+                          MapCastleRules.GetGarrisonCapacity(castle.Role) +
+                          $" · 성벽 {castle.WallDurability:N0}/" +
+                          $"{castle.MaxWallDurability:N0}" +
+                          $" · 식량 {castle.FoodSupply:N0}/" +
+                          $"{castle.MaxFoodSupply:N0}" +
+                          $" · 방어 보너스 +{castle.DefenseBonus:P0}";
                 if (_gameplayService.TryGetRecruitmentSiteSnapshot(
                     _gameplayService.PlayerFactionId,
                     coordinate,

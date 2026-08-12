@@ -732,6 +732,11 @@ namespace Game.Tests
             Assert.That(castle.GarrisonUnitIds, Does.Contain(unit.Id));
             Assert.That(castle.ConflictKind, Is.EqualTo(MapCastleConflictKind.None));
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
+            Assert.That(castle.WallDurability, Is.EqualTo(1000));
+            Assert.That(castle.MaxWallDurability, Is.EqualTo(1000));
+            Assert.That(castle.FoodSupply, Is.EqualTo(500));
+            Assert.That(castle.MaxFoodSupply, Is.EqualTo(500));
+            Assert.That(castle.DefenseBonus, Is.EqualTo(0.350m));
             Assert.That(
                 service.TrySetCastleRole(
                     "player",
@@ -748,6 +753,11 @@ namespace Game.Tests
                     out _),
                 Is.True);
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.IndustrialCity));
+            Assert.That(castle.WallDurability, Is.EqualTo(1200));
+            Assert.That(castle.MaxWallDurability, Is.EqualTo(1200));
+            Assert.That(castle.FoodSupply, Is.EqualTo(1000));
+            Assert.That(castle.MaxFoodSupply, Is.EqualTo(1000));
+            Assert.That(castle.DefenseBonus, Is.EqualTo(0.370m));
             Assert.That(
                 service.TryCreateUnitAt(
                     "player",
@@ -760,6 +770,7 @@ namespace Game.Tests
                 Is.True);
             Assert.That(localRecruit.Coordinate, Is.EqualTo(castleCoordinate));
             Assert.That(castle.GarrisonUnitCount, Is.EqualTo(2));
+            Assert.That(castle.DefenseBonus, Is.EqualTo(0.420m));
             Assert.That(
                 service.CanCreateUnitAt(
                     "player",

@@ -43,6 +43,42 @@ namespace Game.Application.World
         public const int HeadquartersRecruitRecoveryDays = 1;
         public const int MineGuardCapacity = 1;
 
+        public static int GetMaxWallDurability(MapCastleRole role)
+        {
+            switch (role)
+            {
+                case MapCastleRole.SupplyHub: return 1100;
+                case MapCastleRole.IndustrialCity: return 1200;
+                case MapCastleRole.MilitaryFortress: return 1800;
+                case MapCastleRole.Port: return 1300;
+                default: return 1000;
+            }
+        }
+
+        public static int GetMaxFoodSupply(MapCastleRole role)
+        {
+            switch (role)
+            {
+                case MapCastleRole.SupplyHub: return 1500;
+                case MapCastleRole.IndustrialCity: return 1000;
+                case MapCastleRole.MilitaryFortress: return 1200;
+                case MapCastleRole.Port: return 1300;
+                default: return 500;
+            }
+        }
+
+        public static decimal GetRoleDefenseBonus(MapCastleRole role)
+        {
+            switch (role)
+            {
+                case MapCastleRole.SupplyHub: return 0.15m;
+                case MapCastleRole.IndustrialCity: return 0.12m;
+                case MapCastleRole.MilitaryFortress: return 0.40m;
+                case MapCastleRole.Port: return 0.18m;
+                default: return 0.10m;
+            }
+        }
+
         public static int GetGarrisonCapacity(MapCastleRole role)
         {
             switch (role)
@@ -232,6 +268,29 @@ namespace Game.Application.World
         public int GarrisonUnitCount => _garrisonUnitIds.Count;
         public bool IsNeutral => string.IsNullOrEmpty(OwnerFactionId);
         public bool IsUnderSiege => ConflictKind == MapCastleConflictKind.Siege;
+        public int WallDurability { get; private set; }
+        public int MaxWallDurability =>
+            MapCastleRules.GetMaxWallDurability(Role);
+        public int FoodSupply { get; private set; }
+        public int MaxFoodSupply => MapCastleRules.GetMaxFoodSupply(Role);
+        public decimal DefenseBonus
+        {
+            get
+            {
+                decimal wallRatio = MaxWallDurability <= 0
+                    ? 0m
+                    : WallDurability / (decimal)MaxWallDurability;
+                decimal garrisonBonus = Math.Min(
+                    0.25m,
+                    GarrisonUnitCount * 0.05m);
+                return Math.Round(
+                    MapCastleRules.GetRoleDefenseBonus(Role) +
+                    wallRatio * 0.20m +
+                    garrisonBonus,
+                    3,
+                    MidpointRounding.AwayFromZero);
+            }
+        }
 
         public MapCastleControlState(GridCoordinate coordinate)
         {
@@ -240,6 +299,60 @@ namespace Game.Application.World
             CapturingFactionId = string.Empty;
             Role = MapCastleRole.Unassigned;
             ConflictKind = MapCastleConflictKind.None;
+            WallDurability = MaxWallDurability;
+            FoodSupply = MaxFoodSupply;
+        }
+
+        internal bool SetRole(MapCastleRole role)
+        {
+            if (Role == role)
+                return false;
+
+            decimal wallRatio = MaxWallDurability <= 0
+                ? 0m
+                : WallDurability / (decimal)MaxWallDurability;
+            decimal foodRatio = MaxFoodSupply <= 0
+                ? 0m
+                : FoodSupply / (decimal)MaxFoodSupply;
+            Role = role;
+            WallDurability = Math.Clamp(
+                (int)Math.Round(
+                    MaxWallDurability * wallRatio,
+                    MidpointRounding.AwayFromZero),
+                0,
+                MaxWallDurability);
+            FoodSupply = Math.Clamp(
+                (int)Math.Round(
+                    MaxFoodSupply * foodRatio,
+                    MidpointRounding.AwayFromZero),
+                0,
+                MaxFoodSupply);
+            return true;
+        }
+
+        internal int ApplyWallDamage(int damage)
+        {
+            int applied = Math.Min(
+                WallDurability,
+                Math.Max(0, damage));
+            WallDurability -= applied;
+            return applied;
+        }
+
+        internal int ConsumeFood(int amount)
+        {
+            int consumed = Math.Min(FoodSupply, Math.Max(0, amount));
+            FoodSupply -= consumed;
+            return consumed;
+        }
+
+        internal int AddFood(int amount)
+        {
+            int added = Math.Min(
+                MaxFoodSupply - FoodSupply,
+                Math.Max(0, amount));
+            FoodSupply += added;
+            return added;
         }
 
         internal bool SetGarrison(IReadOnlyList<string> unitIds)

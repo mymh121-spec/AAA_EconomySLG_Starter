@@ -1301,7 +1301,7 @@ namespace Game.Application.World
 
             MapCastleControlState castle = FindCastle(coordinate);
             MapCastleRole previousRole = castle.Role;
-            castle.Role = role;
+            castle.SetRole(role);
             ConfigureCastleRecruitmentSite(castle);
             reason = string.Empty;
             CastleRoleChanged?.Invoke(new MapCastleRoleChangedRecord(
@@ -2022,12 +2022,12 @@ namespace Game.Application.World
             string previousOwner = castle.OwnerFactionId;
             string newOwner = castle.CapturingFactionId;
             castle.OwnerFactionId = newOwner;
-            castle.Role = string.Equals(
+            castle.SetRole(string.Equals(
                 newOwner,
                 PlayerFactionId,
                 StringComparison.Ordinal)
                 ? MapCastleRole.Unassigned
-                : SelectAiCastleRole(castle.Coordinate);
+                : SelectAiCastleRole(castle.Coordinate));
             ConfigureCastleRecruitmentSite(castle);
             ClearCastleConflict(castle);
             RefreshCastleGarrison(castle);
