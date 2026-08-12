@@ -888,6 +888,32 @@ namespace Game.Tests
             Assert.That(
                 castle.SiegeAction,
                 Is.EqualTo(MapSiegeAction.Negotiation));
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attacker.Id,
+                    castleCoordinate,
+                    MapSiegeAction.Assault,
+                    out _),
+                Is.True);
+            MapSiegeDayResult siegeResult = default;
+            service.SiegeDayResolved += result => siegeResult = result;
+
+            service.AdvanceEconomicDay(out _);
+
+            Assert.That(service.LastSiegeDayResults.Count, Is.EqualTo(1));
+            Assert.That(siegeResult.Action, Is.EqualTo(MapSiegeAction.Assault));
+            Assert.That(siegeResult.WallDamage, Is.EqualTo(25));
+            Assert.That(siegeResult.AttackerCasualties, Is.EqualTo(18));
+            Assert.That(siegeResult.DefenderCasualties, Is.EqualTo(9));
+            Assert.That(siegeResult.FoodConsumed, Is.EqualTo(5));
+            Assert.That(siegeResult.CastleCaptured, Is.False);
+            Assert.That(castle.WallDurability, Is.EqualTo(1075));
+            Assert.That(castle.FoodSupply, Is.EqualTo(1495));
+            Assert.That(attacker.Soldiers, Is.EqualTo(82));
+            Assert.That(defender.Soldiers, Is.EqualTo(91));
+            Assert.That(attacker.Fatigue, Is.EqualTo(10m));
+            Assert.That(defender.Morale, Is.EqualTo(85m));
 
             MapCastleCaptureRecord captureRecord = default;
             service.CastleCaptured += record => captureRecord = record;

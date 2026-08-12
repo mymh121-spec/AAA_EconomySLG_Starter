@@ -264,6 +264,7 @@ namespace Game.Presentation
             gameplayMap.MineSpawned += HandleMineSpawned;
             gameplayMap.CastleCaptured += HandleCastleCaptured;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
+            gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
             _mapEventsBound = true;
         }
 
@@ -1225,6 +1226,21 @@ namespace Game.Presentation
                 $"{record.Coordinate} 성의 역할을 " +
                 $"{MapCastleRoleNames.GetKoreanName(record.NewRole)}(으)로 " +
                 "지정했습니다.";
+        }
+
+        private void HandleSiegeDayResolved(MapSiegeDayResult result)
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            SetMapActionFeedback(
+                $"{result.EconomicDay}일차 {result.Coordinate} " +
+                $"{MapSiegeActionNames.GetKoreanName(result.Action)} 결과 · " +
+                $"성벽 -{result.WallDamage:N0} · " +
+                $"공격측 피해 {result.AttackerCasualties:N0} · " +
+                $"수비측 피해 {result.DefenderCasualties:N0} · " +
+                $"식량 -{result.FoodConsumed:N0}" +
+                (result.CastleCaptured ? " · 성 함락" : string.Empty));
         }
 
         private void HandleRealtimeFixedStepsAdvanced(int fixedStepCount)
@@ -3167,6 +3183,7 @@ namespace Game.Presentation
                 gameplayMap.MineSpawned -= HandleMineSpawned;
                 gameplayMap.CastleCaptured -= HandleCastleCaptured;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
+                gameplayMap.SiegeDayResolved -= HandleSiegeDayResolved;
                 _mapEventsBound = false;
             }
             if (_panelSettings != null)

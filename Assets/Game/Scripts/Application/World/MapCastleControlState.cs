@@ -439,6 +439,38 @@ namespace Game.Application.World
         }
     }
 
+    public readonly struct MapSiegeDayResult
+    {
+        public GridCoordinate Coordinate { get; }
+        public MapSiegeAction Action { get; }
+        public int EconomicDay { get; }
+        public int WallDamage { get; }
+        public int AttackerCasualties { get; }
+        public int DefenderCasualties { get; }
+        public int FoodConsumed { get; }
+        public bool CastleCaptured { get; }
+
+        public MapSiegeDayResult(
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            int economicDay,
+            int wallDamage,
+            int attackerCasualties,
+            int defenderCasualties,
+            int foodConsumed,
+            bool castleCaptured)
+        {
+            Coordinate = coordinate;
+            Action = action;
+            EconomicDay = Math.Max(1, economicDay);
+            WallDamage = Math.Max(0, wallDamage);
+            AttackerCasualties = Math.Max(0, attackerCasualties);
+            DefenderCasualties = Math.Max(0, defenderCasualties);
+            FoodConsumed = Math.Max(0, foodConsumed);
+            CastleCaptured = castleCaptured;
+        }
+    }
+
     public readonly struct MapCastleRoleChangedRecord
     {
         public GridCoordinate Coordinate { get; }

@@ -208,6 +208,7 @@ namespace Game.Presentation
         public event Action<MapMineSpawnRecord> MineSpawned;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
+        public event Action<MapSiegeDayResult> SiegeDayResolved;
 
         public void Initialize()
         {
@@ -852,6 +853,7 @@ namespace Game.Presentation
             _gameplayService.MineSpawned += HandleMineSpawned;
             _gameplayService.CastleCaptured += HandleCastleCaptured;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
+            _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
 
             if (_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
@@ -876,6 +878,7 @@ namespace Game.Presentation
                 _gameplayService.MineSpawned -= HandleMineSpawned;
                 _gameplayService.CastleCaptured -= HandleCastleCaptured;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
+                _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
             }
 
             _gameplayService = null;
@@ -2058,6 +2061,12 @@ namespace Game.Presentation
         {
             RefreshCurrentSelection();
             CastleRoleChanged?.Invoke(record);
+        }
+
+        private void HandleSiegeDayResolved(MapSiegeDayResult result)
+        {
+            RefreshCurrentSelection();
+            SiegeDayResolved?.Invoke(result);
         }
 
         private void RefreshCurrentSelection()

@@ -464,6 +464,8 @@ namespace Game.Application.World
         private readonly Dictionary<GridCoordinate, MapRecruitmentSiteState>
             _recruitmentSites =
                 new Dictionary<GridCoordinate, MapRecruitmentSiteState>();
+        private readonly List<MapSiegeDayResult> _lastSiegeDayResults =
+            new List<MapSiegeDayResult>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -480,12 +482,15 @@ namespace Game.Application.World
         public int FixedStepsToSiegeUndefendedCastle =>
             _tuning.FixedStepsToSiegeUndefendedCastle;
         public int CurrentEconomicDay => _economicDaySequence;
+        public IReadOnlyList<MapSiegeDayResult> LastSiegeDayResults =>
+            _lastSiegeDayResults;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
+        public event Action<MapSiegeDayResult> SiegeDayResolved;
 
         public RealtimeMapGameplayService(
             GridMapLayout layout,
@@ -1499,13 +1504,14 @@ namespace Game.Application.World
             _economicDaySequence++;
             bool recruitmentChanged = AdvanceRecruitmentPools();
             bool fatigueChanged = RecoverDailyUnitFatigue();
+            bool siegeChanged = ResolveDailySieges();
             spawnedMine = default;
             if (_economicDaySequence % _tuning.MineSpawnIntervalDays != 0 ||
                 !TryFindDynamicMineCoordinate(
                     _economicDaySequence,
                     out GridCoordinate coordinate))
             {
-                if (recruitmentChanged || fatigueChanged)
+                if (recruitmentChanged || fatigueChanged || siegeChanged)
                     StateChanged?.Invoke();
                 return false;
             }
@@ -1528,6 +1534,288 @@ namespace Game.Application.World
             StateChanged?.Invoke();
             return true;
         }
+
+        private bool ResolveDailySieges()
+        {
+            _lastSiegeDayResults.Clear();
+            bool changed = false;
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState castle = _castles[i];
+                if (!castle.IsUnderSiege ||
+                    string.IsNullOrEmpty(castle.CapturingFactionId) ||
+                    castle.SiegeAction == MapSiegeAction.None)
+                {
+                    continue;
+                }
+
+                string attackerFaction = castle.CapturingFactionId;
+                MapSiegeAction resolvedAction = castle.SiegeAction;
+                decimal attackerPower = SumCombatPowerAt(
+                    castle.Coordinate,
+                    attackerFaction,
+                    true);
+                decimal defenderPower = SumCombatPowerAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId,
+                    false);
+                int defenderSoldiers = SumSoldiersAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId);
+                if (attackerPower <= 0m)
+                    continue;
+
+                decimal defenseFactor = 1m + castle.DefenseBonus;
+                int wallDamage;
+                int attackerCasualties;
+                int defenderCasualties;
+                int foodMultiplier;
+                decimal attackerFatigue;
+                decimal defenderMoraleLoss;
+                switch (castle.SiegeAction)
+                {
+                    case MapSiegeAction.Assault:
+                        wallDamage = Math.Max(
+                            20,
+                            RoundToInt(attackerPower * 0.35m / defenseFactor));
+                        defenderCasualties = RoundToInt(
+                            attackerPower / (8m * defenseFactor));
+                        attackerCasualties = RoundToInt(
+                            (defenderPower * defenseFactor +
+                             castle.WallDurability /
+                             (decimal)Math.Max(1, castle.MaxWallDurability) *
+                             50m) / 12m);
+                        foodMultiplier = 1;
+                        attackerFatigue = 10m;
+                        defenderMoraleLoss = 6m;
+                        break;
+                    case MapSiegeAction.Blockade:
+                        wallDamage = Math.Max(
+                            4,
+                            RoundToInt(attackerPower * 0.06m / defenseFactor));
+                        defenderCasualties = castle.FoodSupply == 0
+                            ? Math.Max(1, defenderSoldiers / 20)
+                            : 0;
+                        attackerCasualties = 0;
+                        foodMultiplier = 2;
+                        attackerFatigue = 3m;
+                        defenderMoraleLoss = 4m;
+                        break;
+                    case MapSiegeAction.Negotiation:
+                        wallDamage = 0;
+                        defenderCasualties = 0;
+                        attackerCasualties = 0;
+                        foodMultiplier = 1;
+                        attackerFatigue = 1m;
+                        defenderMoraleLoss = 2m;
+                        break;
+                    default:
+                        wallDamage = Math.Max(
+                            8,
+                            RoundToInt(attackerPower * 0.12m / defenseFactor));
+                        defenderCasualties = castle.FoodSupply == 0
+                            ? Math.Max(1, defenderSoldiers / 25)
+                            : 0;
+                        attackerCasualties = 0;
+                        foodMultiplier = 3;
+                        attackerFatigue = 4m;
+                        defenderMoraleLoss = 3m;
+                        break;
+                }
+
+                int appliedWallDamage = castle.ApplyWallDamage(wallDamage);
+                int foodNeed = Math.Max(
+                    5,
+                    (int)Math.Ceiling(defenderSoldiers * 0.05d));
+                int foodConsumed = castle.ConsumeFood(
+                    foodNeed * foodMultiplier);
+                int appliedDefenderCasualties = ApplyCasualtiesAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId,
+                    defenderCasualties);
+                int appliedAttackerCasualties = ApplyCasualtiesAt(
+                    castle.Coordinate,
+                    attackerFaction,
+                    attackerCasualties);
+                AdjustFactionMoraleAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId,
+                    -defenderMoraleLoss);
+                AdjustFactionFatigueAt(
+                    castle.Coordinate,
+                    attackerFaction,
+                    attackerFatigue);
+                RefreshCastleGarrison(castle);
+
+                bool captured = false;
+                int remainingDefenders = SumSoldiersAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId);
+                decimal defenderMorale = AverageMoraleAt(
+                    castle.Coordinate,
+                    castle.OwnerFactionId);
+                if ((castle.SiegeAction == MapSiegeAction.Negotiation &&
+                     (castle.FoodSupply == 0 || defenderMorale <= 20m)) ||
+                    (remainingDefenders == 0 && castle.WallDurability == 0))
+                {
+                    CompleteCastleCapture(castle, wasSiege: true);
+                    captured = true;
+                }
+
+                var result = new MapSiegeDayResult(
+                    castle.Coordinate,
+                    resolvedAction,
+                    _economicDaySequence,
+                    appliedWallDamage,
+                    appliedAttackerCasualties,
+                    appliedDefenderCasualties,
+                    foodConsumed,
+                    captured);
+                _lastSiegeDayResults.Add(result);
+                SiegeDayResolved?.Invoke(result);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private decimal SumCombatPowerAt(
+            GridCoordinate coordinate,
+            string factionId,
+            bool attack)
+        {
+            decimal total = 0m;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers > 0 &&
+                    unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    total += attack ? unit.AttackPower : unit.DefensePower;
+                }
+            }
+            return total;
+        }
+
+        private int SumSoldiersAt(
+            GridCoordinate coordinate,
+            string factionId)
+        {
+            int total = 0;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    total += unit.Soldiers;
+                }
+            }
+            return total;
+        }
+
+        private int ApplyCasualtiesAt(
+            GridCoordinate coordinate,
+            string factionId,
+            int casualties)
+        {
+            int remaining = Math.Max(0, casualties);
+            int applied = 0;
+            for (int i = 0; i < _units.Count && remaining > 0; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (!unit.Coordinate.Equals(coordinate) ||
+                    !string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int unitLoss = unit.ApplyCasualties(remaining);
+                applied += unitLoss;
+                remaining -= unitLoss;
+            }
+            return applied;
+        }
+
+        private void AdjustFactionMoraleAt(
+            GridCoordinate coordinate,
+            string factionId,
+            decimal amount)
+        {
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers > 0 &&
+                    unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    unit.AdjustMorale(amount);
+                }
+            }
+        }
+
+        private void AdjustFactionFatigueAt(
+            GridCoordinate coordinate,
+            string factionId,
+            decimal amount)
+        {
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers > 0 &&
+                    unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    unit.AdjustFatigue(amount);
+                }
+            }
+        }
+
+        private decimal AverageMoraleAt(
+            GridCoordinate coordinate,
+            string factionId)
+        {
+            decimal total = 0m;
+            int count = 0;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers > 0 &&
+                    unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    total += unit.Morale;
+                    count++;
+                }
+            }
+            return count == 0 ? 0m : total / count;
+        }
+
+        private static int RoundToInt(decimal value) =>
+            Math.Max(
+                0,
+                (int)Math.Round(
+                    value,
+                    MidpointRounding.AwayFromZero));
 
         private bool RecoverDailyUnitFatigue()
         {
@@ -2156,6 +2444,7 @@ namespace Game.Application.World
                 {
                     MapUnitState unit = _units[i];
                     if (unit.Coordinate.Equals(castle.Coordinate) &&
+                        unit.Soldiers > 0 &&
                         string.Equals(
                             unit.OwnerFactionId,
                             castle.OwnerFactionId,
