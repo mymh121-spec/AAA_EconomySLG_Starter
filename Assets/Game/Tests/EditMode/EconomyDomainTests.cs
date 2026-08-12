@@ -560,6 +560,60 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_TracksCombatStatsMoraleAndFatigue()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                6,
+                3,
+                31,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 100,
+                    initialSoldiersPerUnit: 100,
+                    movementFatiguePerTile: 7m,
+                    dailyFatigueRecovery: 5m));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(unit.Soldiers, Is.EqualTo(100));
+            Assert.That(unit.Morale, Is.EqualTo(100m));
+            Assert.That(unit.Fatigue, Is.Zero);
+            Assert.That(unit.AttackPower, Is.EqualTo(100m));
+            Assert.That(unit.DefensePower, Is.EqualTo(122m));
+
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(1, 1),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            Assert.That(unit.Fatigue, Is.EqualTo(7m));
+            Assert.That(unit.AttackPower, Is.EqualTo(96.50m));
+            Assert.That(unit.DefensePower, Is.EqualTo(117.73m));
+
+            service.AdvanceEconomicDay(out _);
+
+            Assert.That(unit.Fatigue, Is.EqualTo(2m));
+            Assert.That(unit.AttackPower, Is.EqualTo(99m));
+            Assert.That(unit.DefensePower, Is.EqualTo(120.78m));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];

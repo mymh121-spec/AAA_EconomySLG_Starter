@@ -868,6 +868,16 @@ namespace Game.Presentation
                     .Append(" / ")
                     .Append(selectedUnit.ArmorDisplayName)
                     .Append(" · 게임 시간 6시간마다 1 회복");
+                builder.Append("\n병력 ")
+                    .Append(selectedUnit.Soldiers.ToString("N0"))
+                    .Append("명 · 공격 ")
+                    .Append(selectedUnit.AttackPower.ToString("N2"))
+                    .Append(" · 방어 ")
+                    .Append(selectedUnit.DefensePower.ToString("N2"))
+                    .Append(" · 사기 ")
+                    .Append(selectedUnit.Morale.ToString("N0"))
+                    .Append(" · 피로 ")
+                    .Append(selectedUnit.Fatigue.ToString("N0"));
 
                 if (selectedUnit.IsMoving && gameplayMap.GameplayService != null)
                 {
@@ -1438,6 +1448,9 @@ namespace Game.Presentation
                 $"{unit.WeaponDisplayName} / {unit.ArmorDisplayName} | " +
                 $"공격 x{unit.AttackModifier:F2} · 방어 x{unit.DefenseModifier:F2} · " +
                 $"기동 x{unit.MobilityModifier:F2} | " +
+                $"병력 {unit.Soldiers:N0} · 공격 {unit.AttackPower:N2} · " +
+                $"방어 {unit.DefensePower:N2} · 사기 {unit.Morale:N0} · " +
+                $"피로 {unit.Fatigue:N0} | " +
                 $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
                 $"위치 {unit.Coordinate} | {movement}");
         }

@@ -24,6 +24,9 @@ namespace Game.Application.World
         public decimal MineDailyDepletionRate { get; }
         public decimal MinimumMineYieldMultiplier { get; }
         public int UnitScoutingRange { get; }
+        public int InitialSoldiersPerUnit { get; }
+        public decimal MovementFatiguePerTile { get; }
+        public decimal DailyFatigueRecovery { get; }
 
         public MapGameplayTuning(
             int fixedStepsPerMove = 8,
@@ -40,7 +43,10 @@ namespace Game.Application.World
             decimal minimumMineYieldMultiplier = 0.25m,
             int fixedStepsToCaptureCastle = 60,
             int fixedStepsToSiegeUndefendedCastle = 120,
-            int unitScoutingRange = 5)
+            int unitScoutingRange = 5,
+            int initialSoldiersPerUnit = 100,
+            decimal movementFatiguePerTile = 2m,
+            decimal dailyFatigueRecovery = 10m)
         {
             FixedStepsPerMove = Math.Max(1, fixedStepsPerMove);
             FixedStepsToCapture = Math.Max(1, fixedStepsToCapture);
@@ -69,11 +75,22 @@ namespace Game.Application.World
                 0.01m,
                 1m);
             UnitScoutingRange = Math.Max(1, unitScoutingRange);
+            InitialSoldiersPerUnit = Math.Max(1, initialSoldiersPerUnit);
+            MovementFatiguePerTile = Math.Clamp(
+                movementFatiguePerTile,
+                0m,
+                100m);
+            DailyFatigueRecovery = Math.Clamp(
+                dailyFatigueRecovery,
+                0m,
+                100m);
         }
     }
 
     public sealed class MapUnitState
     {
+        private static readonly MilitaryBalanceCatalog CombatBalance =
+            MilitaryBalanceCatalog.CreatePrototypeDefaults();
         private readonly Queue<GridCoordinate> _path =
             new Queue<GridCoordinate>();
         private readonly List<GridCoordinate> _plannedPath =
@@ -104,6 +121,11 @@ namespace Game.Application.World
         public int MaxStamina { get; }
         public int Stamina { get; private set; }
         public int StaminaRecoveryProgress { get; private set; }
+        public int Soldiers { get; private set; }
+        public decimal Morale { get; private set; }
+        public decimal Fatigue { get; private set; }
+        public decimal AttackPower => CalculateCombatPower(true);
+        public decimal DefensePower => CalculateCombatPower(false);
         public bool IsMoving => _path.Count > 0;
         public IReadOnlyList<GridCoordinate> PlannedPath => _plannedPath;
 
@@ -114,7 +136,9 @@ namespace Game.Application.World
             UnitArchetype archetype,
             int maxStamina,
             UnitWeaponType weaponType,
-            ArmorClass armorClass)
+            ArmorClass armorClass,
+            int initialSoldiers,
+            decimal movementFatiguePerTile)
         {
             Id = id;
             OwnerFactionId = ownerFactionId;
@@ -124,6 +148,63 @@ namespace Game.Application.World
             ArmorClass = armorClass;
             MaxStamina = Math.Max(1, maxStamina);
             Stamina = MaxStamina;
+            Soldiers = Math.Max(1, initialSoldiers);
+            Morale = 100m;
+            Fatigue = 0m;
+            MovementFatiguePerTile = Math.Clamp(
+                movementFatiguePerTile,
+                0m,
+                100m);
+        }
+
+        private decimal MovementFatiguePerTile { get; }
+
+        private decimal CalculateCombatPower(bool attack)
+        {
+            UnitArchetypeDefinition definition = CombatBalance.Get(Archetype);
+            decimal basePower = attack
+                ? definition.BaseAttack * AttackModifier
+                : definition.BaseDefense * DefenseModifier;
+            decimal moraleFactor = Math.Clamp(Morale / 100m, 0.25m, 1.25m);
+            decimal fatigueFactor = Math.Clamp(
+                1m - Fatigue / 200m,
+                0.50m,
+                1m);
+            return Math.Round(
+                Soldiers * basePower * moraleFactor * fatigueFactor,
+                2,
+                MidpointRounding.AwayFromZero);
+        }
+
+        internal int ApplyCasualties(int casualties)
+        {
+            int applied = Math.Min(Soldiers, Math.Max(0, casualties));
+            Soldiers -= applied;
+            if (applied > 0)
+            {
+                Morale = Math.Max(
+                    0m,
+                    Morale - applied * 100m /
+                    Math.Max(1, Soldiers + applied));
+            }
+            return applied;
+        }
+
+        internal void AdjustMorale(decimal amount)
+        {
+            Morale = Math.Clamp(Morale + amount, 0m, 125m);
+        }
+
+        internal void AdjustFatigue(decimal amount)
+        {
+            Fatigue = Math.Clamp(Fatigue + amount, 0m, 100m);
+        }
+
+        internal bool RecoverFatigue(decimal amount)
+        {
+            decimal previous = Fatigue;
+            AdjustFatigue(-Math.Max(0m, amount));
+            return Fatigue != previous;
         }
 
         internal void ChangeEquipment(
@@ -236,6 +317,7 @@ namespace Game.Application.World
                 return false;
 
             Coordinate = _path.Dequeue();
+            AdjustFatigue(MovementFatiguePerTile);
             CompletedMovementTileCount++;
             if (_plannedPath.Count > 0)
                 _plannedPath.RemoveAt(0);
@@ -747,7 +829,9 @@ namespace Game.Application.World
                 archetype,
                 _tuning.MaxUnitStamina,
                 weaponType,
-                armorClass);
+                armorClass,
+                _tuning.InitialSoldiersPerUnit,
+                _tuning.MovementFatiguePerTile);
             _units.Add(unit);
             MapCastleControlState castle = FindCastle(origin);
             if (castle != null)
@@ -1335,13 +1419,14 @@ namespace Game.Application.World
         {
             _economicDaySequence++;
             bool recruitmentChanged = AdvanceRecruitmentPools();
+            bool fatigueChanged = RecoverDailyUnitFatigue();
             spawnedMine = default;
             if (_economicDaySequence % _tuning.MineSpawnIntervalDays != 0 ||
                 !TryFindDynamicMineCoordinate(
                     _economicDaySequence,
                     out GridCoordinate coordinate))
             {
-                if (recruitmentChanged)
+                if (recruitmentChanged || fatigueChanged)
                     StateChanged?.Invoke();
                 return false;
             }
@@ -1363,6 +1448,17 @@ namespace Game.Application.World
             MineSpawned?.Invoke(spawnedMine);
             StateChanged?.Invoke();
             return true;
+        }
+
+        private bool RecoverDailyUnitFatigue()
+        {
+            bool changed = false;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                changed |= _units[i].RecoverFatigue(
+                    _tuning.DailyFatigueRecovery);
+            }
+            return changed;
         }
 
         public IReadOnlyList<MapMineProductionRecord> CreateDailyProduction()
