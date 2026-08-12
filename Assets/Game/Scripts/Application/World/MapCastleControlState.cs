@@ -44,6 +44,28 @@ namespace Game.Application.World
         }
     }
 
+    public enum MapOccupationPolicy
+    {
+        None,
+        Loot,
+        Preserve,
+        Autonomy
+    }
+
+    public static class MapOccupationPolicyNames
+    {
+        public static string GetKoreanName(MapOccupationPolicy policy)
+        {
+            switch (policy)
+            {
+                case MapOccupationPolicy.Loot: return "약탈";
+                case MapOccupationPolicy.Preserve: return "보존";
+                case MapOccupationPolicy.Autonomy: return "자치";
+                default: return "미결정";
+            }
+        }
+    }
+
     public static class MapCastleRoleNames
     {
         public static string GetKoreanName(MapCastleRole role)
@@ -293,6 +315,8 @@ namespace Game.Application.World
         public bool IsNeutral => string.IsNullOrEmpty(OwnerFactionId);
         public bool IsUnderSiege => ConflictKind == MapCastleConflictKind.Siege;
         public MapSiegeAction SiegeAction { get; internal set; }
+        public MapOccupationPolicy OccupationPolicy { get; private set; }
+        public int PublicOrder { get; private set; }
         public int WallDurability { get; private set; }
         public int MaxWallDurability =>
             MapCastleRules.GetMaxWallDurability(Role);
@@ -308,10 +332,17 @@ namespace Game.Application.World
                 decimal garrisonBonus = Math.Min(
                     0.25m,
                     GarrisonUnitCount * 0.05m);
+                decimal policyBonus = OccupationPolicy ==
+                    MapOccupationPolicy.Autonomy
+                    ? 0.05m
+                    : OccupationPolicy == MapOccupationPolicy.Loot
+                        ? -0.05m
+                        : 0m;
                 return Math.Round(
                     MapCastleRules.GetRoleDefenseBonus(Role) +
                     wallRatio * 0.20m +
-                    garrisonBonus,
+                    garrisonBonus +
+                    policyBonus,
                     3,
                     MidpointRounding.AwayFromZero);
             }
@@ -325,6 +356,8 @@ namespace Game.Application.World
             Role = MapCastleRole.Unassigned;
             ConflictKind = MapCastleConflictKind.None;
             SiegeAction = MapSiegeAction.None;
+            OccupationPolicy = MapOccupationPolicy.None;
+            PublicOrder = 50;
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
         }
@@ -379,6 +412,38 @@ namespace Game.Application.World
                 Math.Max(0, amount));
             FoodSupply += added;
             return added;
+        }
+
+        internal void PrepareForNewOwner()
+        {
+            OccupationPolicy = MapOccupationPolicy.None;
+            PublicOrder = 50;
+        }
+
+        internal bool ApplyOccupationPolicy(MapOccupationPolicy policy)
+        {
+            if (policy == MapOccupationPolicy.None ||
+                OccupationPolicy != MapOccupationPolicy.None)
+            {
+                return false;
+            }
+
+            OccupationPolicy = policy;
+            switch (policy)
+            {
+                case MapOccupationPolicy.Loot:
+                    ApplyWallDamage(MaxWallDurability / 5);
+                    ConsumeFood(FoodSupply);
+                    PublicOrder = 25;
+                    break;
+                case MapOccupationPolicy.Autonomy:
+                    PublicOrder = 80;
+                    break;
+                default:
+                    PublicOrder = 60;
+                    break;
+            }
+            return true;
         }
 
         internal bool SetGarrison(IReadOnlyList<string> unitIds)
@@ -449,6 +514,8 @@ namespace Game.Application.World
         public int DefenderCasualties { get; }
         public int FoodConsumed { get; }
         public bool CastleCaptured { get; }
+        public bool DefenderRetreated { get; }
+        public int PursuitCasualties { get; }
 
         public MapSiegeDayResult(
             GridCoordinate coordinate,
@@ -458,7 +525,9 @@ namespace Game.Application.World
             int attackerCasualties,
             int defenderCasualties,
             int foodConsumed,
-            bool castleCaptured)
+            bool castleCaptured,
+            bool defenderRetreated = false,
+            int pursuitCasualties = 0)
         {
             Coordinate = coordinate;
             Action = action;
@@ -468,6 +537,8 @@ namespace Game.Application.World
             DefenderCasualties = Math.Max(0, defenderCasualties);
             FoodConsumed = Math.Max(0, foodConsumed);
             CastleCaptured = castleCaptured;
+            DefenderRetreated = defenderRetreated;
+            PursuitCasualties = Math.Max(0, pursuitCasualties);
         }
     }
 

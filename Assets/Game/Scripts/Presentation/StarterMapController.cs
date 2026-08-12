@@ -742,6 +742,24 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public bool TrySetPlayerOccupationPolicy(
+            GridCoordinate coordinate,
+            MapOccupationPolicy policy,
+            out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.TrySetOccupationPolicy(
+                _gameplayService.PlayerFactionId,
+                coordinate,
+                policy,
+                out reason);
+        }
+
         public void AdvanceGameplayFixedSteps(int fixedStepCount)
         {
             _gameplayService?.AdvanceFixedSteps(fixedStepCount);
@@ -1242,7 +1260,11 @@ namespace Game.Presentation
                           $"{castle.MaxWallDurability:N0}" +
                           $" · 식량 {castle.FoodSupply:N0}/" +
                           $"{castle.MaxFoodSupply:N0}" +
-                          $" · 방어 보너스 +{castle.DefenseBonus:P0}";
+                          $" · 방어 보너스 +{castle.DefenseBonus:P0}" +
+                          $" · 점령 정책 " +
+                          MapOccupationPolicyNames.GetKoreanName(
+                              castle.OccupationPolicy) +
+                          $" · 치안 {castle.PublicOrder}";
                 if (_gameplayService.TryGetRecruitmentSiteSnapshot(
                     _gameplayService.PlayerFactionId,
                     coordinate,

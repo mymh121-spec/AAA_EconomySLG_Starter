@@ -295,6 +295,14 @@ namespace Game.Application.World
             return true;
         }
 
+        internal void ForceRetreat(GridCoordinate destination)
+        {
+            CancelMovement();
+            Coordinate = destination;
+            Morale = Math.Max(35m, Morale);
+            AdjustFatigue(15m);
+        }
+
         internal bool AppendPath(IReadOnlyList<GridCoordinate> path)
         {
             if (_path.Count == 0 || path == null || path.Count == 0)
@@ -1448,6 +1456,65 @@ namespace Game.Application.World
             return true;
         }
 
+        public bool CanSetOccupationPolicy(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            MapOccupationPolicy policy,
+            out string reason)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null || !string.Equals(
+                castle.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "우리 세력이 소유한 성만 점령 정책을 선택할 수 있습니다.";
+                return false;
+            }
+
+            if (policy == MapOccupationPolicy.None)
+            {
+                reason = "약탈·보존·자치 중 하나를 선택하세요.";
+                return false;
+            }
+
+            if (castle.OccupationPolicy != MapOccupationPolicy.None)
+            {
+                reason = "이 성의 점령 정책은 이미 확정되었습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TrySetOccupationPolicy(
+            string ownerFactionId,
+            GridCoordinate coordinate,
+            MapOccupationPolicy policy,
+            out string reason)
+        {
+            if (!CanSetOccupationPolicy(
+                ownerFactionId,
+                coordinate,
+                policy,
+                out reason))
+            {
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (!castle.ApplyOccupationPolicy(policy))
+            {
+                reason = "점령 정책을 적용하지 못했습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
         public bool TryGetRecruitmentSiteSnapshot(
             string ownerFactionId,
             GridCoordinate coordinate,
@@ -1648,12 +1715,40 @@ namespace Game.Application.World
                 RefreshCastleGarrison(castle);
 
                 bool captured = false;
+                bool defenderRetreated = false;
+                int pursuitCasualties = 0;
                 int remainingDefenders = SumSoldiersAt(
                     castle.Coordinate,
                     castle.OwnerFactionId);
                 decimal defenderMorale = AverageMoraleAt(
                     castle.Coordinate,
                     castle.OwnerFactionId);
+                bool sufferedDecisiveLoss = remainingDefenders > 0 &&
+                    (appliedDefenderCasualties * 4 >=
+                         Math.Max(1, defenderSoldiers) ||
+                     defenderMorale <= 20m);
+                if (sufferedDecisiveLoss)
+                {
+                    decimal pursuitRate = resolvedAction ==
+                        MapSiegeAction.Assault
+                            ? 0.10m
+                            : resolvedAction == MapSiegeAction.Encirclement
+                                ? 0.06m
+                                : resolvedAction == MapSiegeAction.Blockade
+                                    ? 0.03m
+                                    : 0m;
+                    pursuitCasualties = ApplyCasualtiesAt(
+                        castle.Coordinate,
+                        castle.OwnerFactionId,
+                        RoundToInt(remainingDefenders * pursuitRate));
+                    defenderRetreated = RetreatFactionUnitsAt(
+                        castle.Coordinate,
+                        castle.OwnerFactionId);
+                    RefreshCastleGarrison(castle);
+                    remainingDefenders = SumSoldiersAt(
+                        castle.Coordinate,
+                        castle.OwnerFactionId);
+                }
                 if ((castle.SiegeAction == MapSiegeAction.Negotiation &&
                      (castle.FoodSupply == 0 || defenderMorale <= 20m)) ||
                     (remainingDefenders == 0 && castle.WallDurability == 0))
@@ -1670,7 +1765,9 @@ namespace Game.Application.World
                     appliedAttackerCasualties,
                     appliedDefenderCasualties,
                     foodConsumed,
-                    captured);
+                    captured,
+                    defenderRetreated,
+                    pursuitCasualties);
                 _lastSiegeDayResults.Add(result);
                 SiegeDayResolved?.Invoke(result);
                 changed = true;
@@ -1699,6 +1796,39 @@ namespace Game.Application.World
                 }
             }
             return total;
+        }
+
+        private bool RetreatFactionUnitsAt(
+            GridCoordinate coordinate,
+            string factionId)
+        {
+            if (string.IsNullOrEmpty(factionId) ||
+                !_factionBases.TryGetValue(
+                    factionId,
+                    out GridCoordinate retreatDestination))
+            {
+                return false;
+            }
+
+            bool retreated = false;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers <= 0 ||
+                    !unit.Coordinate.Equals(coordinate) ||
+                    !string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                unit.ForceRetreat(retreatDestination);
+                retreated = true;
+            }
+
+            return retreated;
         }
 
         private int SumSoldiersAt(
@@ -2394,12 +2524,20 @@ namespace Game.Application.World
             string previousOwner = castle.OwnerFactionId;
             string newOwner = castle.CapturingFactionId;
             castle.OwnerFactionId = newOwner;
+            castle.PrepareForNewOwner();
             castle.SetRole(string.Equals(
                 newOwner,
                 PlayerFactionId,
                 StringComparison.Ordinal)
                 ? MapCastleRole.Unassigned
                 : SelectAiCastleRole(castle.Coordinate));
+            if (!string.Equals(
+                    newOwner,
+                    PlayerFactionId,
+                    StringComparison.Ordinal))
+            {
+                castle.ApplyOccupationPolicy(MapOccupationPolicy.Preserve);
+            }
             ConfigureCastleRecruitmentSite(castle);
             ClearCastleConflict(castle);
             RefreshCastleGarrison(castle);

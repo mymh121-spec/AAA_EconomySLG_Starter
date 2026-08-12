@@ -64,6 +64,9 @@ namespace Game.Presentation
         private Button _contextCastleActionButton;
         private Button _contextCastleRoleButton;
         private Button _contextSiegeActionButton;
+        private Button _contextLootButton;
+        private Button _contextPreserveButton;
+        private Button _contextAutonomyButton;
         private Button _contextMissionButton;
         private Button _neutralNpcTopButton;
         private VisualElement _neutralNpcView;
@@ -1240,6 +1243,9 @@ namespace Game.Presentation
                 $"공격측 피해 {result.AttackerCasualties:N0} · " +
                 $"수비측 피해 {result.DefenderCasualties:N0} · " +
                 $"식량 -{result.FoodConsumed:N0}" +
+                (result.DefenderRetreated
+                    ? $" · 수비대 후퇴 · 추격 피해 {result.PursuitCasualties:N0}"
+                    : string.Empty) +
                 (result.CastleCaptured ? " · 성 함락" : string.Empty));
         }
 
@@ -1703,7 +1709,10 @@ namespace Game.Presentation
         {
             if (_contextCastleActionButton == null ||
                 _contextCastleRoleButton == null ||
-                _contextSiegeActionButton == null)
+                _contextSiegeActionButton == null ||
+                _contextLootButton == null ||
+                _contextPreserveButton == null ||
+                _contextAutonomyButton == null)
             {
                 return;
             }
@@ -1720,6 +1729,9 @@ namespace Game.Presentation
                 SetVisible(_contextCastleActionButton, false);
                 SetVisible(_contextCastleRoleButton, false);
                 SetVisible(_contextSiegeActionButton, false);
+                SetVisible(_contextLootButton, false);
+                SetVisible(_contextPreserveButton, false);
+                SetVisible(_contextAutonomyButton, false);
                 return;
             }
 
@@ -1772,6 +1784,40 @@ namespace Game.Presentation
                   MapSiegeActionNames.GetKoreanName(castle.SiegeAction) +
                   " · 클릭해 변경"
                 : "공성 행동 선택";
+
+            bool canChooseOccupationPolicy = isPlayerCastle &&
+                castle != null &&
+                castle.OccupationPolicy == MapOccupationPolicy.None;
+            SetVisible(_contextLootButton, canChooseOccupationPolicy);
+            SetVisible(_contextPreserveButton, canChooseOccupationPolicy);
+            SetVisible(_contextAutonomyButton, canChooseOccupationPolicy);
+            _contextLootButton.SetEnabled(canChooseOccupationPolicy);
+            _contextPreserveButton.SetEnabled(canChooseOccupationPolicy);
+            _contextAutonomyButton.SetEnabled(canChooseOccupationPolicy);
+        }
+
+        private void SetSelectedOccupationPolicy(MapOccupationPolicy policy)
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            GridCoordinate coordinate =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            if (!gameplayMap.TrySetPlayerOccupationPolicy(
+                    coordinate,
+                    policy,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(
+                $"{coordinate} 성의 점령 정책을 " +
+                $"{MapOccupationPolicyNames.GetKoreanName(policy)}(으)로 " +
+                "확정했습니다.");
+            RefreshSelectedMapActions();
+            HideMapContextMenu();
         }
 
         private void CycleSelectedSiegeAction()
@@ -2249,6 +2295,15 @@ namespace Game.Presentation
             _contextSiegeActionButton = CreateMapActionButton(
                 "공성 행동 선택",
                 CycleSelectedSiegeAction);
+            _contextLootButton = CreateMapActionButton(
+                "점령 정책: 약탈 (성벽·식량 손실)",
+                () => SetSelectedOccupationPolicy(MapOccupationPolicy.Loot));
+            _contextPreserveButton = CreateMapActionButton(
+                "점령 정책: 보존 (치안 안정)",
+                () => SetSelectedOccupationPolicy(MapOccupationPolicy.Preserve));
+            _contextAutonomyButton = CreateMapActionButton(
+                "점령 정책: 자치 (치안·방어 강화)",
+                () => SetSelectedOccupationPolicy(MapOccupationPolicy.Autonomy));
             _contextMissionButton = CreateMapActionButton(
                 "미션 정보 · 정찰 / 봉쇄 / 공격",
                 ShowSelectedMissionInformation);
@@ -2268,6 +2323,9 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextCastleActionButton);
             _mapContextMenu.Add(_contextCastleRoleButton);
             _mapContextMenu.Add(_contextSiegeActionButton);
+            _mapContextMenu.Add(_contextLootButton);
+            _mapContextMenu.Add(_contextPreserveButton);
+            _mapContextMenu.Add(_contextAutonomyButton);
             _mapContextMenu.Add(_contextMissionButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);

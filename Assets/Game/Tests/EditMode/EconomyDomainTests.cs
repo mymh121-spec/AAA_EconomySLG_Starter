@@ -738,6 +738,29 @@ namespace Game.Tests
             Assert.That(castle.MaxFoodSupply, Is.EqualTo(500));
             Assert.That(castle.DefenseBonus, Is.EqualTo(0.350m));
             Assert.That(
+                castle.OccupationPolicy,
+                Is.EqualTo(MapOccupationPolicy.None));
+            Assert.That(castle.PublicOrder, Is.EqualTo(50));
+            Assert.That(
+                service.TrySetOccupationPolicy(
+                    "player",
+                    castleCoordinate,
+                    MapOccupationPolicy.Preserve,
+                    out _),
+                Is.True);
+            Assert.That(
+                castle.OccupationPolicy,
+                Is.EqualTo(MapOccupationPolicy.Preserve));
+            Assert.That(castle.PublicOrder, Is.EqualTo(60));
+            Assert.That(
+                service.TrySetOccupationPolicy(
+                    "player",
+                    castleCoordinate,
+                    MapOccupationPolicy.Loot,
+                    out string policyReason),
+                Is.False);
+            Assert.That(policyReason, Does.Contain("이미 확정"));
+            Assert.That(
                 service.TrySetCastleRole(
                     "player",
                     castleCoordinate,
@@ -931,6 +954,109 @@ namespace Game.Tests
             Assert.That(captureRecord.WasSiege, Is.True);
             Assert.That(castle.Role, Is.EqualTo(MapCastleRole.Unassigned));
             Assert.That(castle.SiegeAction, Is.EqualTo(MapSiegeAction.None));
+            Assert.That(
+                castle.OccupationPolicy,
+                Is.EqualTo(MapOccupationPolicy.None));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_DecisiveSiegeRetreatsAndPursuesDefenders()
+        {
+            var terrain = new GridTerrainKind[10 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var playerBase = new GridCoordinate(0, 1);
+            var aiBase = new GridCoordinate(9, 1);
+            var castleCoordinate = new GridCoordinate(8, 1);
+            var layout = new GridMapLayout(
+                10,
+                3,
+                59,
+                playerBase,
+                new[] { aiBase },
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { castleCoordinate });
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    maxUnitsPerFaction: 8,
+                    fixedStepsToCaptureCastle: 1,
+                    fixedStepsToSiegeUndefendedCastle: 2));
+
+            Assert.That(
+                service.TryCreateUnit("ai_1", out MapUnitState defender, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "ai_1",
+                    defender.Id,
+                    castleCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            var attackers = new MapUnitState[4];
+            for (int i = 0; i < attackers.Length; i++)
+            {
+                Assert.That(
+                    service.TryCreateUnit(
+                        "player",
+                        out attackers[i],
+                        out _),
+                    Is.True);
+                bool ordered = i == 0
+                    ? service.TryIssueCastleOccupation(
+                        "player",
+                        attackers[i].Id,
+                        castleCoordinate,
+                        out _)
+                    : service.TryIssueMove(
+                        "player",
+                        attackers[i].Id,
+                        castleCoordinate,
+                        out _);
+                Assert.That(ordered, Is.True);
+            }
+            service.AdvanceFixedSteps(10);
+
+            MapCastleControlState castle = service.FindCastle(castleCoordinate);
+            Assert.That(castle.IsUnderSiege, Is.True);
+            for (int i = 0; i < attackers.Length; i++)
+            {
+                Assert.That(
+                    attackers[i].Coordinate,
+                    Is.EqualTo(castleCoordinate));
+            }
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attackers[0].Id,
+                    castleCoordinate,
+                    MapSiegeAction.Assault,
+                    out _),
+                Is.True);
+
+            service.AdvanceEconomicDay(out _);
+
+            MapSiegeDayResult result = service.LastSiegeDayResults[0];
+            Assert.That(result.DefenderRetreated, Is.True);
+            Assert.That(result.DefenderCasualties, Is.GreaterThan(0));
+            Assert.That(result.PursuitCasualties, Is.GreaterThan(0));
+            Assert.That(result.CastleCaptured, Is.False);
+            Assert.That(defender.Coordinate, Is.EqualTo(aiBase));
+            Assert.That(
+                defender.Soldiers,
+                Is.EqualTo(
+                    100 - result.DefenderCasualties -
+                    result.PursuitCasualties));
+            Assert.That(castle.GarrisonUnitCount, Is.EqualTo(0));
         }
 
         [Test]
