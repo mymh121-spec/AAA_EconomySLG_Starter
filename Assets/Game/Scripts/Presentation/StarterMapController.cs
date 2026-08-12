@@ -80,19 +80,22 @@ namespace Game.Presentation
         public IReadOnlyList<GridCoordinate> Path { get; }
         public int RemainingTileCount { get; }
         public int EstimatedFixedSteps { get; }
+        public bool AppendsWaypoint { get; }
 
         public MapMovementPreview(
             string unitId,
             GridCoordinate destination,
             IReadOnlyList<GridCoordinate> path,
             int remainingTileCount,
-            int estimatedFixedSteps)
+            int estimatedFixedSteps,
+            bool appendsWaypoint)
         {
             UnitId = unitId ?? string.Empty;
             Destination = destination;
             Path = path ?? Array.Empty<GridCoordinate>();
             RemainingTileCount = Math.Max(0, remainingTileCount);
             EstimatedFixedSteps = Math.Max(0, estimatedFixedSteps);
+            AppendsWaypoint = appendsWaypoint;
         }
     }
 
@@ -190,7 +193,8 @@ namespace Game.Presentation
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
         public MapMovementPreview? CurrentMovementPreview { get; private set; }
         public event Action<MapCellSelection> CellSelected;
-        public event Action<MapCellSelection> CellMovementPreviewRequested;
+        public event Action<MapCellSelection, bool>
+            CellMovementPreviewRequested;
         public event Action PrimaryCellSelected;
         public event Action<MapCellSelection, Vector2> CellActionRequested;
         public event Action GameplayStateChanged;
@@ -433,6 +437,16 @@ namespace Game.Presentation
                 return false;
             }
 
+            if (ShouldAppendWaypoint(destination))
+            {
+                return _gameplayService.CanAppendWaypoint(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination,
+                    out _,
+                    out reason);
+            }
+
             return _gameplayService.CanIssueMove(
                 _gameplayService.PlayerFactionId,
                 _selectedPlayerUnitId,
@@ -443,6 +457,7 @@ namespace Game.Presentation
 
         public bool TryPreviewSelectedPlayerUnitMove(
             GridCoordinate destination,
+            bool appendWaypoint,
             out MapMovementPreview preview,
             out string reason)
         {
@@ -454,32 +469,64 @@ namespace Game.Presentation
                 return false;
             }
 
-            if (!_gameplayService.CanIssueMove(
-                _gameplayService.PlayerFactionId,
-                _selectedPlayerUnitId,
-                destination,
-                out IReadOnlyList<GridCoordinate> route,
-                out reason))
+            bool appendsWaypoint = appendWaypoint &&
+                SelectedPlayerUnit.IsMoving;
+            IReadOnlyList<GridCoordinate> route;
+            bool canPreview = appendsWaypoint
+                ? _gameplayService.CanAppendWaypoint(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination,
+                    out route,
+                    out reason)
+                : _gameplayService.CanIssueMove(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination,
+                    out route,
+                    out reason);
+            if (!canPreview)
             {
                 ClearMovementPreview();
                 return false;
             }
 
             _movementPreviewPath.Clear();
-            _movementPreviewPath.Add(SelectedPlayerUnit.Coordinate);
+            if (appendsWaypoint)
+            {
+                for (int i = 0;
+                     i < SelectedPlayerUnit.PlannedPath.Count;
+                     i++)
+                {
+                    _movementPreviewPath.Add(
+                        SelectedPlayerUnit.PlannedPath[i]);
+                }
+            }
+            else
+            {
+                _movementPreviewPath.Add(SelectedPlayerUnit.Coordinate);
+            }
             for (int i = 0; i < route.Count; i++)
                 _movementPreviewPath.Add(route[i]);
 
             _movementPreviewUnitId = _selectedPlayerUnitId;
-            int estimatedSteps = route.Count *
+            int stepsPerTile =
                 _gameplayService.GetRequiredMovementStepsPerTile(
                     SelectedPlayerUnit);
+            int estimatedSteps = appendsWaypoint
+                ? _gameplayService.GetRemainingMovementFixedSteps(
+                    SelectedPlayerUnit) + route.Count * stepsPerTile
+                : route.Count * stepsPerTile;
+            int remainingTiles = appendsWaypoint
+                ? SelectedPlayerUnit.RemainingMovementTileCount + route.Count
+                : route.Count;
             preview = new MapMovementPreview(
                 _movementPreviewUnitId,
                 destination,
                 _movementPreviewPath,
-                route.Count,
-                estimatedSteps);
+                remainingTiles,
+                estimatedSteps,
+                appendsWaypoint);
             CurrentMovementPreview = preview;
             RefreshGameplayMarkers();
             return true;
@@ -511,17 +558,34 @@ namespace Game.Presentation
             if (!CanMoveSelectedPlayerUnit(destination, out reason))
                 return false;
 
-            bool moved = _gameplayService.TryIssueMove(
-                _gameplayService.PlayerFactionId,
-                _selectedPlayerUnitId,
-                destination,
-                out reason);
+            bool moved = ShouldAppendWaypoint(destination)
+                ? _gameplayService.TryAppendWaypoint(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination,
+                    out reason)
+                : _gameplayService.TryIssueMove(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination,
+                    out reason);
             if (moved)
             {
                 ClearMovementPreviewState();
                 RefreshGameplayMarkers();
             }
             return moved;
+        }
+
+        private bool ShouldAppendWaypoint(GridCoordinate destination)
+        {
+            return CurrentMovementPreview.HasValue &&
+                CurrentMovementPreview.Value.AppendsWaypoint &&
+                CurrentMovementPreview.Value.Destination.Equals(destination) &&
+                string.Equals(
+                    CurrentMovementPreview.Value.UnitId,
+                    _selectedPlayerUnitId,
+                    StringComparison.Ordinal);
         }
 
         public bool CanCancelSelectedPlayerUnitMove(out string reason)
@@ -570,6 +634,16 @@ namespace Game.Presentation
                 return false;
             }
 
+            if (ShouldAppendWaypoint(coordinate))
+            {
+                return _gameplayService.CanAppendWaypoint(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    coordinate,
+                    out _,
+                    out reason);
+            }
+
             return _gameplayService.CanIssueCastleOccupation(
                 _gameplayService.PlayerFactionId,
                 _selectedPlayerUnitId,
@@ -584,11 +658,17 @@ namespace Game.Presentation
             if (!CanCaptureOrSiegeSelectedCastle(coordinate, out reason))
                 return false;
 
-            bool ordered = _gameplayService.TryIssueCastleOccupation(
-                _gameplayService.PlayerFactionId,
-                _selectedPlayerUnitId,
-                coordinate,
-                out reason);
+            bool ordered = ShouldAppendWaypoint(coordinate)
+                ? _gameplayService.TryAppendWaypoint(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    coordinate,
+                    out reason)
+                : _gameplayService.TryIssueCastleOccupation(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    coordinate,
+                    out reason);
             if (ordered)
             {
                 ClearMovementPreviewState();
@@ -2118,7 +2198,12 @@ namespace Game.Presentation
                 CurrentLayout,
                 coordinate);
             CurrentSelection = selection;
-            CellMovementPreviewRequested?.Invoke(selection);
+            bool appendWaypoint =
+                UnityEngine.Input.GetKey(KeyCode.LeftShift) ||
+                UnityEngine.Input.GetKey(KeyCode.RightShift);
+            CellMovementPreviewRequested?.Invoke(
+                selection,
+                appendWaypoint);
             if (leftClicked)
                 PrimaryCellSelected?.Invoke();
             CellSelected?.Invoke(selection);

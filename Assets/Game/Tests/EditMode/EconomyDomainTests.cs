@@ -426,6 +426,67 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_AppendsWaypointAndKeepsCurrentProgress()
+        {
+            var terrain = new GridTerrainKind[9 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                9,
+                3,
+                23,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 2,
+                    aiDecisionIntervalSteps: 100));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            int initialStamina = unit.Stamina;
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(2, 1),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            Assert.That(
+                service.TryAppendWaypoint(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(4, 1),
+                    out _),
+                Is.True);
+            Assert.That(unit.Stamina, Is.EqualTo(initialStamina - 1));
+            Assert.That(unit.MovementProgress, Is.EqualTo(1));
+            Assert.That(unit.TotalMovementTileCount, Is.EqualTo(4));
+            Assert.That(unit.RemainingMovementTileCount, Is.EqualTo(4));
+            Assert.That(unit.PlannedPath.Count, Is.EqualTo(5));
+            Assert.That(
+                unit.Destination,
+                Is.EqualTo(new GridCoordinate(4, 1)));
+            Assert.That(
+                service.GetRemainingMovementFixedSteps(unit),
+                Is.EqualTo(7));
+
+            service.AdvanceFixedSteps(7);
+
+            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(4, 1)));
+            Assert.That(unit.IsMoving, Is.False);
+            Assert.That(unit.PlannedPath, Is.Empty);
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];

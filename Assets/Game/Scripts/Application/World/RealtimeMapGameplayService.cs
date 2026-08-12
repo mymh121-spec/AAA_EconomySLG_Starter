@@ -211,6 +211,22 @@ namespace Game.Application.World
             return true;
         }
 
+        internal bool AppendPath(IReadOnlyList<GridCoordinate> path)
+        {
+            if (_path.Count == 0 || path == null || path.Count == 0)
+                return false;
+
+            for (int i = 0; i < path.Count; i++)
+            {
+                _path.Enqueue(path[i]);
+                _plannedPath.Add(path[i]);
+            }
+
+            Destination = path[path.Count - 1];
+            TotalMovementTileCount += path.Count;
+            return true;
+        }
+
         internal bool TryAdvanceOneTile()
         {
             if (_path.Count == 0)
@@ -876,6 +892,106 @@ namespace Game.Application.World
             }
 
             unit.SetPath(path);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool CanAppendWaypoint(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate destination,
+            out IReadOnlyList<GridCoordinate> path,
+            out string reason)
+        {
+            path = Array.Empty<GridCoordinate>();
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null)
+            {
+                reason = "선택한 유닛을 찾을 수 없습니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                unit.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 유닛에는 명령할 수 없습니다.";
+                return false;
+            }
+
+            if (!unit.IsMoving || !unit.Destination.HasValue)
+            {
+                reason = "경유지는 이동 중인 유닛에만 추가할 수 있습니다.";
+                return false;
+            }
+
+            if (!_layout.TryNormalize(destination, out GridCoordinate normalized))
+            {
+                reason = "목적지가 지도 범위를 벗어났습니다.";
+                return false;
+            }
+
+            if (!_layout.IsLand(normalized))
+            {
+                reason = "지상 유닛은 바다로 이동할 수 없습니다.";
+                return false;
+            }
+
+            GridCoordinate pathOrigin = unit.Destination.Value;
+            if (pathOrigin.Equals(normalized))
+            {
+                reason = "이미 마지막 경유지로 예약된 지역입니다.";
+                return false;
+            }
+
+            if (!CanEnterFriendlySite(
+                ownerFactionId,
+                unit.Id,
+                normalized,
+                out reason))
+            {
+                return false;
+            }
+
+            List<GridCoordinate> route = FindShortestLandPath(
+                pathOrigin,
+                normalized);
+            if (route.Count == 0)
+            {
+                reason = "경유지까지 이동 가능한 육지 경로가 없습니다.";
+                return false;
+            }
+
+            path = route;
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryAppendWaypoint(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate destination,
+            out string reason)
+        {
+            if (!CanAppendWaypoint(
+                ownerFactionId,
+                unitId,
+                destination,
+                out IReadOnlyList<GridCoordinate> path,
+                out reason))
+            {
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (!unit.AppendPath(path))
+            {
+                reason = "경유지를 이동 경로에 추가하지 못했습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
             StateChanged?.Invoke();
             return true;
         }

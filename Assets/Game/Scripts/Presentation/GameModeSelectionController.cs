@@ -965,12 +965,15 @@ namespace Game.Presentation
         }
 
         private void HandleMapMovementPreviewRequested(
-            MapCellSelection selection)
+            MapCellSelection selection,
+            bool appendWaypoint)
         {
-            RefreshMovementPreview(selection);
+            RefreshMovementPreview(selection, appendWaypoint);
         }
 
-        private void RefreshMovementPreview(MapCellSelection selection)
+        private void RefreshMovementPreview(
+            MapCellSelection selection,
+            bool appendWaypoint)
         {
             if (!_selection.IsSinglePlayer || gameplayMap == null)
                 return;
@@ -986,6 +989,7 @@ namespace Game.Presentation
 
             if (!gameplayMap.TryPreviewSelectedPlayerUnitMove(
                 selection.Coordinate,
+                appendWaypoint,
                 out MapMovementPreview preview,
                 out string reason))
             {
@@ -994,9 +998,14 @@ namespace Game.Presentation
             }
 
             SetMapActionFeedback(
-                $"이동 미리보기 · {preview.RemainingTileCount}칸 · " +
+                (preview.AppendsWaypoint
+                    ? "Shift 경유지 미리보기 · "
+                    : "이동 미리보기 · ") +
+                $"{preview.RemainingTileCount}칸 · " +
                 $"도착 예상 {FormatMovementArrival(preview.EstimatedFixedSteps)}\n" +
-                "점선 경로를 확인한 뒤 이동 버튼을 눌러 확정하세요.");
+                (preview.AppendsWaypoint
+                    ? "기존 경로 뒤에 붙일 경유지를 확인한 뒤 예약 버튼을 누르세요."
+                    : "점선 경로를 확인한 뒤 이동 버튼을 눌러 확정하세요."));
         }
 
         private string FormatMovementArrival(int remainingFixedSteps)
@@ -1463,7 +1472,11 @@ namespace Game.Presentation
 
             GridCoordinate destination =
                 gameplayMap.CurrentSelection.Value.Coordinate;
-            bool isReroute = gameplayMap.SelectedPlayerUnit?.IsMoving == true;
+            bool appendsWaypoint =
+                gameplayMap.CurrentMovementPreview?.AppendsWaypoint == true;
+            bool isReroute =
+                gameplayMap.SelectedPlayerUnit?.IsMoving == true &&
+                !appendsWaypoint;
             if (!gameplayMap.CanMoveSelectedPlayerUnit(
                 destination,
                 out string reason))
@@ -1482,7 +1495,11 @@ namespace Game.Presentation
             bool isMine = selection.Content == MapCellContent.NormalMine ||
                           selection.Content == MapCellContent.GoldMine;
             SetMapActionFeedback(isMine
-                ? $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
+                ? appendsWaypoint
+                    ? $"{destination} 광산을 마지막 경유지로 예약했습니다."
+                    : $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
+                : appendsWaypoint
+                    ? $"{destination}을(를) 마지막 경유지로 예약했습니다."
                 : isReroute
                     ? $"이동 경로를 {destination}(으)로 변경했습니다. " +
                       "추가 체력은 소모하지 않습니다."
@@ -1754,8 +1771,11 @@ namespace Game.Presentation
                 moveButton,
                 hasSelectedUnit && !canSelect && !isMine && !isCastle);
             moveButton.SetEnabled(canMove);
-            moveButton.text = gameplayMap.SelectedPlayerUnit?.IsMoving == true
-                ? "새 목적지로 변경 · 추가 체력 없음"
+            moveButton.text =
+                gameplayMap.CurrentMovementPreview?.AppendsWaypoint == true
+                ? "Shift 경유지 예약 확정 · 추가 체력 없음"
+                : gameplayMap.SelectedPlayerUnit?.IsMoving == true
+                    ? "새 목적지로 변경 · 추가 체력 없음"
                 : "이 칸으로 이동 · 체력 1";
         }
 
@@ -2738,6 +2758,7 @@ namespace Game.Presentation
                 "마우스 휠: 확대/축소\n" +
                 "L: 플레이어 본사로 이동\n" +
                 "좌클릭: 지도 칸 선택\n" +
+                "Shift+클릭: 이동 중인 부대의 경유지 예약\n" +
                 "우클릭: 이동·점령·미션 메뉴\n" +
                 "경제와 광산 생산: 매일 자정 정산");
             AddButton(_keyGuideView, "키 설명 닫기", ToggleKeyGuide);
