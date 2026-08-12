@@ -358,6 +358,74 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_ReroutesWithoutExtraStaminaAndCancels()
+        {
+            var terrain = new GridTerrainKind[7 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                7,
+                3,
+                19,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                true,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 2,
+                    aiDecisionIntervalSteps: 100));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            int initialStamina = unit.Stamina;
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(3, 1),
+                    out _),
+                Is.True);
+            Assert.That(unit.Stamina, Is.EqualTo(initialStamina - 1));
+
+            service.AdvanceFixedSteps(1);
+            Assert.That(unit.MovementProgress, Is.EqualTo(1));
+
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(6, 1),
+                    out _),
+                Is.True);
+            Assert.That(unit.Stamina, Is.EqualTo(initialStamina - 1));
+            Assert.That(
+                unit.Destination,
+                Is.EqualTo(new GridCoordinate(6, 1)));
+            Assert.That(unit.MovementProgress, Is.Zero);
+            Assert.That(unit.TotalMovementTileCount, Is.EqualTo(1));
+
+            Assert.That(
+                service.TryCancelMove("player", unit.Id, out _),
+                Is.True);
+            Assert.That(unit.IsMoving, Is.False);
+            Assert.That(unit.Destination, Is.Null);
+            Assert.That(unit.PlannedPath, Is.Empty);
+            Assert.That(unit.Stamina, Is.EqualTo(initialStamina - 1));
+
+            service.AdvanceFixedSteps(10);
+            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(0, 1)));
+            Assert.That(
+                service.TryCancelMove("player", unit.Id, out string reason),
+                Is.False);
+            Assert.That(reason, Does.Contain("이동 중이 아닙니다"));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];

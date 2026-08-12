@@ -197,6 +197,20 @@ namespace Game.Application.World
             CompletedMovementTileCount = 0;
         }
 
+        internal bool CancelMovement()
+        {
+            if (_path.Count == 0)
+                return false;
+
+            _path.Clear();
+            _plannedPath.Clear();
+            Destination = null;
+            MovementProgress = 0;
+            TotalMovementTileCount = 0;
+            CompletedMovementTileCount = 0;
+            return true;
+        }
+
         internal bool TryAdvanceOneTile()
         {
             if (_path.Count == 0)
@@ -800,7 +814,7 @@ namespace Game.Application.World
                 return false;
             }
 
-            if (unit.Stamina < _tuning.MoveStaminaCost)
+            if (!unit.IsMoving && unit.Stamina < _tuning.MoveStaminaCost)
             {
                 reason = $"유닛 체력이 부족합니다. 필요 {_tuning.MoveStaminaCost}, " +
                     $"현재 {unit.Stamina}/{unit.MaxStamina}";
@@ -854,10 +868,65 @@ namespace Game.Application.World
             }
 
             MapUnitState unit = FindUnit(unitId);
-            if (!unit.TrySpendStamina(_tuning.MoveStaminaCost, out reason))
+            bool isReroute = unit.IsMoving;
+            if (!isReroute &&
+                !unit.TrySpendStamina(_tuning.MoveStaminaCost, out reason))
+            {
                 return false;
+            }
 
             unit.SetPath(path);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool CanCancelMove(
+            string ownerFactionId,
+            string unitId,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null)
+            {
+                reason = "선택한 유닛을 찾을 수 없습니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                unit.OwnerFactionId,
+                ownerFactionId,
+                StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 유닛에는 명령할 수 없습니다.";
+                return false;
+            }
+
+            if (!unit.IsMoving)
+            {
+                reason = "선택한 유닛은 현재 이동 중이 아닙니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryCancelMove(
+            string ownerFactionId,
+            string unitId,
+            out string reason)
+        {
+            if (!CanCancelMove(ownerFactionId, unitId, out reason))
+                return false;
+
+            MapUnitState unit = FindUnit(unitId);
+            if (!unit.CancelMovement())
+            {
+                reason = "이동 명령을 취소하지 못했습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
             StateChanged?.Invoke();
             return true;
         }

@@ -50,6 +50,7 @@ namespace Game.Presentation
         private Button _selectUnitButton;
         private Button _inspectUnitButton;
         private Button _moveUnitButton;
+        private Button _cancelMoveButton;
         private VisualElement _mapContextMenu;
         private Label _mapContextTitle;
         private Label _mapContextHint;
@@ -58,6 +59,7 @@ namespace Game.Presentation
         private Button _contextSelectUnitButton;
         private Button _contextInspectUnitButton;
         private Button _contextMoveUnitButton;
+        private Button _contextCancelMoveButton;
         private Button _contextCaptureMineButton;
         private Button _contextCastleActionButton;
         private Button _contextCastleRoleButton;
@@ -1113,6 +1115,7 @@ namespace Game.Presentation
                 _contextCreateUnitButton,
                 _contextSelectUnitButton,
                 _contextMoveUnitButton);
+            ConfigureCancelMoveButton(_contextCancelMoveButton);
             SetVisible(
                 _contextUnitTypeButton,
                 false);
@@ -1460,6 +1463,7 @@ namespace Game.Presentation
 
             GridCoordinate destination =
                 gameplayMap.CurrentSelection.Value.Coordinate;
+            bool isReroute = gameplayMap.SelectedPlayerUnit?.IsMoving == true;
             if (!gameplayMap.CanMoveSelectedPlayerUnit(
                 destination,
                 out string reason))
@@ -1479,7 +1483,32 @@ namespace Game.Presentation
                           selection.Content == MapCellContent.GoldMine;
             SetMapActionFeedback(isMine
                 ? $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
-                : $"{destination}(으)로 이동 명령을 내렸습니다.");
+                : isReroute
+                    ? $"이동 경로를 {destination}(으)로 변경했습니다. " +
+                      "추가 체력은 소모하지 않습니다."
+                    : $"{destination}(으)로 이동 명령을 내렸습니다.");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void CancelSelectedPlayerUnitMove()
+        {
+            if (gameplayMap == null)
+                return;
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            GridCoordinate? previousDestination = selectedUnit?.Destination;
+            if (!gameplayMap.TryCancelSelectedPlayerUnitMove(
+                out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(previousDestination.HasValue
+                ? $"{previousDestination.Value} 이동 명령을 취소했습니다. " +
+                  "이미 사용한 체력은 반환되지 않습니다."
+                : "이동 명령을 취소했습니다.");
             RefreshSinglePlayerStatus();
             RefreshSelectedMapActions();
         }
@@ -1563,6 +1592,7 @@ namespace Game.Presentation
                 _createUnitButton,
                 _selectUnitButton,
                 _moveUnitButton);
+            ConfigureCancelMoveButton(_cancelMoveButton);
             bool atPlayerBase =
                 selection.Content == MapCellContent.PlayerBase;
             bool hasUnit = !string.IsNullOrEmpty(selection.UnitId);
@@ -1577,6 +1607,7 @@ namespace Game.Presentation
                     _contextCreateUnitButton,
                     _contextSelectUnitButton,
                     _contextMoveUnitButton);
+                ConfigureCancelMoveButton(_contextCancelMoveButton);
                 SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
                 ConfigureCaptureMineButton(selection);
@@ -1723,7 +1754,21 @@ namespace Game.Presentation
                 moveButton,
                 hasSelectedUnit && !canSelect && !isMine && !isCastle);
             moveButton.SetEnabled(canMove);
-            moveButton.text = "이 칸으로 이동 · 체력 1";
+            moveButton.text = gameplayMap.SelectedPlayerUnit?.IsMoving == true
+                ? "새 목적지로 변경 · 추가 체력 없음"
+                : "이 칸으로 이동 · 체력 1";
+        }
+
+        private void ConfigureCancelMoveButton(Button cancelButton)
+        {
+            if (cancelButton == null || gameplayMap == null)
+                return;
+
+            bool canCancel = gameplayMap.CanCancelSelectedPlayerUnitMove(
+                out _);
+            SetVisible(cancelButton, canCancel);
+            cancelButton.SetEnabled(canCancel);
+            cancelButton.text = "현재 이동 명령 취소";
         }
 
         private void CaptureOrSiegeSelectedCastle()
@@ -1967,11 +2012,15 @@ namespace Game.Presentation
             _moveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 MoveSelectedPlayerUnit);
+            _cancelMoveButton = CreateMapActionButton(
+                "현재 이동 명령 취소",
+                CancelSelectedPlayerUnitMove);
             _singleMapActionPanel.Add(_unitTypeButton);
             _singleMapActionPanel.Add(_createUnitButton);
             _singleMapActionPanel.Add(_selectUnitButton);
             _singleMapActionPanel.Add(_inspectUnitButton);
             _singleMapActionPanel.Add(_moveUnitButton);
+            _singleMapActionPanel.Add(_cancelMoveButton);
 
             _singleMapActionFeedback = new Label(
                 "본사를 선택해 첫 유닛을 창설하세요.");
@@ -1988,6 +2037,7 @@ namespace Game.Presentation
             SetVisible(_selectUnitButton, false);
             SetVisible(_inspectUnitButton, false);
             SetVisible(_moveUnitButton, false);
+            SetVisible(_cancelMoveButton, false);
         }
 
         private void BuildMapContextMenu(VisualElement root)
@@ -2057,6 +2107,13 @@ namespace Game.Presentation
                     MoveSelectedPlayerUnit();
                     HideMapContextMenu();
                 });
+            _contextCancelMoveButton = CreateMapActionButton(
+                "현재 이동 명령 취소",
+                () =>
+                {
+                    CancelSelectedPlayerUnitMove();
+                    HideMapContextMenu();
+                });
             _contextCaptureMineButton = CreateMapActionButton(
                 "점령한다",
                 () =>
@@ -2088,6 +2145,7 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextSelectUnitButton);
             _mapContextMenu.Add(_contextInspectUnitButton);
             _mapContextMenu.Add(_contextMoveUnitButton);
+            _mapContextMenu.Add(_contextCancelMoveButton);
             _mapContextMenu.Add(_contextCaptureMineButton);
             _mapContextMenu.Add(_contextCastleActionButton);
             _mapContextMenu.Add(_contextCastleRoleButton);

@@ -524,6 +524,37 @@ namespace Game.Presentation
             return moved;
         }
 
+        public bool CanCancelSelectedPlayerUnitMove(out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 아군 유닛을 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanCancelMove(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                out reason);
+        }
+
+        public bool TryCancelSelectedPlayerUnitMove(out string reason)
+        {
+            if (!CanCancelSelectedPlayerUnitMove(out reason))
+                return false;
+
+            bool cancelled = _gameplayService.TryCancelMove(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                out reason);
+            if (cancelled)
+            {
+                ClearMovementPreviewState();
+                RefreshGameplayMarkers();
+            }
+            return cancelled;
+        }
+
         public MapCastleControlState FindCastleAt(GridCoordinate coordinate)
         {
             return _gameplayService?.FindCastle(coordinate);
