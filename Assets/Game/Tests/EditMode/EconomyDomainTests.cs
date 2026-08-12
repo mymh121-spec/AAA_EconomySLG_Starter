@@ -344,6 +344,16 @@ namespace Game.Tests
             Assert.That(
                 service.GetRemainingMovementFixedSteps(unit),
                 Is.EqualTo(3));
+            Assert.That(
+                service.TryGetMovementSegment(
+                    unit,
+                    out GridCoordinate from,
+                    out GridCoordinate to,
+                    out double progress),
+                Is.True);
+            Assert.That(from, Is.EqualTo(new GridCoordinate(0, 1)));
+            Assert.That(to, Is.EqualTo(new GridCoordinate(1, 1)));
+            Assert.That(progress, Is.EqualTo(0.5d).Within(0.0001d));
 
             service.AdvanceFixedSteps(1);
 
@@ -352,6 +362,16 @@ namespace Game.Tests
             Assert.That(unit.RemainingMovementTileCount, Is.EqualTo(1));
             Assert.That(unit.PlannedPath.Count, Is.EqualTo(2));
             Assert.That(unit.PlannedPath[0], Is.EqualTo(unit.Coordinate));
+            Assert.That(
+                service.TryGetMovementSegment(
+                    unit,
+                    out from,
+                    out to,
+                    out progress),
+                Is.True);
+            Assert.That(from, Is.EqualTo(new GridCoordinate(1, 1)));
+            Assert.That(to, Is.EqualTo(new GridCoordinate(2, 1)));
+            Assert.That(progress, Is.Zero);
             Assert.That(
                 service.GetRemainingMovementFixedSteps(unit),
                 Is.EqualTo(2));

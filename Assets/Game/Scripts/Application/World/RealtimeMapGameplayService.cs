@@ -908,6 +908,32 @@ namespace Game.Application.World
                 unit.MovementProgress);
         }
 
+        public bool TryGetMovementSegment(
+            MapUnitState unit,
+            out GridCoordinate from,
+            out GridCoordinate to,
+            out double progress)
+        {
+            from = default;
+            to = default;
+            progress = 0d;
+            if (unit == null ||
+                !unit.IsMoving ||
+                unit.PlannedPath.Count < 2)
+            {
+                return false;
+            }
+
+            from = unit.PlannedPath[0];
+            to = unit.PlannedPath[1];
+            int requiredSteps = GetRequiredMovementStepsPerTile(unit);
+            progress = Math.Clamp(
+                unit.MovementProgress / (double)requiredSteps,
+                0d,
+                1d);
+            return true;
+        }
+
         public bool TryIssueMove(
             string ownerFactionId,
             string unitId,

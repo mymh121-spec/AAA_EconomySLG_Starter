@@ -133,6 +133,8 @@ namespace Game.Presentation
         [SerializeField, Min(0.03f)] private float movementPathWidth = 0.12f;
         [SerializeField, Min(0.01f)] private float movementPathHeight = 0.13f;
         [SerializeField, Range(0f, 1f)] private float movementPathAlpha = 0.92f;
+        [SerializeField, Min(1f)] private float movementInterpolationSharpness =
+            18f;
         [SerializeField] private Color movementPreviewColor =
             new Color(1.00f, 0.86f, 0.12f, 1f);
 
@@ -164,6 +166,10 @@ namespace Game.Presentation
             new List<Transform>();
         private readonly List<GridCoordinate> _movementPreviewPath =
             new List<GridCoordinate>();
+        private readonly Dictionary<string, List<Transform>> _unitMarkerRoots =
+            new Dictionary<string, List<Transform>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Vector3> _unitVisualPositions =
+            new Dictionary<string, Vector3>(StringComparer.Ordinal);
 
         private Transform _generatedRoot;
         private Transform _gameplayMarkerRoot;
@@ -835,6 +841,8 @@ namespace Game.Presentation
             _gameplayService = null;
             _selectedPlayerUnitId = string.Empty;
             ClearMovementPreviewState();
+            _unitMarkerRoots.Clear();
+            _unitVisualPositions.Clear();
         }
 
         private void BuildFlatMapCopies(GridMapLayout layout)
@@ -1432,6 +1440,7 @@ namespace Game.Presentation
                 else
                     DestroyImmediate(previous);
             }
+            _unitMarkerRoots.Clear();
 
             var markerRoot = new GameObject("실시간 유닛과 점령 표식");
             markerRoot.transform.SetParent(_generatedRoot, false);
@@ -1482,7 +1491,20 @@ namespace Game.Presentation
                 ForEachSurfaceCopy(xOffset =>
                 {
                     Vector3 position = ToWorldPosition(unit.Coordinate, xOffset);
-                    CreateUnitMarker(unit, position, color, selected);
+                    var unitRootObject = new GameObject(
+                        $"{unit.Id}_화면표식_{xOffset:F1}");
+                    unitRootObject.transform.SetParent(
+                        _gameplayMarkerRoot,
+                        false);
+                    RegisterUnitMarkerRoot(
+                        unit.Id,
+                        unitRootObject.transform);
+                    CreateUnitMarker(
+                        unit,
+                        position,
+                        color,
+                        selected,
+                        unitRootObject.transform);
                 });
             }
 
@@ -1498,6 +1520,95 @@ namespace Game.Presentation
                     movementPreviewColor,
                     movementPathWidth * 1.18f,
                     movementPathAlpha);
+            }
+
+            UpdateUnitMarkerInterpolation();
+        }
+
+        private void RegisterUnitMarkerRoot(
+            string unitId,
+            Transform markerRoot)
+        {
+            if (!_unitMarkerRoots.TryGetValue(
+                unitId,
+                out List<Transform> roots))
+            {
+                roots = new List<Transform>(SurfaceCopyRadius * 2 + 1);
+                _unitMarkerRoots.Add(unitId, roots);
+            }
+            roots.Add(markerRoot);
+        }
+
+        private void UpdateUnitMarkerInterpolation()
+        {
+            if (_gameplayService == null || CurrentLayout == null)
+                return;
+
+            float smoothing = 1f - Mathf.Exp(
+                -movementInterpolationSharpness *
+                Mathf.Max(0f, Time.unscaledDeltaTime));
+            float worldWidth = CurrentLayout.Width * tileSize;
+            for (int i = 0; i < _gameplayService.Units.Count; i++)
+            {
+                MapUnitState unit = _gameplayService.Units[i];
+                Vector3 basePosition = ToWorldPosition(unit.Coordinate, 0f);
+                Vector3 desiredPosition = basePosition;
+                if (_gameplayService.TryGetMovementSegment(
+                    unit,
+                    out GridCoordinate from,
+                    out GridCoordinate to,
+                    out double progress))
+                {
+                    Vector3 fromPosition = ToWorldPosition(from, 0f);
+                    int deltaX = to.X - from.X;
+                    int wrapThreshold = CurrentLayout.Width / 2;
+                    if (deltaX > wrapThreshold)
+                        deltaX -= CurrentLayout.Width;
+                    else if (deltaX < -wrapThreshold)
+                        deltaX += CurrentLayout.Width;
+
+                    Vector3 targetPosition = ToWorldPosition(to, 0f);
+                    targetPosition.x = fromPosition.x + deltaX * tileSize;
+                    desiredPosition = Vector3.Lerp(
+                        fromPosition,
+                        targetPosition,
+                        Mathf.Clamp01((float)progress));
+                }
+
+                if (!_unitVisualPositions.TryGetValue(
+                    unit.Id,
+                    out Vector3 visualPosition))
+                {
+                    visualPosition = desiredPosition;
+                }
+                else
+                {
+                    float xDistance = visualPosition.x - basePosition.x;
+                    if (xDistance > worldWidth * 0.5f)
+                        visualPosition.x -= worldWidth;
+                    else if (xDistance < -worldWidth * 0.5f)
+                        visualPosition.x += worldWidth;
+
+                    visualPosition = Vector3.Lerp(
+                        visualPosition,
+                        desiredPosition,
+                        smoothing);
+                }
+
+                _unitVisualPositions[unit.Id] = visualPosition;
+                if (!_unitMarkerRoots.TryGetValue(
+                    unit.Id,
+                    out List<Transform> roots))
+                {
+                    continue;
+                }
+
+                Vector3 offset = visualPosition - basePosition;
+                for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
+                {
+                    if (roots[rootIndex] != null)
+                        roots[rootIndex].localPosition = offset;
+                }
             }
         }
 
@@ -1669,7 +1780,8 @@ namespace Game.Presentation
             MapUnitState unit,
             Vector3 position,
             Color color,
-            bool selected)
+            bool selected,
+            Transform markerRoot)
         {
             float width = 0.38f;
             float height = 0.52f;
@@ -1711,7 +1823,7 @@ namespace Game.Presentation
                     position + new Vector3(0f, 0.40f, 0f),
                     new Vector3(tileSize * 0.68f, 0.06f, tileSize * 0.68f),
                     Color.white,
-                    _gameplayMarkerRoot,
+                    markerRoot,
                     false);
             }
 
@@ -1723,7 +1835,7 @@ namespace Game.Presentation
                     height * selectionScale,
                     tileSize * depth * selectionScale),
                 color,
-                _gameplayMarkerRoot,
+                markerRoot,
                 false);
 
             if (unit.ArmorClass != ArmorClass.Unarmored)
@@ -1740,7 +1852,7 @@ namespace Game.Presentation
                         heavyArmor ? 0.22f : 0.12f,
                         tileSize * depth * (heavyArmor ? 1.12f : 1.03f)),
                     armorColor,
-                    _gameplayMarkerRoot,
+                    markerRoot,
                     false);
             }
 
@@ -1781,7 +1893,7 @@ namespace Game.Presentation
                 accentPosition,
                 accentScale,
                 accent,
-                _gameplayMarkerRoot,
+                markerRoot,
                 false);
         }
 
@@ -2123,6 +2235,7 @@ namespace Game.Presentation
             HandleCameraInput();
             HandleSelectionInput();
 #endif
+            UpdateUnitMarkerInterpolation();
         }
 
 #if ENABLE_LEGACY_INPUT_MANAGER
