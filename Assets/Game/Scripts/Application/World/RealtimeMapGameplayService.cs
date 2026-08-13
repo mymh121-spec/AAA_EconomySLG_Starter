@@ -2516,10 +2516,15 @@ namespace Game.Application.World
                     ownerOrder.Add(mine.OwnerFactionId);
                 }
 
+                decimal roleOutputMultiplier =
+                    MapCastleRules.GetMineOutputMultiplier(
+                        warehouseCastle.Role);
+
                 if (mine.Kind == MineKind.Gold)
                 {
                     decimal cashAmount =
-                        _tuning.GoldMineCashPerDay * mine.YieldMultiplier;
+                        _tuning.GoldMineCashPerDay * mine.YieldMultiplier *
+                        roleOutputMultiplier;
                     value.GoldMineCount++;
                     value.CashAmount += cashAmount;
                     value.Transports.Add(new MapMineTransportRecord(
@@ -2534,7 +2539,8 @@ namespace Game.Application.World
                 else
                 {
                     decimal ironAmount =
-                        _tuning.NormalMineIronPerDay * mine.YieldMultiplier;
+                        _tuning.NormalMineIronPerDay * mine.YieldMultiplier *
+                        roleOutputMultiplier;
                     value.NormalMineCount++;
                     value.IronAmount += ironAmount;
                     warehouseCastle.StoreMineIron(ironAmount);
@@ -2827,15 +2833,24 @@ namespace Game.Application.World
                 out int configuredVehicles)
                 ? configuredVehicles
                 : 0;
+            decimal roleSpeedMultiplier =
+                MapCastleRules.GetTransportSpeedMultiplier(source.Role);
             decimal dailyRange = vehicleCount <= 0
                 ? 0.5m
                 : Math.Min(4m, 1m + (decimal)Math.Sqrt(vehicleCount));
+            dailyRange *= roleSpeedMultiplier;
             int travelDays = route.Count == 0
                 ? 0
                 : Math.Max(1, (int)Math.Ceiling(terrainWeight / dailyRange));
+            decimal roleCostMultiplier =
+                MapCastleRules.GetTransportCostMultiplier(source.Role);
             decimal cost = Math.Round(
                 amount * 0.20m + terrainWeight * 5m /
                 Math.Max(1m, 1m + vehicleCount * 0.15m),
+                2,
+                MidpointRounding.AwayFromZero) * roleCostMultiplier;
+            cost = Math.Round(
+                cost,
                 2,
                 MidpointRounding.AwayFromZero);
             var record = new MapSupplyTransportRecord(

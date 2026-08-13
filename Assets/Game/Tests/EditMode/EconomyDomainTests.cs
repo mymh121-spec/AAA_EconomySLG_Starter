@@ -803,6 +803,28 @@ namespace Game.Tests
             Assert.That(fullCastleReason, Does.Contain("주둔 한도"));
 
             Assert.That(
+                service.TrySetCastleRole(
+                    "player",
+                    castleCoordinate,
+                    MapCastleRole.MilitaryFortress,
+                    out _),
+                Is.True);
+            Assert.That(castle.MaxWallDurability, Is.EqualTo(1800));
+            Assert.That(castle.WallDurability, Is.EqualTo(1800));
+            Assert.That(castle.MaxFoodSupply, Is.EqualTo(1200));
+            Assert.That(castle.FoodSupply, Is.EqualTo(1200));
+            Assert.That(castle.DefenseBonus, Is.EqualTo(0.700m));
+            Assert.That(
+                service.TryGetRecruitmentSiteSnapshot(
+                    "player",
+                    castleCoordinate,
+                    out MapRecruitmentSiteSnapshot fortressSite),
+                Is.True);
+            Assert.That(fortressSite.GarrisonCapacity, Is.EqualTo(5));
+            Assert.That(fortressSite.RecruitmentCapacity, Is.EqualTo(4));
+            Assert.That(fortressSite.RecruitRecoveryDays, Is.EqualTo(1));
+
+            Assert.That(
                 service.TryIssueMove(
                     "player",
                     unit.Id,
@@ -1377,6 +1399,13 @@ namespace Game.Tests
             Assert.That(
                 service.FindCastle(castleCoordinate).OwnerFactionId,
                 Is.EqualTo("player"));
+            Assert.That(
+                service.TrySetCastleRole(
+                    "player",
+                    castleCoordinate,
+                    MapCastleRole.IndustrialCity,
+                    out _),
+                Is.True);
 
             Assert.That(
                 service.TryIssueMove(
@@ -1394,7 +1423,7 @@ namespace Game.Tests
                 service.CreateDailyProduction();
 
             Assert.That(production.Count, Is.EqualTo(1));
-            Assert.That(production[0].IronAmount, Is.EqualTo(25m));
+            Assert.That(production[0].IronAmount, Is.EqualTo(31.25m));
             Assert.That(production[0].Transports.Count, Is.EqualTo(1));
             MapMineTransportRecord transport = production[0].Transports[0];
             Assert.That(transport.MineCoordinate, Is.EqualTo(mineCoordinate));
@@ -1403,10 +1432,10 @@ namespace Game.Tests
                 Is.EqualTo(castleCoordinate));
             Assert.That(transport.Distance, Is.EqualTo(1));
             Assert.That(transport.Route[0], Is.EqualTo(castleCoordinate));
-            Assert.That(transport.IronAmount, Is.EqualTo(25m));
+            Assert.That(transport.IronAmount, Is.EqualTo(31.25m));
             Assert.That(
                 service.FindCastle(castleCoordinate).WarehouseIronAmount,
-                Is.EqualTo(25m));
+                Is.EqualTo(31.25m));
             Assert.That(
                 service.FindCapital("player").WarehouseIronAmount,
                 Is.EqualTo(0m));
@@ -1521,6 +1550,7 @@ namespace Game.Tests
             Assert.That(transports[0].DestinationUnitId, Is.EqualTo(unit.Id));
             Assert.That(transports[0].Distance, Is.EqualTo(0));
             Assert.That(transports[0].TravelDays, Is.EqualTo(0));
+            Assert.That(transports[0].Cost, Is.EqualTo(3.57m));
             Assert.That(unit.FoodSupply, Is.EqualTo(21m));
             Assert.That(unit.EquipmentSupply, Is.EqualTo(2.8m));
             Assert.That(unit.MedicineSupply, Is.EqualTo(0.7m));
@@ -1534,6 +1564,16 @@ namespace Game.Tests
             Assert.That(capital.WarehouseFoodAmount, Is.EqualTo(0m));
             Assert.That(capital.WarehouseEquipmentAmount, Is.EqualTo(0m));
             Assert.That(capital.WarehouseMedicineAmount, Is.EqualTo(0m));
+            Assert.That(
+                MapCastleRules.GetTransportSpeedMultiplier(
+                    MapCastleRole.SupplyHub),
+                Is.EqualTo(1.20m));
+            Assert.That(
+                MapCastleRules.GetTransportSpeedMultiplier(MapCastleRole.Port),
+                Is.EqualTo(1.35m));
+            Assert.That(
+                MapCastleRules.GetTransportCostMultiplier(MapCastleRole.Port),
+                Is.EqualTo(0.70m));
         }
 
         [Test]

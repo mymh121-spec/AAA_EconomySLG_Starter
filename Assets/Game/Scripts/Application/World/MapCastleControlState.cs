@@ -198,6 +198,31 @@ namespace Game.Application.World
                 default: return int.MaxValue;
             }
         }
+
+        public static decimal GetMineOutputMultiplier(MapCastleRole role) =>
+            role == MapCastleRole.IndustrialCity ? 1.25m : 1m;
+
+        public static decimal GetTransportSpeedMultiplier(
+            MapCastleRole role)
+        {
+            switch (role)
+            {
+                case MapCastleRole.SupplyHub: return 1.20m;
+                case MapCastleRole.Port: return 1.35m;
+                default: return 1m;
+            }
+        }
+
+        public static decimal GetTransportCostMultiplier(
+            MapCastleRole role)
+        {
+            switch (role)
+            {
+                case MapCastleRole.SupplyHub: return 0.85m;
+                case MapCastleRole.Port: return 0.70m;
+                default: return 1m;
+            }
+        }
     }
 
     public enum MapRecruitmentSiteKind
