@@ -323,6 +323,7 @@ namespace Game.Application.World
         public MapSiegeAction SiegeAction { get; internal set; }
         public MapOccupationPolicy OccupationPolicy { get; private set; }
         public int PublicOrder { get; private set; }
+        public decimal WarehouseIronAmount { get; private set; }
         public int WallDurability { get; private set; }
         public int MaxWallDurability => IsCapital
             ? MapCastleRules.CapitalMaxWallDurability
@@ -379,6 +380,7 @@ namespace Game.Application.World
             SiegeAction = MapSiegeAction.None;
             OccupationPolicy = MapOccupationPolicy.None;
             PublicOrder = 50;
+            WarehouseIronAmount = 0m;
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
         }
@@ -445,6 +447,11 @@ namespace Game.Application.World
                 Math.Max(0, amount));
             FoodSupply += added;
             return added;
+        }
+
+        internal void StoreMineIron(decimal amount)
+        {
+            WarehouseIronAmount += Math.Max(0m, amount);
         }
 
         internal void PrepareForNewOwner()

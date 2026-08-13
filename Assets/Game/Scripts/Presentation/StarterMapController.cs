@@ -1252,6 +1252,16 @@ namespace Game.Presentation
                               $"점령 {mine.CaptureProgress}/" +
                               _gameplayService.FixedStepsToCapture;
                 }
+                if (!string.IsNullOrEmpty(mine.OwnerFactionId) &&
+                    _gameplayService.TryFindNearestFriendlyCastleWarehouse(
+                        mine.OwnerFactionId,
+                        mine.Coordinate,
+                        out MapCastleControlState destinationCastle,
+                        out IReadOnlyList<GridCoordinate> transportRoute))
+                {
+                    detail += $" · 운송 → {destinationCastle.Coordinate}" +
+                              $" ({transportRoute.Count}칸)";
+                }
             }
             if (castle?.IsCapital == true)
             {
@@ -1263,6 +1273,7 @@ namespace Game.Presentation
                           $"{castle.MaxWallDurability:N0}" +
                           $" · 식량 {castle.FoodSupply:N0}/" +
                           $"{castle.MaxFoodSupply:N0}" +
+                          $" · 창고 철광석 {castle.WarehouseIronAmount:N1}" +
                           $" · 방어 보너스 +{castle.DefenseBonus:P0}";
             }
             if (castle != null && !castle.IsCapital)
@@ -1279,6 +1290,7 @@ namespace Game.Presentation
                           $"{castle.MaxWallDurability:N0}" +
                           $" · 식량 {castle.FoodSupply:N0}/" +
                           $"{castle.MaxFoodSupply:N0}" +
+                          $" · 창고 철광석 {castle.WarehouseIronAmount:N1}" +
                           $" · 방어 보너스 +{castle.DefenseBonus:P0}" +
                           $" · 점령 정책 " +
                           MapOccupationPolicyNames.GetKoreanName(

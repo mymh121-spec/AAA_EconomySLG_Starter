@@ -1333,6 +1333,86 @@ namespace Game.Tests
         }
 
         [Test]
+        public void MineProduction_UsesNearestFriendlyCastleWarehouseRoute()
+        {
+            var terrain = new GridTerrainKind[7 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var mineCoordinate = new GridCoordinate(4, 0);
+            var castleCoordinate = new GridCoordinate(3, 0);
+            var layout = new GridMapLayout(
+                7,
+                2,
+                71,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new[] { new MinePlacement(mineCoordinate, MineKind.Normal) },
+                false,
+                terrain,
+                new[] { castleCoordinate });
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCapture: 1,
+                    fixedStepsToCaptureCastle: 1,
+                    fixedStepsToSiegeUndefendedCastle: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    normalMineIronPerDay: 25m,
+                    mineDailyDepletionRate: 0m));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "player",
+                    unit.Id,
+                    castleCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(4);
+            Assert.That(
+                service.FindCastle(castleCoordinate).OwnerFactionId,
+                Is.EqualTo("player"));
+
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    mineCoordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+            Assert.That(
+                service.FindMine(mineCoordinate).OwnerFactionId,
+                Is.EqualTo("player"));
+
+            IReadOnlyList<MapMineProductionRecord> production =
+                service.CreateDailyProduction();
+
+            Assert.That(production.Count, Is.EqualTo(1));
+            Assert.That(production[0].IronAmount, Is.EqualTo(25m));
+            Assert.That(production[0].Transports.Count, Is.EqualTo(1));
+            MapMineTransportRecord transport = production[0].Transports[0];
+            Assert.That(transport.MineCoordinate, Is.EqualTo(mineCoordinate));
+            Assert.That(
+                transport.WarehouseCoordinate,
+                Is.EqualTo(castleCoordinate));
+            Assert.That(transport.Distance, Is.EqualTo(1));
+            Assert.That(transport.Route[0], Is.EqualTo(castleCoordinate));
+            Assert.That(transport.IronAmount, Is.EqualTo(25m));
+            Assert.That(
+                service.FindCastle(castleCoordinate).WarehouseIronAmount,
+                Is.EqualTo(25m));
+            Assert.That(
+                service.FindCapital("player").WarehouseIronAmount,
+                Is.EqualTo(0m));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
         {
             var terrain = new GridTerrainKind[3 * 2];

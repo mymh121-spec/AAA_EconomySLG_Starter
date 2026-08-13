@@ -425,6 +425,7 @@ namespace Game.Application.World
         public int GoldMineCount { get; }
         public decimal IronAmount { get; }
         public decimal CashAmount { get; }
+        public IReadOnlyList<MapMineTransportRecord> Transports { get; }
 
         public MapMineProductionRecord(
             string ownerFactionId,
@@ -432,12 +433,75 @@ namespace Game.Application.World
             int goldMineCount,
             decimal ironAmount,
             decimal cashAmount)
+            : this(
+                ownerFactionId,
+                normalMineCount,
+                goldMineCount,
+                ironAmount,
+                cashAmount,
+                Array.Empty<MapMineTransportRecord>())
+        {
+        }
+
+        public MapMineProductionRecord(
+            string ownerFactionId,
+            int normalMineCount,
+            int goldMineCount,
+            decimal ironAmount,
+            decimal cashAmount,
+            IReadOnlyList<MapMineTransportRecord> transports)
         {
             OwnerFactionId = ownerFactionId ?? string.Empty;
             NormalMineCount = Math.Max(0, normalMineCount);
             GoldMineCount = Math.Max(0, goldMineCount);
             IronAmount = Math.Max(0m, ironAmount);
             CashAmount = Math.Max(0m, cashAmount);
+            if (transports == null || transports.Count == 0)
+            {
+                Transports = Array.Empty<MapMineTransportRecord>();
+                return;
+            }
+
+            var copy = new MapMineTransportRecord[transports.Count];
+            for (int i = 0; i < transports.Count; i++)
+                copy[i] = transports[i];
+            Transports = copy;
+        }
+    }
+
+    public readonly struct MapMineTransportRecord
+    {
+        public GridCoordinate MineCoordinate { get; }
+        public GridCoordinate WarehouseCoordinate { get; }
+        public MineKind MineKind { get; }
+        public decimal IronAmount { get; }
+        public decimal CashAmount { get; }
+        public IReadOnlyList<GridCoordinate> Route { get; }
+        public int Distance => Route.Count;
+
+        public MapMineTransportRecord(
+            GridCoordinate mineCoordinate,
+            GridCoordinate warehouseCoordinate,
+            MineKind mineKind,
+            decimal ironAmount,
+            decimal cashAmount,
+            IReadOnlyList<GridCoordinate> route)
+        {
+            MineCoordinate = mineCoordinate;
+            WarehouseCoordinate = warehouseCoordinate;
+            MineKind = mineKind;
+            IronAmount = Math.Max(0m, ironAmount);
+            CashAmount = Math.Max(0m, cashAmount);
+            if (route == null || route.Count == 0)
+            {
+                Route = Array.Empty<GridCoordinate>();
+                return;
+            }
+
+            var copy = new GridCoordinate[route.Count];
+            for (int i = 0; i < route.Count; i++)
+                copy[i] = route[i];
+            Route = copy;
         }
     }
 
@@ -449,6 +513,8 @@ namespace Game.Application.World
             public int GoldMineCount;
             public decimal IronAmount;
             public decimal CashAmount;
+            public readonly List<MapMineTransportRecord> Transports =
+                new List<MapMineTransportRecord>();
         }
 
         private static readonly GridCoordinate[] NeighborOffsets =
@@ -2066,11 +2132,21 @@ namespace Game.Application.World
                 StringComparer.Ordinal);
             var ownerOrder = new List<string>();
             bool depletedAnyMine = false;
+            bool transportedAnyMine = false;
             for (int i = 0; i < _mines.Count; i++)
             {
                 MapMineControlState mine = _mines[i];
                 if (string.IsNullOrWhiteSpace(mine.OwnerFactionId))
                     continue;
+
+                if (!TryFindNearestFriendlyCastleWarehouse(
+                        mine.OwnerFactionId,
+                        mine.Coordinate,
+                        out MapCastleControlState warehouseCastle,
+                        out IReadOnlyList<GridCoordinate> route))
+                {
+                    continue;
+                }
 
                 if (!counts.TryGetValue(
                     mine.OwnerFactionId,
@@ -2083,15 +2159,34 @@ namespace Game.Application.World
 
                 if (mine.Kind == MineKind.Gold)
                 {
-                    value.GoldMineCount++;
-                    value.CashAmount +=
+                    decimal cashAmount =
                         _tuning.GoldMineCashPerDay * mine.YieldMultiplier;
+                    value.GoldMineCount++;
+                    value.CashAmount += cashAmount;
+                    value.Transports.Add(new MapMineTransportRecord(
+                        mine.Coordinate,
+                        warehouseCastle.Coordinate,
+                        mine.Kind,
+                        0m,
+                        cashAmount,
+                        route));
+                    transportedAnyMine = cashAmount > 0m || transportedAnyMine;
                 }
                 else
                 {
-                    value.NormalMineCount++;
-                    value.IronAmount +=
+                    decimal ironAmount =
                         _tuning.NormalMineIronPerDay * mine.YieldMultiplier;
+                    value.NormalMineCount++;
+                    value.IronAmount += ironAmount;
+                    warehouseCastle.StoreMineIron(ironAmount);
+                    value.Transports.Add(new MapMineTransportRecord(
+                        mine.Coordinate,
+                        warehouseCastle.Coordinate,
+                        mine.Kind,
+                        ironAmount,
+                        0m,
+                        route));
+                    transportedAnyMine = ironAmount > 0m || transportedAnyMine;
                 }
 
                 decimal previousYield = mine.YieldMultiplier;
@@ -2111,12 +2206,59 @@ namespace Game.Application.World
                     value.NormalMineCount,
                     value.GoldMineCount,
                     value.IronAmount,
-                    value.CashAmount));
+                    value.CashAmount,
+                    value.Transports));
             }
 
-            if (depletedAnyMine)
+            if (depletedAnyMine || transportedAnyMine)
                 StateChanged?.Invoke();
             return records;
+        }
+
+        public bool TryFindNearestFriendlyCastleWarehouse(
+            string factionId,
+            GridCoordinate origin,
+            out MapCastleControlState warehouseCastle,
+            out IReadOnlyList<GridCoordinate> route)
+        {
+            warehouseCastle = null;
+            route = Array.Empty<GridCoordinate>();
+            if (string.IsNullOrWhiteSpace(factionId))
+                return false;
+
+            List<GridCoordinate> bestRoute = null;
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState candidate = _castles[i];
+                if (candidate.IsDestroyed || !string.Equals(
+                        candidate.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                List<GridCoordinate> candidateRoute = FindShortestLandPath(
+                    origin,
+                    candidate.Coordinate);
+                if (candidateRoute.Count == 0)
+                    continue;
+
+                if (bestRoute != null &&
+                    candidateRoute.Count >= bestRoute.Count)
+                {
+                    continue;
+                }
+
+                warehouseCastle = candidate;
+                bestRoute = candidateRoute;
+            }
+
+            if (warehouseCastle == null)
+                return false;
+
+            route = bestRoute;
+            return true;
         }
 
         private bool TryFindDynamicMineCoordinate(
