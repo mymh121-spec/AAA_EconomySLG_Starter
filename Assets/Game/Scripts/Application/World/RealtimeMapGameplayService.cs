@@ -87,6 +87,150 @@ namespace Game.Application.World
         }
     }
 
+    public enum MapUnitFormationPreset
+    {
+        Custom,
+        Balanced,
+        Frontline,
+        Ranged,
+        Cavalry
+    }
+
+    public static class MapUnitFormationPresetNames
+    {
+        public static string GetKoreanName(MapUnitFormationPreset preset)
+        {
+            switch (preset)
+            {
+                case MapUnitFormationPreset.Frontline: return "전열 중심";
+                case MapUnitFormationPreset.Ranged: return "원거리 중심";
+                case MapUnitFormationPreset.Cavalry: return "기병 중심";
+                case MapUnitFormationPreset.Balanced: return "균형 편성";
+                default: return "사용자 편성";
+            }
+        }
+    }
+
+    public readonly struct MapUnitFormation
+    {
+        public MapUnitFormationPreset Preset { get; }
+        public int FrontlineSoldiers { get; }
+        public int RangedSoldiers { get; }
+        public int CavalrySoldiers { get; }
+        public int TotalSoldiers =>
+            FrontlineSoldiers + RangedSoldiers + CavalrySoldiers;
+        public decimal FrontlineRatio => GetRatio(FrontlineSoldiers);
+        public decimal RangedRatio => GetRatio(RangedSoldiers);
+        public decimal CavalryRatio => GetRatio(CavalrySoldiers);
+
+        private MapUnitFormation(
+            MapUnitFormationPreset preset,
+            int frontlineSoldiers,
+            int rangedSoldiers,
+            int cavalrySoldiers)
+        {
+            Preset = preset;
+            FrontlineSoldiers = Math.Max(0, frontlineSoldiers);
+            RangedSoldiers = Math.Max(0, rangedSoldiers);
+            CavalrySoldiers = Math.Max(0, cavalrySoldiers);
+        }
+
+        public static MapUnitFormation CreateDefault(
+            UnitArchetype archetype,
+            int totalSoldiers)
+        {
+            switch (archetype)
+            {
+                case UnitArchetype.Archer:
+                case UnitArchetype.Slinger:
+                    return CreatePreset(
+                        MapUnitFormationPreset.Ranged,
+                        totalSoldiers);
+                case UnitArchetype.Cavalry:
+                    return CreatePreset(
+                        MapUnitFormationPreset.Cavalry,
+                        totalSoldiers);
+                default:
+                    return CreatePreset(
+                        MapUnitFormationPreset.Frontline,
+                        totalSoldiers);
+            }
+        }
+
+        public static MapUnitFormation CreatePreset(
+            MapUnitFormationPreset preset,
+            int totalSoldiers)
+        {
+            int total = Math.Max(0, totalSoldiers);
+            switch (preset)
+            {
+                case MapUnitFormationPreset.Ranged:
+                    return CreateFromPercentages(preset, total, 40, 50);
+                case MapUnitFormationPreset.Cavalry:
+                    return CreateFromPercentages(preset, total, 30, 15);
+                case MapUnitFormationPreset.Balanced:
+                    return CreateFromPercentages(preset, total, 50, 30);
+                default:
+                    return CreateFromPercentages(
+                        MapUnitFormationPreset.Frontline,
+                        total,
+                        60,
+                        25);
+            }
+        }
+
+        public static MapUnitFormation CreateCustom(
+            int frontlineSoldiers,
+            int rangedSoldiers,
+            int cavalrySoldiers) =>
+            new MapUnitFormation(
+                MapUnitFormationPreset.Custom,
+                frontlineSoldiers,
+                rangedSoldiers,
+                cavalrySoldiers);
+
+        public MapUnitFormation ScaleTo(int totalSoldiers)
+        {
+            int total = Math.Max(0, totalSoldiers);
+            if (Preset != MapUnitFormationPreset.Custom)
+                return CreatePreset(Preset, total);
+
+            if (total == 0 || TotalSoldiers == 0)
+            {
+                return new MapUnitFormation(Preset, 0, 0, 0);
+            }
+
+            int frontline = (int)Math.Floor(
+                total * FrontlineSoldiers / (decimal)TotalSoldiers);
+            int ranged = (int)Math.Floor(
+                total * RangedSoldiers / (decimal)TotalSoldiers);
+            return new MapUnitFormation(
+                Preset,
+                frontline,
+                ranged,
+                total - frontline - ranged);
+        }
+
+        private decimal GetRatio(int soldiers) => TotalSoldiers <= 0
+            ? 0m
+            : soldiers / (decimal)TotalSoldiers;
+
+        private static MapUnitFormation CreateFromPercentages(
+            MapUnitFormationPreset preset,
+            int total,
+            int frontlinePercent,
+            int rangedPercent)
+        {
+            int frontline = total * frontlinePercent / 100;
+            int ranged = total * rangedPercent / 100;
+            return new MapUnitFormation(
+                preset,
+                frontline,
+                ranged,
+                total - frontline - ranged);
+        }
+    }
+
     public sealed class MapUnitState
     {
         private static readonly MilitaryBalanceCatalog CombatBalance =
@@ -121,7 +265,18 @@ namespace Game.Application.World
         public int MaxStamina { get; }
         public int Stamina { get; private set; }
         public int StaminaRecoveryProgress { get; private set; }
-        public int Soldiers { get; private set; }
+        public MapUnitFormation Formation { get; private set; }
+        public int Soldiers => Formation.TotalSoldiers;
+        public decimal FormationAttackModifier => Math.Clamp(
+            1m + (Formation.RangedRatio - 0.25m) * 0.20m +
+            (Formation.CavalryRatio - 0.15m) * 0.30m,
+            0.75m,
+            1.25m);
+        public decimal FormationDefenseModifier => Math.Clamp(
+            1m + (Formation.FrontlineRatio - 0.60m) * 0.25m -
+            (Formation.CavalryRatio - 0.15m) * 0.10m,
+            0.75m,
+            1.25m);
         public decimal Morale { get; private set; }
         public decimal Fatigue { get; private set; }
         public decimal FoodSupply { get; private set; }
@@ -180,7 +335,9 @@ namespace Game.Application.World
             ArmorClass = armorClass;
             MaxStamina = Math.Max(1, maxStamina);
             Stamina = MaxStamina;
-            Soldiers = Math.Max(1, initialSoldiers);
+            Formation = MapUnitFormation.CreateDefault(
+                archetype,
+                Math.Max(1, initialSoldiers));
             Morale = 100m;
             Fatigue = 0m;
             FoodSupply = 0m;
@@ -211,7 +368,9 @@ namespace Game.Application.World
             decimal supplyFactor = attack ? AttackSupplyModifier : 1m;
             return Math.Round(
                 Soldiers * basePower * moraleFactor * fatigueFactor *
-                supplyFactor,
+                supplyFactor * (attack
+                    ? FormationAttackModifier
+                    : FormationDefenseModifier),
                 2,
                 MidpointRounding.AwayFromZero);
         }
@@ -219,15 +378,21 @@ namespace Game.Application.World
         internal int ApplyCasualties(int casualties)
         {
             int applied = Math.Min(Soldiers, Math.Max(0, casualties));
-            Soldiers -= applied;
+            int previousSoldiers = Soldiers;
+            Formation = Formation.ScaleTo(Soldiers - applied);
             if (applied > 0)
             {
                 Morale = Math.Max(
                     0m,
                     Morale - applied * 100m /
-                    Math.Max(1, Soldiers + applied));
+                    Math.Max(1, previousSoldiers));
             }
             return applied;
+        }
+
+        internal void SetFormation(MapUnitFormation formation)
+        {
+            Formation = formation;
         }
 
         internal void AdjustMorale(decimal amount)
@@ -1158,6 +1323,110 @@ namespace Game.Application.World
             unit.ChangeEquipment(weaponType, armorClass);
             reason = string.Empty;
             StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TrySetUnitFormationPreset(
+            string ownerFactionId,
+            string unitId,
+            MapUnitFormationPreset preset,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (!CanChangeUnitFormation(
+                    ownerFactionId,
+                    unit,
+                    preset != MapUnitFormationPreset.Custom,
+                    out reason))
+            {
+                return false;
+            }
+
+            unit.SetFormation(MapUnitFormation.CreatePreset(
+                preset,
+                unit.Soldiers));
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TrySetUnitFormation(
+            string ownerFactionId,
+            string unitId,
+            int frontlineSoldiers,
+            int rangedSoldiers,
+            int cavalrySoldiers,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (!CanChangeUnitFormation(
+                    ownerFactionId,
+                    unit,
+                    true,
+                    out reason))
+            {
+                return false;
+            }
+
+            if (frontlineSoldiers < 0 || rangedSoldiers < 0 ||
+                cavalrySoldiers < 0)
+            {
+                reason = "병과별 인원은 0명 이상이어야 합니다.";
+                return false;
+            }
+
+            int requestedTotal = frontlineSoldiers + rangedSoldiers +
+                cavalrySoldiers;
+            if (requestedTotal != unit.Soldiers)
+            {
+                reason = $"편성 인원 합계가 총병력 {unit.Soldiers:N0}명과 " +
+                    $"같아야 합니다. 현재 합계 {requestedTotal:N0}명";
+                return false;
+            }
+
+            unit.SetFormation(MapUnitFormation.CreateCustom(
+                frontlineSoldiers,
+                rangedSoldiers,
+                cavalrySoldiers));
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        private static bool CanChangeUnitFormation(
+            string ownerFactionId,
+            MapUnitState unit,
+            bool validPreset,
+            out string reason)
+        {
+            if (unit == null)
+            {
+                reason = "편성을 변경할 부대를 찾을 수 없습니다.";
+                return false;
+            }
+
+            if (!string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 부대 편성은 변경할 수 없습니다.";
+                return false;
+            }
+
+            if (!validPreset)
+            {
+                reason = "사용자 편성은 병과별 인원을 직접 지정해야 합니다.";
+                return false;
+            }
+
+            if (unit.Soldiers <= 0)
+            {
+                reason = "병력이 없는 부대는 편성을 변경할 수 없습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
             return true;
         }
 

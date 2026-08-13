@@ -50,6 +50,7 @@ namespace Game.Presentation
         private Button _unitTypeButton;
         private Button _selectUnitButton;
         private Button _inspectUnitButton;
+        private Button _formationButton;
         private Button _moveUnitButton;
         private Button _cancelMoveButton;
         private VisualElement _mapContextMenu;
@@ -59,6 +60,7 @@ namespace Game.Presentation
         private Button _contextUnitTypeButton;
         private Button _contextSelectUnitButton;
         private Button _contextInspectUnitButton;
+        private Button _contextFormationButton;
         private Button _contextMoveUnitButton;
         private Button _contextCancelMoveButton;
         private Button _contextCaptureMineButton;
@@ -889,7 +891,13 @@ namespace Game.Presentation
                     .Append(" · 사기 ")
                     .Append(selectedUnit.Morale.ToString("N0"))
                     .Append(" · 피로 ")
-                    .Append(selectedUnit.Fatigue.ToString("N0"));
+                    .Append(selectedUnit.Fatigue.ToString("N0"))
+                    .Append("\n편성 전열 ")
+                    .Append(selectedUnit.Formation.FrontlineSoldiers.ToString("N0"))
+                    .Append(" · 원거리 ")
+                    .Append(selectedUnit.Formation.RangedSoldiers.ToString("N0"))
+                    .Append(" · 기병 ")
+                    .Append(selectedUnit.Formation.CavalrySoldiers.ToString("N0"));
 
                 if (selectedUnit.IsMoving && gameplayMap.GameplayService != null)
                 {
@@ -1153,6 +1161,12 @@ namespace Game.Presentation
             SetVisible(
                 _contextInspectUnitButton,
                 !string.IsNullOrEmpty(selection.UnitId));
+            ConfigureFormationButton(
+                _contextFormationButton,
+                gameplayMap.SelectedPlayerUnit,
+                gameplayMap.SelectedPlayerUnit != null &&
+                gameplayMap.SelectedPlayerUnit.Coordinate.Equals(
+                    selection.Coordinate));
             ConfigureCaptureMineButton(selection);
             ConfigureCastleButtons(selection);
 
@@ -1523,6 +1537,63 @@ namespace Game.Presentation
                 _contextUnitTypeButton.text = label;
         }
 
+        private static void ConfigureFormationButton(
+            Button button,
+            MapUnitState unit,
+            bool visible)
+        {
+            if (button == null)
+                return;
+
+            SetVisible(button, visible && unit != null);
+            if (!visible || unit == null)
+                return;
+
+            MapUnitFormation formation = unit.Formation;
+            button.SetEnabled(unit.Soldiers > 0);
+            button.text =
+                $"편성: {MapUnitFormationPresetNames.GetKoreanName(formation.Preset)} · " +
+                $"전열 {formation.FrontlineRatio:P0} / " +
+                $"원거리 {formation.RangedRatio:P0} / " +
+                $"기병 {formation.CavalryRatio:P0} · 클릭해서 변경";
+        }
+
+        private void CycleSelectedUnitFormation()
+        {
+            MapUnitState unit = gameplayMap?.SelectedPlayerUnit;
+            if (unit == null)
+            {
+                SetMapActionFeedback("먼저 편성을 변경할 플레이어 부대를 선택하세요.");
+                return;
+            }
+
+            MapUnitFormationPreset[] order =
+            {
+                MapUnitFormationPreset.Balanced,
+                MapUnitFormationPreset.Frontline,
+                MapUnitFormationPreset.Ranged,
+                MapUnitFormationPreset.Cavalry
+            };
+            int currentIndex = Array.IndexOf(order, unit.Formation.Preset);
+            MapUnitFormationPreset next = order[(currentIndex + 1) % order.Length];
+            if (!gameplayMap.TrySetSelectedPlayerUnitFormation(
+                    next,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            MapUnitFormation formation = unit.Formation;
+            SetMapActionFeedback(
+                $"{unit.Id} 편성을 " +
+                $"{MapUnitFormationPresetNames.GetKoreanName(next)}으로 변경했습니다. " +
+                $"전열 {formation.FrontlineSoldiers:N0}명 · " +
+                $"원거리 {formation.RangedSoldiers:N0}명 · " +
+                $"기병 {formation.CavalrySoldiers:N0}명");
+            RefreshSelectedMapActions();
+        }
+
         private void InspectUnitAtCurrentSelection()
         {
             if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
@@ -1552,6 +1623,9 @@ namespace Game.Presentation
                 $"기동 x{unit.MobilityModifier:F2} | " +
                 $"병력 {unit.Soldiers:N0} · 공격 {unit.AttackPower:N2} · " +
                 $"방어 {unit.DefensePower:N2} · 사기 {unit.Morale:N0} · " +
+                $"편성 전열 {unit.Formation.FrontlineSoldiers:N0} · " +
+                $"원거리 {unit.Formation.RangedSoldiers:N0} · " +
+                $"기병 {unit.Formation.CavalrySoldiers:N0} | " +
                 $"피로 {unit.Fatigue:N0} | " +
                 $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
                 $"위치 {unit.Coordinate} | {movement}");
@@ -1730,6 +1804,10 @@ namespace Game.Presentation
             bool hasUnit = !string.IsNullOrEmpty(selection.UnitId);
             SetVisible(_unitTypeButton, false);
             SetVisible(_inspectUnitButton, hasUnit);
+            ConfigureFormationButton(
+                _formationButton,
+                selectedUnit,
+                selectedUnit != null);
 
             if (_mapContextMenu != null &&
                 _mapContextMenu.resolvedStyle.display == DisplayStyle.Flex)
@@ -1742,6 +1820,11 @@ namespace Game.Presentation
                 ConfigureCancelMoveButton(_contextCancelMoveButton);
                 SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
+                ConfigureFormationButton(
+                    _contextFormationButton,
+                    selectedUnit,
+                    selectedUnit != null &&
+                    selectedUnit.Coordinate.Equals(selection.Coordinate));
                 ConfigureCaptureMineButton(selection);
                 ConfigureCastleButtons(selection);
             }
@@ -2287,6 +2370,9 @@ namespace Game.Presentation
             _inspectUnitButton = CreateMapActionButton(
                 "이 칸의 부대 정보 확인",
                 InspectUnitAtCurrentSelection);
+            _formationButton = CreateMapActionButton(
+                "편성: 전열 중심 · 클릭해서 변경",
+                CycleSelectedUnitFormation);
             _moveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 MoveSelectedPlayerUnit);
@@ -2297,6 +2383,7 @@ namespace Game.Presentation
             _singleMapActionPanel.Add(_createUnitButton);
             _singleMapActionPanel.Add(_selectUnitButton);
             _singleMapActionPanel.Add(_inspectUnitButton);
+            _singleMapActionPanel.Add(_formationButton);
             _singleMapActionPanel.Add(_moveUnitButton);
             _singleMapActionPanel.Add(_cancelMoveButton);
 
@@ -2314,6 +2401,7 @@ namespace Game.Presentation
             SetVisible(_unitTypeButton, false);
             SetVisible(_selectUnitButton, false);
             SetVisible(_inspectUnitButton, false);
+            SetVisible(_formationButton, false);
             SetVisible(_moveUnitButton, false);
             SetVisible(_cancelMoveButton, false);
         }
@@ -2378,6 +2466,9 @@ namespace Game.Presentation
                     InspectUnitAtCurrentSelection();
                     HideMapContextMenu();
                 });
+            _contextFormationButton = CreateMapActionButton(
+                "편성: 전열 중심 · 클릭해서 변경",
+                CycleSelectedUnitFormation);
             _contextMoveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 () =>
@@ -2446,6 +2537,7 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextCreateUnitButton);
             _mapContextMenu.Add(_contextSelectUnitButton);
             _mapContextMenu.Add(_contextInspectUnitButton);
+            _mapContextMenu.Add(_contextFormationButton);
             _mapContextMenu.Add(_contextMoveUnitButton);
             _mapContextMenu.Add(_contextCancelMoveButton);
             _mapContextMenu.Add(_contextCaptureMineButton);

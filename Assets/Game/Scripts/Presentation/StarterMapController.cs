@@ -392,6 +392,23 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public bool TrySetSelectedPlayerUnitFormation(
+            MapUnitFormationPreset preset,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 편성을 변경할 플레이어 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.TrySetUnitFormationPreset(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                preset,
+                out reason);
+        }
+
         public MapUnitState FindUnitAt(GridCoordinate coordinate)
         {
             return _gameplayService?.FindUnitAt(coordinate);
@@ -1287,6 +1304,9 @@ namespace Game.Presentation
                           $" · 이동 보급 {unit.MovementSupplyModifier:P0}" +
                           $" / 공격 보급 {unit.AttackSupplyModifier:P0}" +
                           $" / 회복 보급 {unit.RecoverySupplyModifier:P0}" +
+                          $" · 편성 전열 {unit.Formation.FrontlineRatio:P0}" +
+                          $" / 원거리 {unit.Formation.RangedRatio:P0}" +
+                          $" / 기병 {unit.Formation.CavalryRatio:P0}" +
                           $" · 공격 {unit.AttackModifier:F2}" +
                           $" 방어 {unit.DefenseModifier:F2}" +
                           $" 기동 {unit.MobilityModifier:F2}";

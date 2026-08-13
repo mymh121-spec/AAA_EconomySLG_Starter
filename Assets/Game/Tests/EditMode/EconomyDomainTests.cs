@@ -614,6 +614,91 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_FormsUnitBranchesAndAppliesCombatMix()
+        {
+            var terrain = new GridTerrainKind[4 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                4,
+                2,
+                35,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(3, 1) },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    aiDecisionIntervalSteps: 1000,
+                    initialSoldiersPerUnit: 100));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(unit.Formation.Preset,
+                Is.EqualTo(MapUnitFormationPreset.Frontline));
+            Assert.That(unit.Formation.FrontlineSoldiers, Is.EqualTo(60));
+            Assert.That(unit.Formation.RangedSoldiers, Is.EqualTo(25));
+            Assert.That(unit.Formation.CavalrySoldiers, Is.EqualTo(15));
+            Assert.That(unit.Formation.TotalSoldiers, Is.EqualTo(unit.Soldiers));
+            Assert.That(unit.FormationAttackModifier, Is.EqualTo(1m));
+            Assert.That(unit.FormationDefenseModifier, Is.EqualTo(1m));
+
+            Assert.That(
+                service.TrySetUnitFormationPreset(
+                    "player",
+                    unit.Id,
+                    MapUnitFormationPreset.Ranged,
+                    out _),
+                Is.True);
+            Assert.That(unit.Formation.FrontlineSoldiers, Is.EqualTo(40));
+            Assert.That(unit.Formation.RangedSoldiers, Is.EqualTo(50));
+            Assert.That(unit.Formation.CavalrySoldiers, Is.EqualTo(10));
+            Assert.That(unit.FormationAttackModifier, Is.EqualTo(1.035m));
+            Assert.That(unit.FormationDefenseModifier, Is.EqualTo(0.955m));
+            Assert.That(unit.AttackPower, Is.EqualTo(103.50m));
+            Assert.That(unit.DefensePower, Is.EqualTo(116.51m));
+
+            Assert.That(
+                service.TrySetUnitFormation(
+                    "player",
+                    unit.Id,
+                    50,
+                    30,
+                    19,
+                    out string invalidReason),
+                Is.False);
+            Assert.That(invalidReason, Does.Contain("총병력"));
+            Assert.That(unit.Formation.Preset,
+                Is.EqualTo(MapUnitFormationPreset.Ranged));
+
+            Assert.That(
+                service.TrySetUnitFormation(
+                    "player",
+                    unit.Id,
+                    50,
+                    30,
+                    20,
+                    out _),
+                Is.True);
+            Assert.That(unit.Formation.Preset,
+                Is.EqualTo(MapUnitFormationPreset.Custom));
+            Assert.That(unit.Formation.TotalSoldiers, Is.EqualTo(100));
+            Assert.That(
+                service.TrySetUnitFormationPreset(
+                    "ai_1",
+                    unit.Id,
+                    MapUnitFormationPreset.Cavalry,
+                    out string ownershipReason),
+                Is.False);
+            Assert.That(ownershipReason, Does.Contain("다른 세력"));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_SpawnsMinesAndDepletesOwnedYield()
         {
             var terrain = new GridTerrainKind[6 * 3];
@@ -957,6 +1042,12 @@ namespace Game.Tests
             Assert.That(castle.FoodSupply, Is.EqualTo(1495));
             Assert.That(attacker.Soldiers, Is.EqualTo(82));
             Assert.That(defender.Soldiers, Is.EqualTo(91));
+            Assert.That(attacker.Formation.FrontlineSoldiers, Is.EqualTo(49));
+            Assert.That(attacker.Formation.RangedSoldiers, Is.EqualTo(20));
+            Assert.That(attacker.Formation.CavalrySoldiers, Is.EqualTo(13));
+            Assert.That(defender.Formation.FrontlineSoldiers, Is.EqualTo(54));
+            Assert.That(defender.Formation.RangedSoldiers, Is.EqualTo(22));
+            Assert.That(defender.Formation.CavalrySoldiers, Is.EqualTo(15));
             Assert.That(attacker.Fatigue, Is.EqualTo(10m));
             Assert.That(defender.Morale, Is.EqualTo(85m));
 
