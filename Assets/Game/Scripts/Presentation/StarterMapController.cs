@@ -207,6 +207,7 @@ namespace Game.Presentation
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
+        public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
 
@@ -870,6 +871,7 @@ namespace Game.Presentation
             _gameplayService.MineCaptured += HandleMineCaptured;
             _gameplayService.MineSpawned += HandleMineSpawned;
             _gameplayService.CastleCaptured += HandleCastleCaptured;
+            _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
             _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
 
@@ -895,6 +897,7 @@ namespace Game.Presentation
                 _gameplayService.MineCaptured -= HandleMineCaptured;
                 _gameplayService.MineSpawned -= HandleMineSpawned;
                 _gameplayService.CastleCaptured -= HandleCastleCaptured;
+                _gameplayService.CapitalDestroyed -= HandleCapitalDestroyed;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
                 _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
             }
@@ -1095,11 +1098,15 @@ namespace Game.Presentation
             {
                 if (coordinate.Equals(layout.OpponentStarts[i]))
                 {
+                    MapCastleControlState capital =
+                        _gameplayService?.FindCapital($"ai_{i + 1}");
                     return CreateSelection(
                         coordinate,
                         MapCellContent.EnemyBase,
                         $"경쟁 기업 {i + 1} 본사",
-                        "정찰, 봉쇄, 공격 미션의 대상입니다.");
+                        capital?.IsDestroyed == true
+                            ? "이미 멸망한 수도입니다."
+                            : "정찰·봉쇄·공격 미션 또는 수도 공성의 대상입니다.");
                 }
             }
 
@@ -1246,7 +1253,19 @@ namespace Game.Presentation
                               _gameplayService.FixedStepsToCapture;
                 }
             }
-            if (castle != null)
+            if (castle?.IsCapital == true)
+            {
+                string capitalOwner = castle.IsDestroyed
+                    ? "멸망"
+                    : GetFactionDisplayName(castle.OwnerFactionId) + " 소유";
+                detail += "\n수도 상태: " + capitalOwner +
+                          $" · 성벽 {castle.WallDurability:N0}/" +
+                          $"{castle.MaxWallDurability:N0}" +
+                          $" · 식량 {castle.FoodSupply:N0}/" +
+                          $"{castle.MaxFoodSupply:N0}" +
+                          $" · 방어 보너스 +{castle.DefenseBonus:P0}";
+            }
+            if (castle != null && !castle.IsCapital)
             {
                 string ownerName = string.IsNullOrEmpty(castle.OwnerFactionId)
                     ? "중립"
@@ -1525,6 +1544,8 @@ namespace Game.Presentation
             for (int i = 0; i < _gameplayService.Castles.Count; i++)
             {
                 MapCastleControlState castle = _gameplayService.Castles[i];
+                if (castle.IsCapital)
+                    continue;
                 ForEachSurfaceCopy(xOffset => CreateCastleControlMarker(
                     castle,
                     ToWorldPosition(castle.Coordinate, xOffset)));
@@ -2077,6 +2098,12 @@ namespace Game.Presentation
         {
             RefreshCurrentSelection();
             CastleCaptured?.Invoke(record);
+        }
+
+        private void HandleCapitalDestroyed(MapCapitalDestroyedRecord record)
+        {
+            RefreshCurrentSelection();
+            CapitalDestroyed?.Invoke(record);
         }
 
         private void HandleCastleRoleChanged(MapCastleRoleChangedRecord record)

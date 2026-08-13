@@ -87,6 +87,9 @@ namespace Game.Application.World
         public const int HeadquartersRecruitmentCapacity = 6;
         public const int HeadquartersInitialRecruits = 4;
         public const int HeadquartersRecruitRecoveryDays = 1;
+        public const int CapitalMaxWallDurability = 2500;
+        public const int CapitalMaxFoodSupply = 3000;
+        public const decimal CapitalDefenseBonus = 0.35m;
         public const int MineGuardCapacity = 1;
 
         public static int GetMaxWallDurability(MapCastleRole role)
@@ -305,6 +308,9 @@ namespace Game.Application.World
         private readonly List<string> _garrisonUnitIds = new List<string>();
 
         public GridCoordinate Coordinate { get; }
+        public bool IsCapital { get; }
+        public bool IsDestroyed { get; private set; }
+        public string OriginalOwnerFactionId { get; }
         public string OwnerFactionId { get; internal set; }
         public string CapturingFactionId { get; internal set; }
         public int CaptureProgress { get; internal set; }
@@ -318,10 +324,13 @@ namespace Game.Application.World
         public MapOccupationPolicy OccupationPolicy { get; private set; }
         public int PublicOrder { get; private set; }
         public int WallDurability { get; private set; }
-        public int MaxWallDurability =>
-            MapCastleRules.GetMaxWallDurability(Role);
+        public int MaxWallDurability => IsCapital
+            ? MapCastleRules.CapitalMaxWallDurability
+            : MapCastleRules.GetMaxWallDurability(Role);
         public int FoodSupply { get; private set; }
-        public int MaxFoodSupply => MapCastleRules.GetMaxFoodSupply(Role);
+        public int MaxFoodSupply => IsCapital
+            ? MapCastleRules.CapitalMaxFoodSupply
+            : MapCastleRules.GetMaxFoodSupply(Role);
         public decimal DefenseBonus
         {
             get
@@ -339,7 +348,9 @@ namespace Game.Application.World
                         ? -0.05m
                         : 0m;
                 return Math.Round(
-                    MapCastleRules.GetRoleDefenseBonus(Role) +
+                    (IsCapital
+                        ? MapCastleRules.CapitalDefenseBonus
+                        : MapCastleRules.GetRoleDefenseBonus(Role)) +
                     wallRatio * 0.20m +
                     garrisonBonus +
                     policyBonus,
@@ -349,9 +360,19 @@ namespace Game.Application.World
         }
 
         public MapCastleControlState(GridCoordinate coordinate)
+            : this(coordinate, string.Empty, false)
+        {
+        }
+
+        internal MapCastleControlState(
+            GridCoordinate coordinate,
+            string ownerFactionId,
+            bool isCapital)
         {
             Coordinate = coordinate;
-            OwnerFactionId = string.Empty;
+            IsCapital = isCapital;
+            OriginalOwnerFactionId = ownerFactionId ?? string.Empty;
+            OwnerFactionId = OriginalOwnerFactionId;
             CapturingFactionId = string.Empty;
             Role = MapCastleRole.Unassigned;
             ConflictKind = MapCastleConflictKind.None;
@@ -360,6 +381,18 @@ namespace Game.Application.World
             PublicOrder = 50;
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
+        }
+
+        internal bool MarkCapitalDestroyed()
+        {
+            if (!IsCapital || IsDestroyed)
+                return false;
+
+            IsDestroyed = true;
+            OwnerFactionId = string.Empty;
+            WallDurability = 0;
+            FoodSupply = 0;
+            return true;
         }
 
         internal bool SetRole(MapCastleRole role)
@@ -422,7 +455,7 @@ namespace Game.Application.World
 
         internal bool ApplyOccupationPolicy(MapOccupationPolicy policy)
         {
-            if (policy == MapOccupationPolicy.None ||
+            if (IsCapital || policy == MapOccupationPolicy.None ||
                 OccupationPolicy != MapOccupationPolicy.None)
             {
                 return false;
@@ -504,6 +537,23 @@ namespace Game.Application.World
         }
     }
 
+    public readonly struct MapCapitalDestroyedRecord
+    {
+        public GridCoordinate Coordinate { get; }
+        public string DestroyedFactionId { get; }
+        public string AttackingFactionId { get; }
+
+        public MapCapitalDestroyedRecord(
+            GridCoordinate coordinate,
+            string destroyedFactionId,
+            string attackingFactionId)
+        {
+            Coordinate = coordinate;
+            DestroyedFactionId = destroyedFactionId ?? string.Empty;
+            AttackingFactionId = attackingFactionId ?? string.Empty;
+        }
+    }
+
     public readonly struct MapSiegeDayResult
     {
         public GridCoordinate Coordinate { get; }
@@ -514,6 +564,7 @@ namespace Game.Application.World
         public int DefenderCasualties { get; }
         public int FoodConsumed { get; }
         public bool CastleCaptured { get; }
+        public bool CapitalDestroyed { get; }
         public bool DefenderRetreated { get; }
         public int PursuitCasualties { get; }
 
@@ -527,7 +578,8 @@ namespace Game.Application.World
             int foodConsumed,
             bool castleCaptured,
             bool defenderRetreated = false,
-            int pursuitCasualties = 0)
+            int pursuitCasualties = 0,
+            bool capitalDestroyed = false)
         {
             Coordinate = coordinate;
             Action = action;
@@ -537,6 +589,7 @@ namespace Game.Application.World
             DefenderCasualties = Math.Max(0, defenderCasualties);
             FoodConsumed = Math.Max(0, foodConsumed);
             CastleCaptured = castleCaptured;
+            CapitalDestroyed = capitalDestroyed;
             DefenderRetreated = defenderRetreated;
             PursuitCasualties = Math.Max(0, pursuitCasualties);
         }

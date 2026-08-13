@@ -420,6 +420,25 @@ namespace Game.Presentation
             _playerCampaignState?.DestroyCapital();
         }
 
+        public bool ApplyMapCapitalDestruction(
+            MapCapitalDestroyedRecord destruction)
+        {
+            if (_simulation == null || _campaignSession == null)
+                BuildSimulation();
+
+            bool applied = new CampaignCapitalDestructionService().Apply(
+                _campaignSession.State,
+                destruction);
+            if (!applied)
+                return false;
+
+            _campaignSession.EvaluateTurn(CurrentTurn);
+            if (IsCampaignFinished)
+                _realtimeClock?.SetSpeed(0);
+            RealtimeStateChanged?.Invoke();
+            return true;
+        }
+
         public void MarkPlayerBankrupt()
         {
             _playerCampaignState?.Company.MarkBankrupt();

@@ -497,6 +497,7 @@ namespace Game.Application.World
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
+        public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
 
@@ -543,6 +544,10 @@ namespace Game.Application.World
 
             foreach (KeyValuePair<string, GridCoordinate> entry in _factionBases)
             {
+                _castles.Add(new MapCastleControlState(
+                    entry.Value,
+                    entry.Key,
+                    true));
                 _recruitmentSites.Add(
                     entry.Value,
                     new MapRecruitmentSiteState(
@@ -654,6 +659,23 @@ namespace Game.Application.World
             {
                 if (_castles[i].Coordinate.Equals(coordinate))
                     return _castles[i];
+            }
+
+            return null;
+        }
+
+        public MapCastleControlState FindCapital(string factionId)
+        {
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState castle = _castles[i];
+                if (castle.IsCapital && string.Equals(
+                        castle.OriginalOwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    return castle;
+                }
             }
 
             return null;
@@ -1224,6 +1246,12 @@ namespace Game.Application.World
                 return false;
             }
 
+            if (castle.IsDestroyed)
+            {
+                reason = "이미 멸망한 수도입니다.";
+                return false;
+            }
+
             MapUnitState unit = FindUnit(unitId);
             if (unit == null)
             {
@@ -1336,6 +1364,12 @@ namespace Game.Application.World
             if (castle == null)
             {
                 reason = "해당 위치에는 역할을 지정할 성이 없습니다.";
+                return false;
+            }
+
+            if (castle.IsCapital)
+            {
+                reason = "수도는 거점 역할을 변경할 수 없습니다.";
                 return false;
             }
 
@@ -1463,6 +1497,12 @@ namespace Game.Application.World
             out string reason)
         {
             MapCastleControlState castle = FindCastle(coordinate);
+            if (castle != null && castle.IsCapital)
+            {
+                reason = "수도에는 점령 정책을 적용할 수 없습니다.";
+                return false;
+            }
+
             if (castle == null || !string.Equals(
                 castle.OwnerFactionId,
                 ownerFactionId,
@@ -1715,6 +1755,7 @@ namespace Game.Application.World
                 RefreshCastleGarrison(castle);
 
                 bool captured = false;
+                bool capitalDestroyed = false;
                 bool defenderRetreated = false;
                 int pursuitCasualties = 0;
                 int remainingDefenders = SumSoldiersAt(
@@ -1729,32 +1770,47 @@ namespace Game.Application.World
                      defenderMorale <= 20m);
                 if (sufferedDecisiveLoss)
                 {
-                    decimal pursuitRate = resolvedAction ==
-                        MapSiegeAction.Assault
-                            ? 0.10m
-                            : resolvedAction == MapSiegeAction.Encirclement
-                                ? 0.06m
-                                : resolvedAction == MapSiegeAction.Blockade
-                                    ? 0.03m
-                                    : 0m;
-                    pursuitCasualties = ApplyCasualtiesAt(
-                        castle.Coordinate,
-                        castle.OwnerFactionId,
-                        RoundToInt(remainingDefenders * pursuitRate));
-                    defenderRetreated = RetreatFactionUnitsAt(
-                        castle.Coordinate,
-                        castle.OwnerFactionId);
-                    RefreshCastleGarrison(castle);
-                    remainingDefenders = SumSoldiersAt(
-                        castle.Coordinate,
-                        castle.OwnerFactionId);
+                    if (TryFindRetreatDestination(
+                            castle.Coordinate,
+                            castle.OwnerFactionId,
+                            out GridCoordinate retreatDestination))
+                    {
+                        decimal pursuitRate = resolvedAction ==
+                            MapSiegeAction.Assault
+                                ? 0.10m
+                                : resolvedAction == MapSiegeAction.Encirclement
+                                    ? 0.06m
+                                    : resolvedAction == MapSiegeAction.Blockade
+                                        ? 0.03m
+                                        : 0m;
+                        pursuitCasualties = ApplyCasualtiesAt(
+                            castle.Coordinate,
+                            castle.OwnerFactionId,
+                            RoundToInt(remainingDefenders * pursuitRate));
+                        defenderRetreated = RetreatFactionUnitsAt(
+                            castle.Coordinate,
+                            castle.OwnerFactionId,
+                            retreatDestination);
+                        RefreshCastleGarrison(castle);
+                        remainingDefenders = SumSoldiersAt(
+                            castle.Coordinate,
+                            castle.OwnerFactionId);
+                    }
                 }
                 if ((castle.SiegeAction == MapSiegeAction.Negotiation &&
                      (castle.FoodSupply == 0 || defenderMorale <= 20m)) ||
                     (remainingDefenders == 0 && castle.WallDurability == 0))
                 {
-                    CompleteCastleCapture(castle, wasSiege: true);
-                    captured = true;
+                    if (castle.IsCapital)
+                    {
+                        CompleteCapitalDestruction(castle);
+                        capitalDestroyed = true;
+                    }
+                    else
+                    {
+                        CompleteCastleCapture(castle, wasSiege: true);
+                        captured = true;
+                    }
                 }
 
                 var result = new MapSiegeDayResult(
@@ -1767,7 +1823,8 @@ namespace Game.Application.World
                     foodConsumed,
                     captured,
                     defenderRetreated,
-                    pursuitCasualties);
+                    pursuitCasualties,
+                    capitalDestroyed);
                 _lastSiegeDayResults.Add(result);
                 SiegeDayResolved?.Invoke(result);
                 changed = true;
@@ -1800,15 +1857,12 @@ namespace Game.Application.World
 
         private bool RetreatFactionUnitsAt(
             GridCoordinate coordinate,
-            string factionId)
+            string factionId,
+            GridCoordinate retreatDestination)
         {
             if (string.IsNullOrEmpty(factionId) ||
-                !_factionBases.TryGetValue(
-                    factionId,
-                    out GridCoordinate retreatDestination))
-            {
+                retreatDestination.Equals(coordinate))
                 return false;
-            }
 
             bool retreated = false;
             for (int i = 0; i < _units.Count; i++)
@@ -1829,6 +1883,54 @@ namespace Game.Application.World
             }
 
             return retreated;
+        }
+
+        private bool TryFindRetreatDestination(
+            GridCoordinate origin,
+            string factionId,
+            out GridCoordinate destination)
+        {
+            bool found = false;
+            destination = default;
+            int bestDistance = int.MaxValue;
+            if (_factionBases.TryGetValue(
+                    factionId,
+                    out GridCoordinate headquarters) &&
+                !headquarters.Equals(origin))
+            {
+                destination = headquarters;
+                bestDistance = _layout.ManhattanDistance(
+                    origin,
+                    headquarters);
+                found = true;
+            }
+
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState castle = _castles[i];
+                if (castle.IsCapital || castle.IsDestroyed ||
+                    castle.IsUnderSiege ||
+                    castle.Coordinate.Equals(origin) ||
+                    !string.Equals(
+                        castle.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int distance = _layout.ManhattanDistance(
+                    origin,
+                    castle.Coordinate);
+                if (distance >= bestDistance)
+                    continue;
+
+                destination = castle.Coordinate;
+                bestDistance = distance;
+                found = true;
+            }
+
+            return found;
         }
 
         private int SumSoldiersAt(
@@ -2217,7 +2319,7 @@ namespace Game.Application.World
                         unit.Coordinate,
                         target.Coordinate);
 
-                if (castleTarget != null && castleDistance <= mineDistance)
+                if (castleTarget != null && castleDistance < mineDistance)
                 {
                     if (TryIssueCastleOccupation(
                         factionId,
@@ -2284,6 +2386,8 @@ namespace Game.Application.World
             for (int i = 0; i < _castles.Count; i++)
             {
                 MapCastleControlState castle = _castles[i];
+                if (castle.IsDestroyed)
+                    continue;
                 if (string.Equals(
                     castle.OwnerFactionId,
                     factionId,
@@ -2374,6 +2478,8 @@ namespace Game.Application.World
             for (int castleIndex = 0; castleIndex < _castles.Count; castleIndex++)
             {
                 MapCastleControlState castle = _castles[castleIndex];
+                if (castle.IsDestroyed)
+                    continue;
                 changed |= RefreshCastleGarrison(castle);
 
                 var occupyingFactions = new List<string>();
@@ -2443,6 +2549,16 @@ namespace Game.Application.World
                 }
 
                 changed |= BeginCastleConflict(castle, attackingFactions[0]);
+                if (castle.IsCapital)
+                {
+                    if (castle.CaptureProgress != 0)
+                    {
+                        castle.CaptureProgress = 0;
+                        changed = true;
+                    }
+                    continue;
+                }
+
                 if (ownerPresent || castle.GarrisonUnitCount > 0)
                 {
                     if (castle.CaptureProgress != 0)
@@ -2546,6 +2662,27 @@ namespace Game.Application.World
                 previousOwner,
                 castle.OwnerFactionId,
                 wasSiege));
+        }
+
+        private void CompleteCapitalDestruction(MapCastleControlState capital)
+        {
+            string destroyedFaction = capital.OriginalOwnerFactionId;
+            string attackingFaction = capital.CapturingFactionId;
+            if (!capital.MarkCapitalDestroyed())
+                return;
+
+            ClearCastleConflict(capital);
+            RefreshCastleGarrison(capital);
+            if (_recruitmentSites.TryGetValue(
+                    capital.Coordinate,
+                    out MapRecruitmentSiteState site))
+            {
+                site.Configure(string.Empty, 0, int.MaxValue, 0);
+            }
+            CapitalDestroyed?.Invoke(new MapCapitalDestroyedRecord(
+                capital.Coordinate,
+                destroyedFaction,
+                attackingFaction));
         }
 
         private void ConfigureCastleRecruitmentSite(

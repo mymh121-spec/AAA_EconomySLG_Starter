@@ -266,6 +266,7 @@ namespace Game.Presentation
             gameplayMap.MineCaptured += HandleMineCaptured;
             gameplayMap.MineSpawned += HandleMineSpawned;
             gameplayMap.CastleCaptured += HandleCastleCaptured;
+            gameplayMap.CapitalDestroyed += HandleCapitalDestroyed;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
             _mapEventsBound = true;
@@ -1219,6 +1220,22 @@ namespace Game.Presentation
                     : string.Empty);
         }
 
+        private void HandleCapitalDestroyed(MapCapitalDestroyedRecord record)
+        {
+            if (!_selection.IsSinglePlayer || singlePlayerSimulation == null)
+                return;
+
+            singlePlayerSimulation.ApplyMapCapitalDestruction(record);
+            string destroyedName = string.Equals(
+                record.DestroyedFactionId,
+                "player",
+                StringComparison.Ordinal)
+                ? "플레이어"
+                : record.DestroyedFactionId;
+            SetMapActionFeedback(
+                $"{record.Coordinate}의 {destroyedName} 수도가 멸망했습니다.");
+        }
+
         private void HandleCastleRoleChanged(
             MapCastleRoleChangedRecord record)
         {
@@ -1246,6 +1263,7 @@ namespace Game.Presentation
                 (result.DefenderRetreated
                     ? $" · 수비대 후퇴 · 추격 피해 {result.PursuitCasualties:N0}"
                     : string.Empty) +
+                (result.CapitalDestroyed ? " · 수도 멸망" : string.Empty) +
                 (result.CastleCaptured ? " · 성 함락" : string.Empty));
         }
 
@@ -1723,7 +1741,12 @@ namespace Game.Presentation
                 selection.Content == MapCellContent.PlayerCastle;
             bool isEnemyCastle =
                 selection.Content == MapCellContent.EnemyCastle;
-            bool isCastle = isNeutralCastle || isPlayerCastle || isEnemyCastle;
+            bool isEnemyCapital =
+                selection.Content == MapCellContent.EnemyBase;
+            bool isPlayerCapital =
+                selection.Content == MapCellContent.PlayerBase;
+            bool isCastle = isNeutralCastle || isPlayerCastle ||
+                isEnemyCastle || isEnemyCapital || isPlayerCapital;
             if (!isCastle)
             {
                 SetVisible(_contextCastleActionButton, false);
@@ -1735,7 +1758,7 @@ namespace Game.Presentation
                 return;
             }
 
-            bool canOrder = !isPlayerCastle &&
+            bool canOrder = !isPlayerCastle && !isPlayerCapital &&
                 gameplayMap.CanCaptureOrSiegeSelectedCastle(
                     selection.Coordinate,
                     out _);
@@ -1743,7 +1766,9 @@ namespace Game.Presentation
             bool unitAtCastle = selectedUnit != null &&
                 selectedUnit.Coordinate.Equals(selection.Coordinate);
 
-            SetVisible(_contextCastleActionButton, !isPlayerCastle);
+            SetVisible(
+                _contextCastleActionButton,
+                !isPlayerCastle && !isPlayerCapital);
             _contextCastleActionButton.SetEnabled(canOrder);
             if (isNeutralCastle)
             {
@@ -1756,6 +1781,13 @@ namespace Game.Presentation
                 _contextCastleActionButton.text = unitAtCastle
                     ? "적성 공성전 시작"
                     : "적성으로 이동·공성 준비";
+            }
+
+            if (isEnemyCapital)
+            {
+                _contextCastleActionButton.text = unitAtCastle
+                    ? "적 수도 공성 시작"
+                    : "적 수도로 이동·공성 준비";
             }
 
             SetVisible(_contextCastleRoleButton, isPlayerCastle);
@@ -3240,6 +3272,7 @@ namespace Game.Presentation
                 gameplayMap.MineCaptured -= HandleMineCaptured;
                 gameplayMap.MineSpawned -= HandleMineSpawned;
                 gameplayMap.CastleCaptured -= HandleCastleCaptured;
+                gameplayMap.CapitalDestroyed -= HandleCapitalDestroyed;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
                 gameplayMap.SiegeDayResolved -= HandleSiegeDayResolved;
                 _mapEventsBound = false;

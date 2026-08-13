@@ -1060,6 +1060,103 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_DestroyedCapitalEliminatesCampaignOpponent()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var playerBase = new GridCoordinate(0, 1);
+            var enemyBase = new GridCoordinate(4, 1);
+            var layout = new GridMapLayout(
+                6,
+                3,
+                61,
+                playerBase,
+                new[] { enemyBase },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    initialSoldiersPerUnit: 10000));
+
+            MapCastleControlState enemyCapital = service.FindCapital("ai_1");
+            Assert.That(enemyCapital, Is.Not.Null);
+            Assert.That(enemyCapital.IsCapital, Is.True);
+            Assert.That(enemyCapital.OwnerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(
+                enemyCapital.MaxWallDurability,
+                Is.EqualTo(MapCastleRules.CapitalMaxWallDurability));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState attacker, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueCastleOccupation(
+                    "player",
+                    attacker.Id,
+                    enemyBase,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(8);
+            Assert.That(attacker.Coordinate, Is.EqualTo(enemyBase));
+            Assert.That(enemyCapital.IsUnderSiege, Is.True);
+            Assert.That(
+                service.TrySetSiegeAction(
+                    "player",
+                    attacker.Id,
+                    enemyBase,
+                    MapSiegeAction.Assault,
+                    out _),
+                Is.True);
+
+            MapCapitalDestroyedRecord destruction = default;
+            service.CapitalDestroyed += record => destruction = record;
+            for (int day = 0; day < 3 && !enemyCapital.IsDestroyed; day++)
+                service.AdvanceEconomicDay(out _);
+
+            Assert.That(enemyCapital.IsDestroyed, Is.True);
+            Assert.That(enemyCapital.OwnerFactionId, Is.Empty);
+            Assert.That(destruction.DestroyedFactionId, Is.EqualTo("ai_1"));
+            Assert.That(destruction.AttackingFactionId, Is.EqualTo("player"));
+            Assert.That(service.LastSiegeDayResults.Count, Is.EqualTo(1));
+            Assert.That(
+                service.LastSiegeDayResults[0].CapitalDestroyed,
+                Is.True);
+            Assert.That(
+                service.LastSiegeDayResults[0].CastleCaptured,
+                Is.False);
+
+            var player = new CampaignParticipantState(
+                new Company(new CompanyId("player"), "플레이어", 500000m),
+                true);
+            var opponent = new CampaignParticipantState(
+                new Company(new CompanyId("ai_1"), "경쟁 기업 1", 500000m),
+                false);
+            var campaign = new CampaignState(
+                new[] { player, opponent });
+            Assert.That(
+                new CampaignCapitalDestructionService().Apply(
+                    campaign,
+                    destruction),
+                Is.True);
+            Assert.That(opponent.IsCapitalStanding, Is.False);
+
+            CampaignTurnResult result = new CampaignVictoryEvaluator(
+                new CampaignRuleSet()).Evaluate(new TurnNumber(1), campaign);
+            Assert.That(result.Outcome, Is.EqualTo(CampaignOutcome.Victory));
+            Assert.That(
+                result.EndReason,
+                Is.EqualTo(CampaignEndReason.LastCompanyStanding));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_RecruitmentPoolsRecoverByEconomicDay()
         {
             var terrain = new GridTerrainKind[4 * 2];
@@ -1824,6 +1921,29 @@ namespace Game.Tests
                 Is.EqualTo(CampaignEndReason.CapitalDestroyed));
             Assert.That(bankruptResult.Outcome, Is.EqualTo(CampaignOutcome.Defeat));
             Assert.That(capitalResult.Outcome, Is.EqualTo(CampaignOutcome.Defeat));
+        }
+
+        [Test]
+        public void Campaign_MapCapitalDestructionCausesImmediatePlayerDefeat()
+        {
+            CampaignState campaign = CreateCampaign(500000m, 500000m);
+            var destruction = new MapCapitalDestroyedRecord(
+                new GridCoordinate(0, 0),
+                "player",
+                "ai_1");
+
+            Assert.That(
+                new CampaignCapitalDestructionService().Apply(
+                    campaign,
+                    destruction),
+                Is.True);
+
+            CampaignTurnResult result = new CampaignVictoryEvaluator(
+                new CampaignRuleSet()).Evaluate(new TurnNumber(1), campaign);
+            Assert.That(result.Outcome, Is.EqualTo(CampaignOutcome.Defeat));
+            Assert.That(
+                result.EndReason,
+                Is.EqualTo(CampaignEndReason.CapitalDestroyed));
         }
 
         [Test]
