@@ -791,7 +791,10 @@ namespace Game.Presentation
                 return Array.Empty<MapSupplyTransportRecord>();
 
             simulation.StockMapCapitalSupplies(_gameplayService);
-            return _gameplayService.CreateDailySupplyTransports();
+            IReadOnlyList<MapSupplyTransportRecord> transports =
+                _gameplayService.CreateDailySupplyTransports();
+            simulation.SettleMapSupplyTransportCosts(transports);
+            return transports;
         }
 
         private void GenerateNewMap()

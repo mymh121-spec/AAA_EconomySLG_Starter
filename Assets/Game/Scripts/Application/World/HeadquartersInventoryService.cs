@@ -251,6 +251,9 @@ namespace Game.Application.World
                 CompanyEconomyRuntime company =
                     _world.Companies[companyIndex];
                 string factionId = company.Company.Id.Value;
+                gameplay.ConfigureFactionLogistics(
+                    factionId,
+                    company.VehicleCount);
                 MapCastleControlState capital = gameplay.FindCapital(factionId);
                 if (capital == null || capital.IsDestroyed)
                     continue;
@@ -295,6 +298,38 @@ namespace Game.Application.World
                 food,
                 equipment,
                 medicine);
+        }
+
+        public decimal SettleTransportCosts(
+            IReadOnlyList<MapSupplyTransportRecord> transports)
+        {
+            if (transports == null || transports.Count == 0)
+                return 0m;
+
+            decimal settled = 0m;
+            for (int i = 0; i < transports.Count; i++)
+            {
+                MapSupplyTransportRecord transport = transports[i];
+                if (transport.Cost <= 0m || !_world.TryGetCompany(
+                        new CompanyId(transport.OwnerFactionId),
+                        out CompanyEconomyRuntime company))
+                {
+                    continue;
+                }
+
+                decimal paid = Math.Min(
+                    company.Company.Cash,
+                    transport.Cost);
+                if (paid > 0m)
+                {
+                    company.Company.TrySpend(paid);
+                    settled += paid;
+                }
+                decimal unpaid = transport.Cost - paid;
+                if (unpaid > 0m)
+                    company.Company.AddDebt(unpaid);
+            }
+            return settled;
         }
     }
 }

@@ -638,28 +638,54 @@ namespace Game.Application.World
     {
         public GridCoordinate SourceCastleCoordinate { get; }
         public GridCoordinate DestinationCoordinate { get; }
+        public string OwnerFactionId { get; }
         public MapSupplyDestinationKind DestinationKind { get; }
         public string DestinationUnitId { get; }
         public MapSupplyKind SupplyKind { get; }
         public decimal Amount { get; }
         public IReadOnlyList<GridCoordinate> Route { get; }
         public int Distance => Route.Count;
+        public int RoadTileCount { get; }
+        public decimal TerrainTravelWeight { get; }
+        public int DispatchEconomicDay { get; }
+        public int ArrivalEconomicDay { get; }
+        public int TravelDays => Math.Max(
+            0,
+            ArrivalEconomicDay - DispatchEconomicDay);
+        public decimal Cost { get; }
 
         public MapSupplyTransportRecord(
             GridCoordinate sourceCastleCoordinate,
             GridCoordinate destinationCoordinate,
+            string ownerFactionId,
             MapSupplyDestinationKind destinationKind,
             string destinationUnitId,
             MapSupplyKind supplyKind,
             decimal amount,
-            IReadOnlyList<GridCoordinate> route)
+            IReadOnlyList<GridCoordinate> route,
+            int roadTileCount,
+            decimal terrainTravelWeight,
+            int dispatchEconomicDay,
+            int arrivalEconomicDay,
+            decimal cost)
         {
             SourceCastleCoordinate = sourceCastleCoordinate;
             DestinationCoordinate = destinationCoordinate;
+            OwnerFactionId = ownerFactionId ?? string.Empty;
             DestinationKind = destinationKind;
             DestinationUnitId = destinationUnitId ?? string.Empty;
             SupplyKind = supplyKind;
             Amount = Math.Max(0m, amount);
+            RoadTileCount = Math.Clamp(
+                roadTileCount,
+                0,
+                route?.Count ?? 0);
+            TerrainTravelWeight = Math.Max(0m, terrainTravelWeight);
+            DispatchEconomicDay = Math.Max(0, dispatchEconomicDay);
+            ArrivalEconomicDay = Math.Max(
+                DispatchEconomicDay,
+                arrivalEconomicDay);
+            Cost = Math.Max(0m, cost);
             if (route == null || route.Count == 0)
             {
                 Route = Array.Empty<GridCoordinate>();

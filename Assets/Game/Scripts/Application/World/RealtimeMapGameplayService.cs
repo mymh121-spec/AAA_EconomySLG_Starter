@@ -574,6 +574,13 @@ namespace Game.Application.World
 
     public sealed class RealtimeMapGameplayService
     {
+        private sealed class PendingSupplyTransport
+        {
+            public MapSupplyTransportRecord Record;
+            public MapCastleControlState DestinationCastle;
+            public string DestinationUnitId;
+        }
+
         private sealed class MineProductionAccumulator
         {
             public int NormalMineCount;
@@ -602,6 +609,10 @@ namespace Game.Application.World
         private readonly MapGameplayTuning _tuning;
         private readonly Dictionary<string, GridCoordinate> _factionBases =
             new Dictionary<string, GridCoordinate>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _factionVehicleCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly HashSet<GridCoordinate> _roadTiles =
+            new HashSet<GridCoordinate>();
         private readonly List<string> _aiFactionIds = new List<string>();
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
         private readonly List<MapMineControlState> _mines =
@@ -616,6 +627,8 @@ namespace Game.Application.World
         private readonly List<MapSupplyTransportRecord>
             _lastSupplyTransportRecords =
                 new List<MapSupplyTransportRecord>();
+        private readonly List<PendingSupplyTransport>
+            _pendingSupplyTransports = new List<PendingSupplyTransport>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -636,6 +649,8 @@ namespace Game.Application.World
             _lastSiegeDayResults;
         public IReadOnlyList<MapSupplyTransportRecord>
             LastSupplyTransportRecords => _lastSupplyTransportRecords;
+        public int PendingSupplyTransportCount =>
+            _pendingSupplyTransports.Count;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
@@ -702,6 +717,8 @@ namespace Game.Application.World
                         MapCastleRules.HeadquartersInitialRecruits,
                         MapCastleRules.HeadquartersRecruitRecoveryDays));
             }
+
+            BuildRoadNetwork();
         }
 
         public MapUnitState FindUnit(string unitId)
@@ -1753,6 +1770,7 @@ namespace Game.Application.World
         public bool AdvanceEconomicDay(out MapMineSpawnRecord spawnedMine)
         {
             _economicDaySequence++;
+            bool supplyChanged = AdvancePendingSupplyTransports();
             bool recruitmentChanged = AdvanceRecruitmentPools();
             bool fatigueChanged = RecoverDailyUnitFatigue();
             bool siegeChanged = ResolveDailySieges();
@@ -1762,8 +1780,11 @@ namespace Game.Application.World
                     _economicDaySequence,
                     out GridCoordinate coordinate))
             {
-                if (recruitmentChanged || fatigueChanged || siegeChanged)
+                if (supplyChanged || recruitmentChanged || fatigueChanged ||
+                    siegeChanged)
+                {
                     StateChanged?.Invoke();
+                }
                 return false;
             }
 
@@ -1785,6 +1806,18 @@ namespace Game.Application.World
             StateChanged?.Invoke();
             return true;
         }
+
+        public void ConfigureFactionLogistics(
+            string factionId,
+            int vehicleCount)
+        {
+            if (string.IsNullOrWhiteSpace(factionId))
+                return;
+            _factionVehicleCounts[factionId] = Math.Max(0, vehicleCount);
+        }
+
+        public bool IsRoad(GridCoordinate coordinate) =>
+            _roadTiles.Contains(_layout.Normalize(coordinate));
 
         private bool ResolveDailySieges()
         {
@@ -2405,10 +2438,10 @@ namespace Game.Application.World
                     }
 
                     decimal amount = source.TakeWarehouseSupply(kind, need);
-                    amount = depot.StoreWarehouseSupply(kind, amount);
-                    AddSupplyTransport(
+                    ScheduleSupplyTransport(
                         source,
                         depot.Coordinate,
+                        depot,
                         MapSupplyDestinationKind.ForwardDepot,
                         string.Empty,
                         kind,
@@ -2446,10 +2479,10 @@ namespace Game.Application.World
                     }
 
                     decimal amount = source.TakeWarehouseSupply(kind, need);
-                    amount = unit.StoreSupply(kind, amount);
-                    AddSupplyTransport(
+                    ScheduleSupplyTransport(
                         source,
                         unit.Coordinate,
+                        null,
                         MapSupplyDestinationKind.Unit,
                         unit.Id,
                         kind,
@@ -2515,9 +2548,10 @@ namespace Game.Application.World
             return true;
         }
 
-        private void AddSupplyTransport(
+        private void ScheduleSupplyTransport(
             MapCastleControlState source,
             GridCoordinate destination,
+            MapCastleControlState destinationCastle,
             MapSupplyDestinationKind destinationKind,
             string destinationUnitId,
             MapSupplyKind supplyKind,
@@ -2527,14 +2561,129 @@ namespace Game.Application.World
             if (amount <= 0m)
                 return;
 
-            _lastSupplyTransportRecords.Add(new MapSupplyTransportRecord(
+            int roadTileCount = 0;
+            decimal terrainWeight = 0m;
+            for (int i = 0; i < route.Count; i++)
+            {
+                GridCoordinate coordinate = route[i];
+                bool isRoad = IsRoad(coordinate);
+                if (isRoad)
+                    roadTileCount++;
+                terrainWeight += GetTerrainTravelWeight(
+                    _layout.GetTerrain(coordinate),
+                    isRoad);
+            }
+
+            int vehicleCount = _factionVehicleCounts.TryGetValue(
+                source.OwnerFactionId,
+                out int configuredVehicles)
+                ? configuredVehicles
+                : 0;
+            decimal dailyRange = vehicleCount <= 0
+                ? 0.5m
+                : Math.Min(4m, 1m + (decimal)Math.Sqrt(vehicleCount));
+            int travelDays = route.Count == 0
+                ? 0
+                : Math.Max(1, (int)Math.Ceiling(terrainWeight / dailyRange));
+            decimal cost = Math.Round(
+                amount * 0.20m + terrainWeight * 5m /
+                Math.Max(1m, 1m + vehicleCount * 0.15m),
+                2,
+                MidpointRounding.AwayFromZero);
+            var record = new MapSupplyTransportRecord(
                 source.Coordinate,
                 destination,
+                source.OwnerFactionId,
                 destinationKind,
                 destinationUnitId,
                 supplyKind,
                 amount,
-                route));
+                route,
+                roadTileCount,
+                terrainWeight,
+                _economicDaySequence,
+                _economicDaySequence + travelDays,
+                cost);
+            _lastSupplyTransportRecords.Add(record);
+            if (travelDays == 0)
+            {
+                DeliverSupplyTransport(
+                    record,
+                    destinationCastle,
+                    destinationUnitId);
+                return;
+            }
+
+            _pendingSupplyTransports.Add(new PendingSupplyTransport
+            {
+                Record = record,
+                DestinationCastle = destinationCastle,
+                DestinationUnitId = destinationUnitId
+            });
+        }
+
+        private bool AdvancePendingSupplyTransports()
+        {
+            bool changed = false;
+            for (int i = _pendingSupplyTransports.Count - 1; i >= 0; i--)
+            {
+                PendingSupplyTransport pending = _pendingSupplyTransports[i];
+                if (pending.Record.ArrivalEconomicDay > _economicDaySequence)
+                    continue;
+
+                DeliverSupplyTransport(
+                    pending.Record,
+                    pending.DestinationCastle,
+                    pending.DestinationUnitId);
+                _pendingSupplyTransports.RemoveAt(i);
+                changed = true;
+            }
+            return changed;
+        }
+
+        private void DeliverSupplyTransport(
+            MapSupplyTransportRecord record,
+            MapCastleControlState destinationCastle,
+            string destinationUnitId)
+        {
+            if (destinationCastle != null &&
+                !destinationCastle.IsDestroyed &&
+                string.Equals(
+                    destinationCastle.OwnerFactionId,
+                    record.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                destinationCastle.StoreWarehouseSupply(
+                    record.SupplyKind,
+                    record.Amount);
+                return;
+            }
+
+            MapUnitState unit = FindUnit(destinationUnitId);
+            if (unit != null && string.Equals(
+                    unit.OwnerFactionId,
+                    record.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                unit.StoreSupply(record.SupplyKind, record.Amount);
+            }
+        }
+
+        private static decimal GetTerrainTravelWeight(
+            GridTerrainKind terrain,
+            bool isRoad)
+        {
+            if (isRoad)
+                return 0.60m;
+
+            switch (terrain)
+            {
+                case GridTerrainKind.Forest: return 1.40m;
+                case GridTerrainKind.Desert: return 1.30m;
+                case GridTerrainKind.Hills: return 1.60m;
+                case GridTerrainKind.Tundra: return 1.50m;
+                default: return 1m;
+            }
         }
 
         private static decimal GetForwardDepotTarget(MapSupplyKind kind)
@@ -3330,6 +3479,31 @@ namespace Game.Application.World
             }
 
             return changed;
+        }
+
+        private void BuildRoadNetwork()
+        {
+            foreach (KeyValuePair<string, GridCoordinate> entry in
+                     _factionBases)
+            {
+                _roadTiles.Add(entry.Value);
+                for (int i = 0; i < _castles.Count; i++)
+                {
+                    MapCastleControlState castle = _castles[i];
+                    if (castle.IsCapital)
+                        continue;
+
+                    List<GridCoordinate> route = FindShortestLandPath(
+                        entry.Value,
+                        castle.Coordinate);
+                    for (int routeIndex = 0;
+                         routeIndex < route.Count;
+                         routeIndex++)
+                    {
+                        _roadTiles.Add(route[routeIndex]);
+                    }
+                }
+            }
         }
 
         private List<GridCoordinate> FindShortestLandPath(

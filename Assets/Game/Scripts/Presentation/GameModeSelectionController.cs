@@ -1292,8 +1292,19 @@ namespace Game.Presentation
             gameplayMap.AdvanceEconomicDay(out _);
             if (supplyTransports.Count > 0)
             {
+                decimal totalCost = 0m;
+                int latestArrivalDay = 0;
+                for (int i = 0; i < supplyTransports.Count; i++)
+                {
+                    totalCost += supplyTransports[i].Cost;
+                    latestArrivalDay = Math.Max(
+                        latestArrivalDay,
+                        supplyTransports[i].ArrivalEconomicDay);
+                }
                 SetMapActionFeedback(
-                    $"일일 보급 수송 {supplyTransports.Count:N0}건을 완료했습니다.");
+                    $"일일 보급 수송 {supplyTransports.Count:N0}건을 " +
+                    $"예약했습니다. 비용 {totalCost:N0}원 · " +
+                    $"최장 {latestArrivalDay:N0}일 도착");
             }
         }
 

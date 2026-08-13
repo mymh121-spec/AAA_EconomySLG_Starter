@@ -1479,13 +1479,16 @@ namespace Game.Tests
                 warehouse,
                 0,
                 0m,
-                0m));
+                0m,
+                vehicleCount: 4));
 
             MapCapitalSupplyStockReport stockReport =
                 new MapSupplyStockingService(world)
                     .StockFactionCapitals(gameplay);
             IReadOnlyList<MapSupplyTransportRecord> transports =
                 gameplay.CreateDailySupplyTransports();
+            decimal transportCost = new MapSupplyStockingService(world)
+                .SettleTransportCosts(transports);
 
             Assert.That(stockReport.FoodAmount, Is.EqualTo(100m));
             Assert.That(stockReport.EquipmentAmount, Is.EqualTo(10m));
@@ -1493,16 +1496,31 @@ namespace Game.Tests
             Assert.That(warehouse.GetAvailable(food), Is.EqualTo(0m));
             Assert.That(warehouse.GetAvailable(steel), Is.EqualTo(0m));
             Assert.That(warehouse.GetAvailable(medicine), Is.EqualTo(0m));
-            Assert.That(transports.Count, Is.EqualTo(6));
+            Assert.That(transports.Count, Is.EqualTo(3));
             Assert.That(
                 transports[0].DestinationKind,
                 Is.EqualTo(MapSupplyDestinationKind.ForwardDepot));
             Assert.That(transports[0].Distance, Is.EqualTo(3));
+            Assert.That(transports[0].RoadTileCount, Is.EqualTo(3));
+            Assert.That(transports[0].TerrainTravelWeight, Is.EqualTo(1.8m));
+            Assert.That(transports[0].TravelDays, Is.EqualTo(1));
+            Assert.That(transports[0].ArrivalEconomicDay, Is.EqualTo(1));
+            Assert.That(transportCost, Is.GreaterThan(0m));
+            Assert.That(campaign.Player.Company.Cash, Is.LessThan(1000m));
+            Assert.That(gameplay.PendingSupplyTransportCount, Is.EqualTo(3));
+            Assert.That(unit.SupplyRatio, Is.EqualTo(0m));
+
+            gameplay.AdvanceEconomicDay(out _);
+            Assert.That(gameplay.PendingSupplyTransportCount, Is.EqualTo(0));
+
+            transports = gameplay.CreateDailySupplyTransports();
+            Assert.That(transports.Count, Is.EqualTo(3));
             Assert.That(
-                transports[3].DestinationKind,
+                transports[0].DestinationKind,
                 Is.EqualTo(MapSupplyDestinationKind.Unit));
-            Assert.That(transports[3].DestinationUnitId, Is.EqualTo(unit.Id));
-            Assert.That(transports[3].Distance, Is.EqualTo(0));
+            Assert.That(transports[0].DestinationUnitId, Is.EqualTo(unit.Id));
+            Assert.That(transports[0].Distance, Is.EqualTo(0));
+            Assert.That(transports[0].TravelDays, Is.EqualTo(0));
             Assert.That(unit.FoodSupply, Is.EqualTo(21m));
             Assert.That(unit.EquipmentSupply, Is.EqualTo(2.8m));
             Assert.That(unit.MedicineSupply, Is.EqualTo(0.7m));

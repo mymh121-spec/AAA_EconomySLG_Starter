@@ -345,6 +345,16 @@ namespace Game.Presentation
                 _worldEconomy).StockFactionCapitals(gameplay);
         }
 
+        public decimal SettleMapSupplyTransportCosts(
+            IReadOnlyList<MapSupplyTransportRecord> transports)
+        {
+            if (_simulation == null || _worldEconomy == null)
+                BuildSimulation();
+
+            return new MapSupplyStockingService(
+                _worldEconomy).SettleTransportCosts(transports);
+        }
+
         public bool TryQueueWorldIntervention(
             string opportunityId,
             decimal playerCapability,
