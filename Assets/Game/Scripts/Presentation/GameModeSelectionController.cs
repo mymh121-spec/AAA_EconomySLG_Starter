@@ -69,6 +69,9 @@ namespace Game.Presentation
         private Button _contextPreserveButton;
         private Button _contextAutonomyButton;
         private Button _contextMissionButton;
+        private Button _contextSupplyRaidButton;
+        private Button _contextSupplyBlockadeButton;
+        private Button _contextSupplyEscortButton;
         private Button _neutralNpcTopButton;
         private VisualElement _neutralNpcView;
         private Label _neutralNpcSelectionStatus;
@@ -270,6 +273,8 @@ namespace Game.Presentation
             gameplayMap.CapitalDestroyed += HandleCapitalDestroyed;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
+            gameplayMap.SupplyInterdictionResolved +=
+                HandleSupplyInterdictionResolved;
             _mapEventsBound = true;
         }
 
@@ -1157,6 +1162,24 @@ namespace Game.Presentation
             _contextMissionButton.SetEnabled(missionTarget);
             _contextMissionButton.text = "미션 정보 · 정찰 / 봉쇄 / 공격";
 
+            bool hasSupplyRoute = gameplayMap.TryGetPendingSupplyRouteOwnerAt(
+                selection.Coordinate,
+                out string supplyRouteOwner);
+            bool hasSelectedUnit = gameplayMap.SelectedPlayerUnit != null;
+            bool friendlySupplyRoute = hasSupplyRoute && string.Equals(
+                supplyRouteOwner,
+                gameplayMap.GameplayService.PlayerFactionId,
+                StringComparison.Ordinal);
+            SetVisible(
+                _contextSupplyEscortButton,
+                hasSelectedUnit && friendlySupplyRoute);
+            SetVisible(
+                _contextSupplyRaidButton,
+                hasSelectedUnit && hasSupplyRoute && !friendlySupplyRoute);
+            SetVisible(
+                _contextSupplyBlockadeButton,
+                hasSelectedUnit && hasSupplyRoute && !friendlySupplyRoute);
+
             PositionMapContextMenu(screenPosition);
             SetVisible(_mapContextMenu, true);
         }
@@ -1266,6 +1289,24 @@ namespace Game.Presentation
                     : string.Empty) +
                 (result.CapitalDestroyed ? " · 수도 멸망" : string.Empty) +
                 (result.CastleCaptured ? " · 성 함락" : string.Empty));
+        }
+
+        private void HandleSupplyInterdictionResolved(
+            MapSupplyInterdictionResult result)
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            SetMapActionFeedback(
+                $"{result.Coordinate} 보급로 판정 · " +
+                (result.WasRaided
+                    ? $"화물 손실 {result.CargoLost:N1}/" +
+                      $"{result.CargoBefore:N1}"
+                    : "습격 없음") +
+                (result.WasBlockaded
+                    ? $" · 봉쇄 성공, {result.DelayDays}일 지연"
+                    : string.Empty) +
+                (result.WasEscorted ? " · 호위대 대응" : string.Empty));
         }
 
         private void HandleRealtimeFixedStepsAdvanced(int fixedStepCount)
@@ -2079,6 +2120,30 @@ namespace Game.Presentation
             }
         }
 
+        private void AssignSelectedSupplyMission(
+            MapSupplyMissionKind missionKind)
+        {
+            if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
+                return;
+
+            GridCoordinate coordinate =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            if (!gameplayMap.TryAssignSelectedPlayerSupplyMission(
+                    coordinate,
+                    missionKind,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            SetMapActionFeedback(
+                $"선택 부대에 {coordinate} " +
+                $"{MapSupplyMissionNames.GetKoreanName(missionKind)} 임무를 " +
+                "지정했습니다. 목표 칸 도착 후 일일 물류 판정에 참여합니다.");
+            HideMapContextMenu();
+        }
+
         private void SetMapActionFeedback(string message)
         {
             if (_singleMapActionFeedback != null)
@@ -2359,6 +2424,18 @@ namespace Game.Presentation
             _contextMissionButton = CreateMapActionButton(
                 "미션 정보 · 정찰 / 봉쇄 / 공격",
                 ShowSelectedMissionInformation);
+            _contextSupplyRaidButton = CreateMapActionButton(
+                "적 수송대 습격",
+                () => AssignSelectedSupplyMission(
+                    MapSupplyMissionKind.Raid));
+            _contextSupplyBlockadeButton = CreateMapActionButton(
+                "적 보급로 차단",
+                () => AssignSelectedSupplyMission(
+                    MapSupplyMissionKind.Blockade));
+            _contextSupplyEscortButton = CreateMapActionButton(
+                "아군 수송대 호위",
+                () => AssignSelectedSupplyMission(
+                    MapSupplyMissionKind.Escort));
             Button closeButton = CreateMapActionButton(
                 "닫기",
                 HideMapContextMenu);
@@ -2379,6 +2456,9 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextPreserveButton);
             _mapContextMenu.Add(_contextAutonomyButton);
             _mapContextMenu.Add(_contextMissionButton);
+            _mapContextMenu.Add(_contextSupplyRaidButton);
+            _mapContextMenu.Add(_contextSupplyBlockadeButton);
+            _mapContextMenu.Add(_contextSupplyEscortButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);
             RegisterMapInputGuard(_mapContextMenu);
@@ -3295,6 +3375,8 @@ namespace Game.Presentation
                 gameplayMap.CapitalDestroyed -= HandleCapitalDestroyed;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
                 gameplayMap.SiegeDayResolved -= HandleSiegeDayResolved;
+                gameplayMap.SupplyInterdictionResolved -=
+                    HandleSupplyInterdictionResolved;
                 _mapEventsBound = false;
             }
             if (_panelSettings != null)

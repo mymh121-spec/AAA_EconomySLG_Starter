@@ -127,6 +127,8 @@ namespace Game.Application.World
         public decimal FoodSupply { get; private set; }
         public decimal EquipmentSupply { get; private set; }
         public decimal MedicineSupply { get; private set; }
+        public MapSupplyMissionKind SupplyMissionKind { get; private set; }
+        public GridCoordinate? SupplyMissionCoordinate { get; private set; }
         public decimal FoodSupplyCapacity => Soldiers * 0.21m;
         public decimal EquipmentSupplyCapacity => Soldiers * 0.028m;
         public decimal MedicineSupplyCapacity => Soldiers * 0.007m;
@@ -167,6 +169,8 @@ namespace Game.Application.World
             FoodSupply = 0m;
             EquipmentSupply = 0m;
             MedicineSupply = 0m;
+            SupplyMissionKind = MapSupplyMissionKind.None;
+            SupplyMissionCoordinate = null;
             MovementFatiguePerTile = Math.Clamp(
                 movementFatiguePerTile,
                 0m,
@@ -265,6 +269,16 @@ namespace Game.Application.World
                     break;
             }
             return stored;
+        }
+
+        internal void AssignSupplyMission(
+            MapSupplyMissionKind kind,
+            GridCoordinate coordinate)
+        {
+            SupplyMissionKind = kind;
+            SupplyMissionCoordinate = kind == MapSupplyMissionKind.None
+                ? (GridCoordinate?)null
+                : coordinate;
         }
 
         private static decimal GetSupplyRatio(
@@ -579,6 +593,9 @@ namespace Game.Application.World
             public MapSupplyTransportRecord Record;
             public MapCastleControlState DestinationCastle;
             public string DestinationUnitId;
+            public decimal RemainingAmount;
+            public int EffectiveArrivalEconomicDay;
+            public int LastInterdictionEconomicDay;
         }
 
         private sealed class MineProductionAccumulator
@@ -629,6 +646,9 @@ namespace Game.Application.World
                 new List<MapSupplyTransportRecord>();
         private readonly List<PendingSupplyTransport>
             _pendingSupplyTransports = new List<PendingSupplyTransport>();
+        private readonly List<MapSupplyInterdictionResult>
+            _lastSupplyInterdictionResults =
+                new List<MapSupplyInterdictionResult>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -651,6 +671,8 @@ namespace Game.Application.World
             LastSupplyTransportRecords => _lastSupplyTransportRecords;
         public int PendingSupplyTransportCount =>
             _pendingSupplyTransports.Count;
+        public IReadOnlyList<MapSupplyInterdictionResult>
+            LastSupplyInterdictionResults => _lastSupplyInterdictionResults;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
@@ -659,6 +681,8 @@ namespace Game.Application.World
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapSupplyInterdictionResult>
+            SupplyInterdictionResolved;
 
         public RealtimeMapGameplayService(
             GridMapLayout layout,
@@ -1819,6 +1843,95 @@ namespace Game.Application.World
         public bool IsRoad(GridCoordinate coordinate) =>
             _roadTiles.Contains(_layout.Normalize(coordinate));
 
+        public bool TryGetPendingSupplyRouteOwnerAt(
+            GridCoordinate coordinate,
+            out string ownerFactionId)
+        {
+            GridCoordinate normalized = _layout.Normalize(coordinate);
+            for (int i = 0; i < _pendingSupplyTransports.Count; i++)
+            {
+                MapSupplyTransportRecord record =
+                    _pendingSupplyTransports[i].Record;
+                if (record.SourceCastleCoordinate.Equals(normalized) ||
+                    record.DestinationCoordinate.Equals(normalized) ||
+                    RouteContains(record.Route, normalized))
+                {
+                    ownerFactionId = record.OwnerFactionId;
+                    return true;
+                }
+            }
+
+            ownerFactionId = string.Empty;
+            return false;
+        }
+
+        public bool TryAssignSupplyMission(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            MapSupplyMissionKind missionKind,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "임무를 수행할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (missionKind == MapSupplyMissionKind.None)
+            {
+                unit.AssignSupplyMission(missionKind, coordinate);
+                reason = string.Empty;
+                StateChanged?.Invoke();
+                return true;
+            }
+
+            GridCoordinate normalized = _layout.Normalize(coordinate);
+            if (!TryGetPendingSupplyRouteOwnerAt(
+                    normalized,
+                    out string transportOwner))
+            {
+                reason = "이 위치를 지나는 예약 수송대가 없습니다.";
+                return false;
+            }
+
+            bool friendlyTransport = string.Equals(
+                transportOwner,
+                ownerFactionId,
+                StringComparison.Ordinal);
+            if (missionKind == MapSupplyMissionKind.Escort &&
+                !friendlyTransport)
+            {
+                reason = "호위 임무는 아군 수송대에만 지정할 수 있습니다.";
+                return false;
+            }
+            if ((missionKind == MapSupplyMissionKind.Raid ||
+                 missionKind == MapSupplyMissionKind.Blockade) &&
+                friendlyTransport)
+            {
+                reason = "습격과 봉쇄는 적 수송대에만 지정할 수 있습니다.";
+                return false;
+            }
+
+            if (!unit.Coordinate.Equals(normalized) &&
+                !TryIssueMove(
+                    ownerFactionId,
+                    unitId,
+                    normalized,
+                    out reason))
+            {
+                return false;
+            }
+
+            unit.AssignSupplyMission(missionKind, normalized);
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
         private bool ResolveDailySieges()
         {
             _lastSiegeDayResults.Clear();
@@ -2618,34 +2731,163 @@ namespace Game.Application.World
             {
                 Record = record,
                 DestinationCastle = destinationCastle,
-                DestinationUnitId = destinationUnitId
+                DestinationUnitId = destinationUnitId,
+                RemainingAmount = record.Amount,
+                EffectiveArrivalEconomicDay = record.ArrivalEconomicDay,
+                LastInterdictionEconomicDay = -1
             });
         }
 
         private bool AdvancePendingSupplyTransports()
         {
+            _lastSupplyInterdictionResults.Clear();
             bool changed = false;
             for (int i = _pendingSupplyTransports.Count - 1; i >= 0; i--)
             {
                 PendingSupplyTransport pending = _pendingSupplyTransports[i];
-                if (pending.Record.ArrivalEconomicDay > _economicDaySequence)
+                changed |= ResolveSupplyInterdiction(pending);
+                if (pending.RemainingAmount <= 0m)
+                {
+                    _pendingSupplyTransports.RemoveAt(i);
+                    changed = true;
+                    continue;
+                }
+                if (pending.EffectiveArrivalEconomicDay >
+                    _economicDaySequence)
                     continue;
 
                 DeliverSupplyTransport(
                     pending.Record,
                     pending.DestinationCastle,
-                    pending.DestinationUnitId);
+                    pending.DestinationUnitId,
+                    pending.RemainingAmount);
                 _pendingSupplyTransports.RemoveAt(i);
                 changed = true;
             }
             return changed;
         }
 
+        private bool ResolveSupplyInterdiction(PendingSupplyTransport pending)
+        {
+            if (pending.LastInterdictionEconomicDay == _economicDaySequence ||
+                pending.Record.Route.Count == 0)
+            {
+                return false;
+            }
+
+            GridCoordinate convoyCoordinate = GetTransportCoordinate(
+                pending);
+            decimal raidPower = SumSupplyMissionPowerAt(
+                convoyCoordinate,
+                pending.Record.OwnerFactionId,
+                MapSupplyMissionKind.Raid,
+                false);
+            decimal blockadePower = SumSupplyMissionPowerAt(
+                convoyCoordinate,
+                pending.Record.OwnerFactionId,
+                MapSupplyMissionKind.Blockade,
+                false);
+            decimal escortPower = SumSupplyMissionPowerAt(
+                convoyCoordinate,
+                pending.Record.OwnerFactionId,
+                MapSupplyMissionKind.Escort,
+                true);
+            if (raidPower <= 0m && blockadePower <= 0m)
+                return false;
+
+            pending.LastInterdictionEconomicDay = _economicDaySequence;
+            bool escorted = escortPower > 0m;
+            decimal cargoBefore = pending.RemainingAmount;
+            decimal cargoLost = 0m;
+            if (raidPower > 0m)
+            {
+                decimal attackShare = raidPower /
+                    Math.Max(1m, raidPower + escortPower);
+                decimal lossRate = escorted
+                    ? 0.10m + attackShare * 0.25m
+                    : 0.45m;
+                cargoLost = Math.Round(
+                    cargoBefore * Math.Clamp(lossRate, 0m, 0.75m),
+                    2,
+                    MidpointRounding.AwayFromZero);
+                pending.RemainingAmount = Math.Max(
+                    0m,
+                    pending.RemainingAmount - cargoLost);
+            }
+
+            bool blockaded = blockadePower > escortPower;
+            int delayDays = blockaded ? 1 : 0;
+            pending.EffectiveArrivalEconomicDay += delayDays;
+            var result = new MapSupplyInterdictionResult(
+                convoyCoordinate,
+                pending.Record.OwnerFactionId,
+                pending.Record.SupplyKind,
+                cargoBefore,
+                cargoLost,
+                raidPower > 0m,
+                blockaded,
+                escorted,
+                delayDays);
+            _lastSupplyInterdictionResults.Add(result);
+            SupplyInterdictionResolved?.Invoke(result);
+            return true;
+        }
+
+        private GridCoordinate GetTransportCoordinate(
+            PendingSupplyTransport pending)
+        {
+            int totalDays = Math.Max(1, pending.Record.TravelDays);
+            int elapsedDays = Math.Clamp(
+                _economicDaySequence - pending.Record.DispatchEconomicDay,
+                0,
+                totalDays);
+            int index = Math.Clamp(
+                (int)Math.Floor(
+                    elapsedDays / (decimal)totalDays *
+                    pending.Record.Route.Count),
+                0,
+                pending.Record.Route.Count - 1);
+            return pending.Record.Route[index];
+        }
+
+        private decimal SumSupplyMissionPowerAt(
+            GridCoordinate coordinate,
+            string transportOwnerFactionId,
+            MapSupplyMissionKind missionKind,
+            bool friendly)
+        {
+            decimal power = 0m;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers <= 0 ||
+                    unit.SupplyMissionKind != missionKind ||
+                    !unit.SupplyMissionCoordinate.HasValue ||
+                    !unit.SupplyMissionCoordinate.Value.Equals(coordinate) ||
+                    !unit.Coordinate.Equals(coordinate))
+                {
+                    continue;
+                }
+
+                bool sameFaction = string.Equals(
+                    unit.OwnerFactionId,
+                    transportOwnerFactionId,
+                    StringComparison.Ordinal);
+                if (sameFaction == friendly)
+                    power += unit.AttackPower;
+            }
+            return power;
+        }
+
         private void DeliverSupplyTransport(
             MapSupplyTransportRecord record,
             MapCastleControlState destinationCastle,
-            string destinationUnitId)
+            string destinationUnitId,
+            decimal amount = -1m)
         {
+            decimal deliveredAmount = amount < 0m
+                ? record.Amount
+                : Math.Min(record.Amount, Math.Max(0m, amount));
             if (destinationCastle != null &&
                 !destinationCastle.IsDestroyed &&
                 string.Equals(
@@ -2655,7 +2897,7 @@ namespace Game.Application.World
             {
                 destinationCastle.StoreWarehouseSupply(
                     record.SupplyKind,
-                    record.Amount);
+                    deliveredAmount);
                 return;
             }
 
@@ -2665,8 +2907,22 @@ namespace Game.Application.World
                     record.OwnerFactionId,
                     StringComparison.Ordinal))
             {
-                unit.StoreSupply(record.SupplyKind, record.Amount);
+                unit.StoreSupply(record.SupplyKind, deliveredAmount);
             }
+        }
+
+        private static bool RouteContains(
+            IReadOnlyList<GridCoordinate> route,
+            GridCoordinate coordinate)
+        {
+            if (route == null)
+                return false;
+            for (int i = 0; i < route.Count; i++)
+            {
+                if (route[i].Equals(coordinate))
+                    return true;
+            }
+            return false;
         }
 
         private static decimal GetTerrainTravelWeight(

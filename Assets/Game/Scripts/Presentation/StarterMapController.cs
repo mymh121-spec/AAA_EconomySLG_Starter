@@ -210,6 +210,8 @@ namespace Game.Presentation
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapSupplyInterdictionResult>
+            SupplyInterdictionResolved;
 
         public void Initialize()
         {
@@ -797,6 +799,39 @@ namespace Game.Presentation
             return transports;
         }
 
+        public bool TryGetPendingSupplyRouteOwnerAt(
+            GridCoordinate coordinate,
+            out string ownerFactionId)
+        {
+            if (_gameplayService == null)
+            {
+                ownerFactionId = string.Empty;
+                return false;
+            }
+            return _gameplayService.TryGetPendingSupplyRouteOwnerAt(
+                coordinate,
+                out ownerFactionId);
+        }
+
+        public bool TryAssignSelectedPlayerSupplyMission(
+            GridCoordinate coordinate,
+            MapSupplyMissionKind missionKind,
+            out string reason)
+        {
+            if (_gameplayService == null ||
+                string.IsNullOrEmpty(_selectedPlayerUnitId))
+            {
+                reason = "먼저 아군 부대를 선택하세요.";
+                return false;
+            }
+            return _gameplayService.TryAssignSupplyMission(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                missionKind,
+                out reason);
+        }
+
         private void GenerateNewMap()
         {
             int width = Mathf.Clamp(mapWidth, 40, 160);
@@ -888,6 +923,8 @@ namespace Game.Presentation
             _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
             _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
+            _gameplayService.SupplyInterdictionResolved +=
+                HandleSupplyInterdictionResolved;
 
             if (_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
@@ -914,6 +951,8 @@ namespace Game.Presentation
                 _gameplayService.CapitalDestroyed -= HandleCapitalDestroyed;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
                 _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
+                _gameplayService.SupplyInterdictionResolved -=
+                    HandleSupplyInterdictionResolved;
             }
 
             _gameplayService = null;
@@ -1363,6 +1402,19 @@ namespace Game.Presentation
                           $"{headquartersRecruitment.AvailableRecruits}/" +
                           headquartersRecruitment.RecruitmentCapacity +
                           " · 하루마다 1명분 회복";
+            }
+            if (_gameplayService != null &&
+                _gameplayService.TryGetPendingSupplyRouteOwnerAt(
+                    coordinate,
+                    out string supplyRouteOwner))
+            {
+                bool friendlyRoute = string.Equals(
+                    supplyRouteOwner,
+                    _gameplayService.PlayerFactionId,
+                    StringComparison.Ordinal);
+                detail += friendlyRoute
+                    ? "\n아군 예약 수송 경로 · 우클릭으로 호위 임무 지정"
+                    : "\n적 예약 수송 경로 · 우클릭으로 습격·봉쇄 임무 지정";
             }
 
             string capturingFactionId = castle?.CapturingFactionId ??
@@ -2152,6 +2204,13 @@ namespace Game.Presentation
         {
             RefreshCurrentSelection();
             SiegeDayResolved?.Invoke(result);
+        }
+
+        private void HandleSupplyInterdictionResolved(
+            MapSupplyInterdictionResult result)
+        {
+            RefreshCurrentSelection();
+            SupplyInterdictionResolved?.Invoke(result);
         }
 
         private void RefreshCurrentSelection()

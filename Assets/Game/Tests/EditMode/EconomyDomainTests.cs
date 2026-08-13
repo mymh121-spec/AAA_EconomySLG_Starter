@@ -1537,6 +1537,174 @@ namespace Game.Tests
         }
 
         [Test]
+        public void SupplyLogistics_RaidBlockadeAndEscortResolveOnRoute()
+        {
+            var terrain = new GridTerrainKind[6 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var depotCoordinate = new GridCoordinate(3, 0);
+            var layout = new GridMapLayout(
+                6,
+                2,
+                79,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(5, 1) },
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { depotCoordinate });
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "opponent_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCaptureCastle: 1,
+                    fixedStepsToSiegeUndefendedCastle: 1,
+                    aiDecisionIntervalSteps: 1000));
+
+            Assert.That(
+                gameplay.TryCreateUnit(
+                    "player",
+                    out MapUnitState escort,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryCreateUnit(
+                    "opponent_1",
+                    out MapUnitState raider,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryCreateUnit(
+                    "opponent_1",
+                    out MapUnitState blocker,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryIssueCastleOccupation(
+                    "player",
+                    escort.Id,
+                    depotCoordinate,
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(4);
+            Assert.That(
+                gameplay.TrySetCastleRole(
+                    "player",
+                    depotCoordinate,
+                    MapCastleRole.SupplyHub,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryStockFactionCapitalWarehouse(
+                    "player",
+                    MapSupplyKind.Food,
+                    100m,
+                    out _),
+                Is.True);
+            gameplay.ConfigureFactionLogistics("player", 0);
+            IReadOnlyList<MapSupplyTransportRecord> transports =
+                gameplay.CreateDailySupplyTransports();
+            Assert.That(transports.Count, Is.EqualTo(1));
+            Assert.That(transports[0].TravelDays, Is.EqualTo(4));
+
+            var firstRouteTile = new GridCoordinate(1, 0);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "player",
+                    escort.Id,
+                    firstRouteTile,
+                    MapSupplyMissionKind.Escort,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "opponent_1",
+                    raider.Id,
+                    firstRouteTile,
+                    MapSupplyMissionKind.Raid,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "opponent_1",
+                    blocker.Id,
+                    firstRouteTile,
+                    MapSupplyMissionKind.Blockade,
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(5);
+            gameplay.AdvanceEconomicDay(out _);
+
+            Assert.That(
+                gameplay.LastSupplyInterdictionResults.Count,
+                Is.EqualTo(1));
+            MapSupplyInterdictionResult escortedResult =
+                gameplay.LastSupplyInterdictionResults[0];
+            Assert.That(escortedResult.WasRaided, Is.True);
+            Assert.That(escortedResult.WasEscorted, Is.True);
+            Assert.That(escortedResult.WasBlockaded, Is.False);
+            Assert.That(escortedResult.CargoLost, Is.GreaterThan(0m));
+            Assert.That(escortedResult.CargoLost, Is.LessThan(45m));
+
+            var secondRouteTile = new GridCoordinate(2, 0);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "player",
+                    escort.Id,
+                    firstRouteTile,
+                    MapSupplyMissionKind.None,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "opponent_1",
+                    raider.Id,
+                    secondRouteTile,
+                    MapSupplyMissionKind.Raid,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryAssignSupplyMission(
+                    "opponent_1",
+                    blocker.Id,
+                    secondRouteTile,
+                    MapSupplyMissionKind.Blockade,
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(1);
+            gameplay.AdvanceEconomicDay(out _);
+
+            MapSupplyInterdictionResult unescortedResult =
+                gameplay.LastSupplyInterdictionResults[0];
+            Assert.That(unescortedResult.WasEscorted, Is.False);
+            Assert.That(unescortedResult.WasBlockaded, Is.True);
+            Assert.That(unescortedResult.DelayDays, Is.EqualTo(1));
+            decimal expectedUnescortedLoss = Math.Round(
+                escortedResult.CargoRemaining * 0.45m,
+                2,
+                MidpointRounding.AwayFromZero);
+            decimal expectedDelivered =
+                escortedResult.CargoRemaining - expectedUnescortedLoss;
+            Assert.That(
+                unescortedResult.CargoLost,
+                Is.EqualTo(expectedUnescortedLoss));
+            Assert.That(
+                unescortedResult.CargoRemaining,
+                Is.EqualTo(expectedDelivered));
+
+            gameplay.AdvanceEconomicDay(out _);
+            gameplay.AdvanceEconomicDay(out _);
+            gameplay.AdvanceEconomicDay(out _);
+            Assert.That(gameplay.PendingSupplyTransportCount, Is.EqualTo(0));
+            Assert.That(
+                gameplay.FindCastle(depotCoordinate).WarehouseFoodAmount,
+                Is.EqualTo(expectedDelivered));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
         {
             var terrain = new GridTerrainKind[3 * 2];

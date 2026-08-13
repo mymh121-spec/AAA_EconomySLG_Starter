@@ -33,6 +33,28 @@ namespace Game.Application.World
         Unit
     }
 
+    public enum MapSupplyMissionKind
+    {
+        None,
+        Raid,
+        Blockade,
+        Escort
+    }
+
+    public static class MapSupplyMissionNames
+    {
+        public static string GetKoreanName(MapSupplyMissionKind kind)
+        {
+            switch (kind)
+            {
+                case MapSupplyMissionKind.Raid: return "수송대 습격";
+                case MapSupplyMissionKind.Blockade: return "보급로 차단";
+                case MapSupplyMissionKind.Escort: return "수송대 호위";
+                default: return "보급 임무 없음";
+            }
+        }
+    }
+
     public enum MapSiegeAction
     {
         None,
@@ -696,6 +718,43 @@ namespace Game.Application.World
             for (int i = 0; i < route.Count; i++)
                 copy[i] = route[i];
             Route = copy;
+        }
+    }
+
+    public readonly struct MapSupplyInterdictionResult
+    {
+        public GridCoordinate Coordinate { get; }
+        public string TransportOwnerFactionId { get; }
+        public MapSupplyKind SupplyKind { get; }
+        public decimal CargoBefore { get; }
+        public decimal CargoLost { get; }
+        public decimal CargoRemaining { get; }
+        public bool WasRaided { get; }
+        public bool WasBlockaded { get; }
+        public bool WasEscorted { get; }
+        public int DelayDays { get; }
+
+        public MapSupplyInterdictionResult(
+            GridCoordinate coordinate,
+            string transportOwnerFactionId,
+            MapSupplyKind supplyKind,
+            decimal cargoBefore,
+            decimal cargoLost,
+            bool wasRaided,
+            bool wasBlockaded,
+            bool wasEscorted,
+            int delayDays)
+        {
+            Coordinate = coordinate;
+            TransportOwnerFactionId = transportOwnerFactionId ?? string.Empty;
+            SupplyKind = supplyKind;
+            CargoBefore = Math.Max(0m, cargoBefore);
+            CargoLost = Math.Clamp(cargoLost, 0m, CargoBefore);
+            CargoRemaining = CargoBefore - CargoLost;
+            WasRaided = wasRaided;
+            WasBlockaded = wasBlockaded;
+            WasEscorted = wasEscorted;
+            DelayDays = Math.Max(0, delayDays);
         }
     }
 
