@@ -127,18 +127,35 @@ namespace Game.Application.World
         public decimal FoodSupply { get; private set; }
         public decimal EquipmentSupply { get; private set; }
         public decimal MedicineSupply { get; private set; }
+        public bool UsesSupplySystem { get; private set; }
         public MapSupplyMissionKind SupplyMissionKind { get; private set; }
         public GridCoordinate? SupplyMissionCoordinate { get; private set; }
         public decimal FoodSupplyCapacity => Soldiers * 0.21m;
         public decimal EquipmentSupplyCapacity => Soldiers * 0.028m;
         public decimal MedicineSupplyCapacity => Soldiers * 0.007m;
+        public decimal FoodSupplyRatio => GetSupplyRatio(
+            FoodSupply,
+            FoodSupplyCapacity);
+        public decimal EquipmentSupplyRatio => GetSupplyRatio(
+            EquipmentSupply,
+            EquipmentSupplyCapacity);
+        public decimal MedicineSupplyRatio => GetSupplyRatio(
+            MedicineSupply,
+            MedicineSupplyCapacity);
+        public decimal MovementSupplyModifier => UsesSupplySystem
+            ? 0.50m + FoodSupplyRatio * 0.50m
+            : 1m;
+        public decimal AttackSupplyModifier => UsesSupplySystem
+            ? 0.40m + EquipmentSupplyRatio * 0.60m
+            : 1m;
+        public decimal RecoverySupplyModifier => UsesSupplySystem
+            ? 0.25m + MedicineSupplyRatio * 0.75m
+            : 1m;
         public decimal SupplyRatio => Math.Min(
-            GetSupplyRatio(FoodSupply, FoodSupplyCapacity),
+            FoodSupplyRatio,
             Math.Min(
-                GetSupplyRatio(
-                    EquipmentSupply,
-                    EquipmentSupplyCapacity),
-                GetSupplyRatio(MedicineSupply, MedicineSupplyCapacity)));
+                EquipmentSupplyRatio,
+                MedicineSupplyRatio));
         public decimal AttackPower => CalculateCombatPower(true);
         public decimal DefensePower => CalculateCombatPower(false);
         public bool IsMoving => _path.Count > 0;
@@ -169,6 +186,7 @@ namespace Game.Application.World
             FoodSupply = 0m;
             EquipmentSupply = 0m;
             MedicineSupply = 0m;
+            UsesSupplySystem = false;
             SupplyMissionKind = MapSupplyMissionKind.None;
             SupplyMissionCoordinate = null;
             MovementFatiguePerTile = Math.Clamp(
@@ -190,8 +208,10 @@ namespace Game.Application.World
                 1m - Fatigue / 200m,
                 0.50m,
                 1m);
+            decimal supplyFactor = attack ? AttackSupplyModifier : 1m;
             return Math.Round(
-                Soldiers * basePower * moraleFactor * fatigueFactor,
+                Soldiers * basePower * moraleFactor * fatigueFactor *
+                supplyFactor,
                 2,
                 MidpointRounding.AwayFromZero);
         }
@@ -253,6 +273,7 @@ namespace Game.Application.World
 
         internal decimal StoreSupply(MapSupplyKind kind, decimal amount)
         {
+            UsesSupplySystem = true;
             decimal stored = Math.Min(
                 Math.Max(0m, amount),
                 Math.Max(0m, GetSupplyCapacity(kind) - GetSupply(kind)));
@@ -269,6 +290,53 @@ namespace Game.Application.World
                     break;
             }
             return stored;
+        }
+
+        internal void EnableSupplySystem()
+        {
+            UsesSupplySystem = true;
+        }
+
+        internal bool ConsumeDailySupplies()
+        {
+            if (Soldiers <= 0)
+                return false;
+
+            decimal foodNeed = Soldiers * 0.03m;
+            decimal equipmentNeed = Soldiers * 0.004m;
+            decimal medicineNeed = Soldiers * 0.001m;
+            decimal foodConsumed = TakeSupply(
+                MapSupplyKind.Food,
+                foodNeed);
+            TakeSupply(MapSupplyKind.Equipment, equipmentNeed);
+            TakeSupply(MapSupplyKind.Medicine, medicineNeed);
+            decimal foodFulfillment = foodNeed <= 0m
+                ? 1m
+                : Math.Clamp(foodConsumed / foodNeed, 0m, 1m);
+            if (foodFulfillment < 1m)
+            {
+                AdjustMorale(-8m * (1m - foodFulfillment));
+                AdjustFatigue(4m * (1m - foodFulfillment));
+            }
+            return foodNeed > 0m || equipmentNeed > 0m || medicineNeed > 0m;
+        }
+
+        private decimal TakeSupply(MapSupplyKind kind, decimal amount)
+        {
+            decimal taken = Math.Min(GetSupply(kind), Math.Max(0m, amount));
+            switch (kind)
+            {
+                case MapSupplyKind.Food:
+                    FoodSupply -= taken;
+                    break;
+                case MapSupplyKind.Equipment:
+                    EquipmentSupply -= taken;
+                    break;
+                case MapSupplyKind.Medicine:
+                    MedicineSupply -= taken;
+                    break;
+            }
+            return taken;
         }
 
         internal void AssignSupplyMission(
@@ -628,6 +696,8 @@ namespace Game.Application.World
             new Dictionary<string, GridCoordinate>(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _factionVehicleCounts =
             new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly HashSet<string> _supplyEnabledFactionIds =
+            new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<GridCoordinate> _roadTiles =
             new HashSet<GridCoordinate>();
         private readonly List<string> _aiFactionIds = new List<string>();
@@ -1052,6 +1122,8 @@ namespace Game.Application.World
                 armorClass,
                 _tuning.InitialSoldiersPerUnit,
                 _tuning.MovementFatiguePerTile);
+            if (_supplyEnabledFactionIds.Contains(ownerFactionId))
+                unit.EnableSupplySystem();
             _units.Add(unit);
             MapCastleControlState castle = FindCastle(origin);
             if (castle != null)
@@ -1192,12 +1264,16 @@ namespace Game.Application.World
             if (unit == null)
                 return _tuning.FixedStepsPerMove;
 
+            double rawSteps = _tuning.FixedStepsPerMove /
+                (double)(unit.MobilityModifier *
+                    GetMovementSupplyModifier(unit));
             return Math.Max(
                 1,
-                (int)Math.Round(
-                    _tuning.FixedStepsPerMove /
-                    (double)unit.MobilityModifier,
-                    MidpointRounding.AwayFromZero));
+                IsSupplyEnabled(unit)
+                    ? (int)Math.Ceiling(rawSteps)
+                    : (int)Math.Round(
+                        rawSteps,
+                        MidpointRounding.AwayFromZero));
         }
 
         public int GetRemainingMovementFixedSteps(MapUnitState unit)
@@ -1795,6 +1871,7 @@ namespace Game.Application.World
         {
             _economicDaySequence++;
             bool supplyChanged = AdvancePendingSupplyTransports();
+            supplyChanged |= ConsumeDailyUnitSupplies();
             bool recruitmentChanged = AdvanceRecruitmentPools();
             bool fatigueChanged = RecoverDailyUnitFatigue();
             bool siegeChanged = ResolveDailySieges();
@@ -1838,6 +1915,42 @@ namespace Game.Application.World
             if (string.IsNullOrWhiteSpace(factionId))
                 return;
             _factionVehicleCounts[factionId] = Math.Max(0, vehicleCount);
+            _supplyEnabledFactionIds.Add(factionId);
+            for (int i = 0; i < _units.Count; i++)
+            {
+                if (string.Equals(
+                    _units[i].OwnerFactionId,
+                    factionId,
+                    StringComparison.Ordinal))
+                {
+                    _units[i].EnableSupplySystem();
+                }
+            }
+        }
+
+        public bool TryProvisionUnitSupply(
+            string ownerFactionId,
+            string unitId,
+            MapSupplyKind kind,
+            decimal amount,
+            out decimal storedAmount)
+        {
+            storedAmount = 0m;
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || amount <= 0m || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            _supplyEnabledFactionIds.Add(ownerFactionId);
+            storedAmount = unit.StoreSupply(kind, amount);
+            if (storedAmount <= 0m)
+                return false;
+            StateChanged?.Invoke();
+            return true;
         }
 
         public bool IsRoad(GridCoordinate coordinate) =>
@@ -2344,11 +2457,33 @@ namespace Game.Application.World
             bool changed = false;
             for (int i = 0; i < _units.Count; i++)
             {
-                changed |= _units[i].RecoverFatigue(
-                    _tuning.DailyFatigueRecovery);
+                MapUnitState unit = _units[i];
+                decimal recoveryModifier = IsSupplyEnabled(unit)
+                    ? unit.RecoverySupplyModifier
+                    : 1m;
+                changed |= unit.RecoverFatigue(
+                    _tuning.DailyFatigueRecovery * recoveryModifier);
             }
             return changed;
         }
+
+        private bool ConsumeDailyUnitSupplies()
+        {
+            bool changed = false;
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (IsSupplyEnabled(unit))
+                    changed |= unit.ConsumeDailySupplies();
+            }
+            return changed;
+        }
+
+        private bool IsSupplyEnabled(MapUnitState unit) =>
+            unit?.UsesSupplySystem == true;
+
+        private decimal GetMovementSupplyModifier(MapUnitState unit) =>
+            IsSupplyEnabled(unit) ? unit.MovementSupplyModifier : 1m;
 
         public IReadOnlyList<MapMineProductionRecord> CreateDailyProduction()
         {
@@ -3299,8 +3434,16 @@ namespace Game.Application.World
             bool changed = false;
             for (int i = 0; i < _units.Count; i++)
             {
-                changed |= _units[i].AdvanceStaminaRecovery(
-                    _tuning.StaminaRecoveryIntervalSteps);
+                MapUnitState unit = _units[i];
+                decimal recoveryModifier = IsSupplyEnabled(unit)
+                    ? unit.RecoverySupplyModifier
+                    : 1m;
+                int recoverySteps = Math.Max(
+                    1,
+                    (int)Math.Ceiling(
+                        _tuning.StaminaRecoveryIntervalSteps /
+                        (double)recoveryModifier));
+                changed |= unit.AdvanceStaminaRecovery(recoverySteps);
             }
 
             return changed;

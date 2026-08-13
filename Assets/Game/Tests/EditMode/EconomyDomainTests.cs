@@ -1605,6 +1605,14 @@ namespace Game.Tests
                     out _),
                 Is.True);
             gameplay.ConfigureFactionLogistics("player", 0);
+            Assert.That(
+                gameplay.TryProvisionUnitSupply(
+                    "player",
+                    escort.Id,
+                    MapSupplyKind.Equipment,
+                    escort.EquipmentSupplyCapacity,
+                    out _),
+                Is.True);
             IReadOnlyList<MapSupplyTransportRecord> transports =
                 gameplay.CreateDailySupplyTransports();
             Assert.That(transports.Count, Is.EqualTo(1));
@@ -1635,7 +1643,7 @@ namespace Game.Tests
                     MapSupplyMissionKind.Blockade,
                     out _),
                 Is.True);
-            gameplay.AdvanceFixedSteps(5);
+            gameplay.AdvanceFixedSteps(8);
             gameplay.AdvanceEconomicDay(out _);
 
             Assert.That(
@@ -1702,6 +1710,92 @@ namespace Game.Tests
             Assert.That(
                 gameplay.FindCastle(depotCoordinate).WarehouseFoodAmount,
                 Is.EqualTo(expectedDelivered));
+        }
+
+        [Test]
+        public void UnitSupplyShortagesReduceMoraleMovementAttackAndRecovery()
+        {
+            var terrain = new GridTerrainKind[8 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                8,
+                2,
+                83,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 2,
+                    aiDecisionIntervalSteps: 1000,
+                    movementFatiguePerTile: 2m,
+                    dailyFatigueRecovery: 10m));
+            Assert.That(
+                gameplay.TryCreateUnit(
+                    "player",
+                    out MapUnitState unit,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryProvisionUnitSupply(
+                    "player",
+                    unit.Id,
+                    MapSupplyKind.Food,
+                    unit.FoodSupplyCapacity,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryProvisionUnitSupply(
+                    "player",
+                    unit.Id,
+                    MapSupplyKind.Equipment,
+                    unit.EquipmentSupplyCapacity,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryProvisionUnitSupply(
+                    "player",
+                    unit.Id,
+                    MapSupplyKind.Medicine,
+                    unit.MedicineSupplyCapacity,
+                    out _),
+                Is.True);
+
+            decimal suppliedAttack = unit.AttackPower;
+            int suppliedMovementSteps =
+                gameplay.GetRequiredMovementStepsPerTile(unit);
+            for (int day = 0; day < 7; day++)
+                gameplay.AdvanceEconomicDay(out _);
+
+            Assert.That(unit.FoodSupply, Is.EqualTo(0m));
+            Assert.That(unit.EquipmentSupply, Is.EqualTo(0m));
+            Assert.That(unit.MedicineSupply, Is.EqualTo(0m));
+            Assert.That(unit.AttackPower, Is.LessThan(suppliedAttack));
+            Assert.That(
+                gameplay.GetRequiredMovementStepsPerTile(unit),
+                Is.GreaterThan(suppliedMovementSteps));
+            Assert.That(unit.Morale, Is.EqualTo(100m));
+
+            Assert.That(
+                gameplay.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(5, 0),
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(
+                gameplay.GetRequiredMovementStepsPerTile(unit) * 5);
+            Assert.That(unit.Fatigue, Is.EqualTo(10m));
+            gameplay.AdvanceEconomicDay(out _);
+
+            Assert.That(unit.Morale, Is.EqualTo(92m));
+            Assert.That(unit.Fatigue, Is.GreaterThan(10m));
+            Assert.That(unit.RecoverySupplyModifier, Is.EqualTo(0.25m));
         }
 
         [Test]

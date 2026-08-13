@@ -1284,11 +1284,21 @@ namespace Game.Presentation
                           $" (식량 {unit.FoodSupply:N1}, " +
                           $"무기 {unit.EquipmentSupply:N1}, " +
                           $"의약품 {unit.MedicineSupply:N1})" +
+                          $" · 이동 보급 {unit.MovementSupplyModifier:P0}" +
+                          $" / 공격 보급 {unit.AttackSupplyModifier:P0}" +
+                          $" / 회복 보급 {unit.RecoverySupplyModifier:P0}" +
                           $" · 공격 {unit.AttackModifier:F2}" +
                           $" 방어 {unit.DefenseModifier:F2}" +
                           $" 기동 {unit.MobilityModifier:F2}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
+                if (unit.SupplyMissionKind != MapSupplyMissionKind.None)
+                {
+                    detail += " · " +
+                        MapSupplyMissionNames.GetKoreanName(
+                            unit.SupplyMissionKind) +
+                        $" → {unit.SupplyMissionCoordinate}";
+                }
             }
             if (mine != null)
             {
