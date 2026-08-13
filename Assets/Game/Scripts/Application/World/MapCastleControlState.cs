@@ -20,6 +20,19 @@ namespace Game.Application.World
         Siege
     }
 
+    public enum MapSupplyKind
+    {
+        Food,
+        Equipment,
+        Medicine
+    }
+
+    public enum MapSupplyDestinationKind
+    {
+        ForwardDepot,
+        Unit
+    }
+
     public enum MapSiegeAction
     {
         None,
@@ -324,6 +337,9 @@ namespace Game.Application.World
         public MapOccupationPolicy OccupationPolicy { get; private set; }
         public int PublicOrder { get; private set; }
         public decimal WarehouseIronAmount { get; private set; }
+        public decimal WarehouseFoodAmount { get; private set; }
+        public decimal WarehouseEquipmentAmount { get; private set; }
+        public decimal WarehouseMedicineAmount { get; private set; }
         public int WallDurability { get; private set; }
         public int MaxWallDurability => IsCapital
             ? MapCastleRules.CapitalMaxWallDurability
@@ -381,6 +397,9 @@ namespace Game.Application.World
             OccupationPolicy = MapOccupationPolicy.None;
             PublicOrder = 50;
             WarehouseIronAmount = 0m;
+            WarehouseFoodAmount = 0m;
+            WarehouseEquipmentAmount = 0m;
+            WarehouseMedicineAmount = 0m;
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
         }
@@ -452,6 +471,60 @@ namespace Game.Application.World
         internal void StoreMineIron(decimal amount)
         {
             WarehouseIronAmount += Math.Max(0m, amount);
+        }
+
+        public decimal GetWarehouseSupply(MapSupplyKind kind)
+        {
+            switch (kind)
+            {
+                case MapSupplyKind.Food: return WarehouseFoodAmount;
+                case MapSupplyKind.Equipment:
+                    return WarehouseEquipmentAmount;
+                case MapSupplyKind.Medicine:
+                    return WarehouseMedicineAmount;
+                default: return 0m;
+            }
+        }
+
+        internal decimal StoreWarehouseSupply(
+            MapSupplyKind kind,
+            decimal amount)
+        {
+            decimal stored = Math.Max(0m, amount);
+            switch (kind)
+            {
+                case MapSupplyKind.Food:
+                    WarehouseFoodAmount += stored;
+                    break;
+                case MapSupplyKind.Equipment:
+                    WarehouseEquipmentAmount += stored;
+                    break;
+                case MapSupplyKind.Medicine:
+                    WarehouseMedicineAmount += stored;
+                    break;
+            }
+            return stored;
+        }
+
+        internal decimal TakeWarehouseSupply(
+            MapSupplyKind kind,
+            decimal amount)
+        {
+            decimal available = GetWarehouseSupply(kind);
+            decimal taken = Math.Min(available, Math.Max(0m, amount));
+            switch (kind)
+            {
+                case MapSupplyKind.Food:
+                    WarehouseFoodAmount -= taken;
+                    break;
+                case MapSupplyKind.Equipment:
+                    WarehouseEquipmentAmount -= taken;
+                    break;
+                case MapSupplyKind.Medicine:
+                    WarehouseMedicineAmount -= taken;
+                    break;
+            }
+            return taken;
         }
 
         internal void PrepareForNewOwner()
@@ -558,6 +631,45 @@ namespace Game.Application.World
             Coordinate = coordinate;
             DestroyedFactionId = destroyedFactionId ?? string.Empty;
             AttackingFactionId = attackingFactionId ?? string.Empty;
+        }
+    }
+
+    public readonly struct MapSupplyTransportRecord
+    {
+        public GridCoordinate SourceCastleCoordinate { get; }
+        public GridCoordinate DestinationCoordinate { get; }
+        public MapSupplyDestinationKind DestinationKind { get; }
+        public string DestinationUnitId { get; }
+        public MapSupplyKind SupplyKind { get; }
+        public decimal Amount { get; }
+        public IReadOnlyList<GridCoordinate> Route { get; }
+        public int Distance => Route.Count;
+
+        public MapSupplyTransportRecord(
+            GridCoordinate sourceCastleCoordinate,
+            GridCoordinate destinationCoordinate,
+            MapSupplyDestinationKind destinationKind,
+            string destinationUnitId,
+            MapSupplyKind supplyKind,
+            decimal amount,
+            IReadOnlyList<GridCoordinate> route)
+        {
+            SourceCastleCoordinate = sourceCastleCoordinate;
+            DestinationCoordinate = destinationCoordinate;
+            DestinationKind = destinationKind;
+            DestinationUnitId = destinationUnitId ?? string.Empty;
+            SupplyKind = supplyKind;
+            Amount = Math.Max(0m, amount);
+            if (route == null || route.Count == 0)
+            {
+                Route = Array.Empty<GridCoordinate>();
+                return;
+            }
+
+            var copy = new GridCoordinate[route.Count];
+            for (int i = 0; i < route.Count; i++)
+                copy[i] = route[i];
+            Route = copy;
         }
     }
 

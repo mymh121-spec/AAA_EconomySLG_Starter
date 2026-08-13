@@ -124,6 +124,19 @@ namespace Game.Application.World
         public int Soldiers { get; private set; }
         public decimal Morale { get; private set; }
         public decimal Fatigue { get; private set; }
+        public decimal FoodSupply { get; private set; }
+        public decimal EquipmentSupply { get; private set; }
+        public decimal MedicineSupply { get; private set; }
+        public decimal FoodSupplyCapacity => Soldiers * 0.21m;
+        public decimal EquipmentSupplyCapacity => Soldiers * 0.028m;
+        public decimal MedicineSupplyCapacity => Soldiers * 0.007m;
+        public decimal SupplyRatio => Math.Min(
+            GetSupplyRatio(FoodSupply, FoodSupplyCapacity),
+            Math.Min(
+                GetSupplyRatio(
+                    EquipmentSupply,
+                    EquipmentSupplyCapacity),
+                GetSupplyRatio(MedicineSupply, MedicineSupplyCapacity)));
         public decimal AttackPower => CalculateCombatPower(true);
         public decimal DefensePower => CalculateCombatPower(false);
         public bool IsMoving => _path.Count > 0;
@@ -151,6 +164,9 @@ namespace Game.Application.World
             Soldiers = Math.Max(1, initialSoldiers);
             Morale = 100m;
             Fatigue = 0m;
+            FoodSupply = 0m;
+            EquipmentSupply = 0m;
+            MedicineSupply = 0m;
             MovementFatiguePerTile = Math.Clamp(
                 movementFatiguePerTile,
                 0m,
@@ -206,6 +222,57 @@ namespace Game.Application.World
             AdjustFatigue(-Math.Max(0m, amount));
             return Fatigue != previous;
         }
+
+        public decimal GetSupply(MapSupplyKind kind)
+        {
+            switch (kind)
+            {
+                case MapSupplyKind.Food: return FoodSupply;
+                case MapSupplyKind.Equipment: return EquipmentSupply;
+                case MapSupplyKind.Medicine: return MedicineSupply;
+                default: return 0m;
+            }
+        }
+
+        public decimal GetSupplyCapacity(MapSupplyKind kind)
+        {
+            switch (kind)
+            {
+                case MapSupplyKind.Food: return FoodSupplyCapacity;
+                case MapSupplyKind.Equipment:
+                    return EquipmentSupplyCapacity;
+                case MapSupplyKind.Medicine:
+                    return MedicineSupplyCapacity;
+                default: return 0m;
+            }
+        }
+
+        internal decimal StoreSupply(MapSupplyKind kind, decimal amount)
+        {
+            decimal stored = Math.Min(
+                Math.Max(0m, amount),
+                Math.Max(0m, GetSupplyCapacity(kind) - GetSupply(kind)));
+            switch (kind)
+            {
+                case MapSupplyKind.Food:
+                    FoodSupply += stored;
+                    break;
+                case MapSupplyKind.Equipment:
+                    EquipmentSupply += stored;
+                    break;
+                case MapSupplyKind.Medicine:
+                    MedicineSupply += stored;
+                    break;
+            }
+            return stored;
+        }
+
+        private static decimal GetSupplyRatio(
+            decimal amount,
+            decimal capacity) =>
+            capacity <= 0m
+                ? 1m
+                : Math.Clamp(amount / capacity, 0m, 1m);
 
         internal void ChangeEquipment(
             UnitWeaponType weaponType,
@@ -524,6 +591,12 @@ namespace Game.Application.World
             new GridCoordinate(0, 1),
             new GridCoordinate(0, -1)
         };
+        private static readonly MapSupplyKind[] SupplyKinds =
+        {
+            MapSupplyKind.Food,
+            MapSupplyKind.Equipment,
+            MapSupplyKind.Medicine
+        };
 
         private readonly GridMapLayout _layout;
         private readonly MapGameplayTuning _tuning;
@@ -540,6 +613,9 @@ namespace Game.Application.World
                 new Dictionary<GridCoordinate, MapRecruitmentSiteState>();
         private readonly List<MapSiegeDayResult> _lastSiegeDayResults =
             new List<MapSiegeDayResult>();
+        private readonly List<MapSupplyTransportRecord>
+            _lastSupplyTransportRecords =
+                new List<MapSupplyTransportRecord>();
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
@@ -558,6 +634,8 @@ namespace Game.Application.World
         public int CurrentEconomicDay => _economicDaySequence;
         public IReadOnlyList<MapSiegeDayResult> LastSiegeDayResults =>
             _lastSiegeDayResults;
+        public IReadOnlyList<MapSupplyTransportRecord>
+            LastSupplyTransportRecords => _lastSupplyTransportRecords;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
@@ -2259,6 +2337,215 @@ namespace Game.Application.World
 
             route = bestRoute;
             return true;
+        }
+
+        public bool TryStockFactionCapitalWarehouse(
+            string factionId,
+            MapSupplyKind kind,
+            decimal amount,
+            out decimal storedAmount)
+        {
+            storedAmount = 0m;
+            if (amount <= 0m)
+                return false;
+
+            MapCastleControlState capital = FindCapital(factionId);
+            if (capital == null || capital.IsDestroyed)
+                return false;
+
+            storedAmount = capital.StoreWarehouseSupply(kind, amount);
+            if (storedAmount <= 0m)
+                return false;
+
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public IReadOnlyList<MapSupplyTransportRecord>
+            CreateDailySupplyTransports()
+        {
+            _lastSupplyTransportRecords.Clear();
+            TransferSuppliesToForwardDepots();
+            TransferSuppliesToUnits();
+            if (_lastSupplyTransportRecords.Count > 0)
+                StateChanged?.Invoke();
+            return _lastSupplyTransportRecords;
+        }
+
+        private void TransferSuppliesToForwardDepots()
+        {
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState depot = _castles[i];
+                if (depot.IsDestroyed || depot.IsUnderSiege ||
+                    depot.Role != MapCastleRole.SupplyHub ||
+                    string.IsNullOrEmpty(depot.OwnerFactionId))
+                {
+                    continue;
+                }
+
+                for (int kindIndex = 0;
+                     kindIndex < SupplyKinds.Length;
+                     kindIndex++)
+                {
+                    MapSupplyKind kind = SupplyKinds[kindIndex];
+                    decimal need = Math.Max(
+                        0m,
+                        GetForwardDepotTarget(kind) -
+                        depot.GetWarehouseSupply(kind));
+                    if (need <= 0m || !TryFindNearestStockedCastle(
+                            depot.OwnerFactionId,
+                            depot.Coordinate,
+                            kind,
+                            depot,
+                            out MapCastleControlState source,
+                            out IReadOnlyList<GridCoordinate> route))
+                    {
+                        continue;
+                    }
+
+                    decimal amount = source.TakeWarehouseSupply(kind, need);
+                    amount = depot.StoreWarehouseSupply(kind, amount);
+                    AddSupplyTransport(
+                        source,
+                        depot.Coordinate,
+                        MapSupplyDestinationKind.ForwardDepot,
+                        string.Empty,
+                        kind,
+                        amount,
+                        route);
+                }
+            }
+        }
+
+        private void TransferSuppliesToUnits()
+        {
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers <= 0)
+                    continue;
+
+                for (int kindIndex = 0;
+                     kindIndex < SupplyKinds.Length;
+                     kindIndex++)
+                {
+                    MapSupplyKind kind = SupplyKinds[kindIndex];
+                    decimal need = Math.Max(
+                        0m,
+                        unit.GetSupplyCapacity(kind) - unit.GetSupply(kind));
+                    if (need <= 0m || !TryFindNearestStockedCastle(
+                            unit.OwnerFactionId,
+                            unit.Coordinate,
+                            kind,
+                            null,
+                            out MapCastleControlState source,
+                            out IReadOnlyList<GridCoordinate> route))
+                    {
+                        continue;
+                    }
+
+                    decimal amount = source.TakeWarehouseSupply(kind, need);
+                    amount = unit.StoreSupply(kind, amount);
+                    AddSupplyTransport(
+                        source,
+                        unit.Coordinate,
+                        MapSupplyDestinationKind.Unit,
+                        unit.Id,
+                        kind,
+                        amount,
+                        route);
+                }
+            }
+        }
+
+        private bool TryFindNearestStockedCastle(
+            string factionId,
+            GridCoordinate destination,
+            MapSupplyKind kind,
+            MapCastleControlState excludedCastle,
+            out MapCastleControlState source,
+            out IReadOnlyList<GridCoordinate> route)
+        {
+            source = null;
+            route = Array.Empty<GridCoordinate>();
+            List<GridCoordinate> bestRoute = null;
+            for (int i = 0; i < _castles.Count; i++)
+            {
+                MapCastleControlState candidate = _castles[i];
+                if (ReferenceEquals(candidate, excludedCastle) ||
+                    candidate.IsDestroyed || candidate.IsUnderSiege ||
+                    candidate.GetWarehouseSupply(kind) <= 0m ||
+                    !string.Equals(
+                        candidate.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                List<GridCoordinate> candidateRoute;
+                if (candidate.Coordinate.Equals(destination))
+                {
+                    candidateRoute = new List<GridCoordinate>();
+                }
+                else
+                {
+                    candidateRoute = FindShortestLandPath(
+                        candidate.Coordinate,
+                        destination);
+                    if (candidateRoute.Count == 0)
+                        continue;
+                }
+
+                if (bestRoute != null &&
+                    candidateRoute.Count >= bestRoute.Count)
+                {
+                    continue;
+                }
+
+                source = candidate;
+                bestRoute = candidateRoute;
+            }
+
+            if (source == null)
+                return false;
+
+            route = bestRoute;
+            return true;
+        }
+
+        private void AddSupplyTransport(
+            MapCastleControlState source,
+            GridCoordinate destination,
+            MapSupplyDestinationKind destinationKind,
+            string destinationUnitId,
+            MapSupplyKind supplyKind,
+            decimal amount,
+            IReadOnlyList<GridCoordinate> route)
+        {
+            if (amount <= 0m)
+                return;
+
+            _lastSupplyTransportRecords.Add(new MapSupplyTransportRecord(
+                source.Coordinate,
+                destination,
+                destinationKind,
+                destinationUnitId,
+                supplyKind,
+                amount,
+                route));
+        }
+
+        private static decimal GetForwardDepotTarget(MapSupplyKind kind)
+        {
+            switch (kind)
+            {
+                case MapSupplyKind.Food: return 250m;
+                case MapSupplyKind.Equipment: return 50m;
+                case MapSupplyKind.Medicine: return 25m;
+                default: return 0m;
+            }
         }
 
         private bool TryFindDynamicMineCoordinate(

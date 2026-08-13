@@ -783,6 +783,17 @@ namespace Game.Presentation
             return _gameplayService.AdvanceEconomicDay(out spawnedMine);
         }
 
+        public IReadOnlyList<MapSupplyTransportRecord>
+            AdvanceDailySupplyLogistics(
+                SimulationBootstrapper simulation)
+        {
+            if (_gameplayService == null || simulation == null)
+                return Array.Empty<MapSupplyTransportRecord>();
+
+            simulation.StockMapCapitalSupplies(_gameplayService);
+            return _gameplayService.CreateDailySupplyTransports();
+        }
+
         private void GenerateNewMap()
         {
             int width = Mathf.Clamp(mapWidth, 40, 160);
@@ -1227,6 +1238,10 @@ namespace Game.Presentation
                 detail += $"\n{ownerName} {unit.ArchetypeDisplayName} {unit.Id}" +
                           $" · {unit.WeaponDisplayName} / {unit.ArmorDisplayName}" +
                           $" · 체력 {unit.Stamina}/{unit.MaxStamina}" +
+                          $" · 보급 {unit.SupplyRatio:P0}" +
+                          $" (식량 {unit.FoodSupply:N1}, " +
+                          $"무기 {unit.EquipmentSupply:N1}, " +
+                          $"의약품 {unit.MedicineSupply:N1})" +
                           $" · 공격 {unit.AttackModifier:F2}" +
                           $" 방어 {unit.DefenseModifier:F2}" +
                           $" 기동 {unit.MobilityModifier:F2}";
@@ -1274,6 +1289,9 @@ namespace Game.Presentation
                           $" · 식량 {castle.FoodSupply:N0}/" +
                           $"{castle.MaxFoodSupply:N0}" +
                           $" · 창고 철광석 {castle.WarehouseIronAmount:N1}" +
+                          $" · 보급품 식량 {castle.WarehouseFoodAmount:N1}" +
+                          $" / 무기 {castle.WarehouseEquipmentAmount:N1}" +
+                          $" / 의약품 {castle.WarehouseMedicineAmount:N1}" +
                           $" · 방어 보너스 +{castle.DefenseBonus:P0}";
             }
             if (castle != null && !castle.IsCapital)
@@ -1291,6 +1309,9 @@ namespace Game.Presentation
                           $" · 식량 {castle.FoodSupply:N0}/" +
                           $"{castle.MaxFoodSupply:N0}" +
                           $" · 창고 철광석 {castle.WarehouseIronAmount:N1}" +
+                          $" · 보급품 식량 {castle.WarehouseFoodAmount:N1}" +
+                          $" / 무기 {castle.WarehouseEquipmentAmount:N1}" +
+                          $" / 의약품 {castle.WarehouseMedicineAmount:N1}" +
                           $" · 방어 보너스 +{castle.DefenseBonus:P0}" +
                           $" · 점령 정책 " +
                           MapOccupationPolicyNames.GetKoreanName(

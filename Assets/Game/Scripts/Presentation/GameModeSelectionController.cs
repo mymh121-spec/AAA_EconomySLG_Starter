@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using Game.Application.PvP;
@@ -1284,8 +1285,16 @@ namespace Game.Presentation
 
             singlePlayerSimulation.ApplyMapMineProduction(
                 gameplayMap.CreateDailyMineProduction());
+            IReadOnlyList<MapSupplyTransportRecord> supplyTransports =
+                gameplayMap.AdvanceDailySupplyLogistics(
+                    singlePlayerSimulation);
             RefreshSelectedHeadquartersInventory();
             gameplayMap.AdvanceEconomicDay(out _);
+            if (supplyTransports.Count > 0)
+            {
+                SetMapActionFeedback(
+                    $"일일 보급 수송 {supplyTransports.Count:N0}건을 완료했습니다.");
+            }
         }
 
         private void CreatePlayerUnit()

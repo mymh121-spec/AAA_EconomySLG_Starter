@@ -200,4 +200,101 @@ namespace Game.Application.World
                 creditedCash);
         }
     }
+
+    public readonly struct MapCapitalSupplyStockReport
+    {
+        public decimal FoodAmount { get; }
+        public decimal EquipmentAmount { get; }
+        public decimal MedicineAmount { get; }
+
+        public MapCapitalSupplyStockReport(
+            decimal foodAmount,
+            decimal equipmentAmount,
+            decimal medicineAmount)
+        {
+            FoodAmount = Math.Max(0m, foodAmount);
+            EquipmentAmount = Math.Max(0m, equipmentAmount);
+            MedicineAmount = Math.Max(0m, medicineAmount);
+        }
+    }
+
+    public sealed class MapSupplyStockingService
+    {
+        private static readonly (MapSupplyKind Kind, ResourceId ResourceId)[]
+            SupplyResources =
+            {
+                (MapSupplyKind.Food, new ResourceId("food")),
+                (MapSupplyKind.Equipment, new ResourceId("steel")),
+                (MapSupplyKind.Medicine, new ResourceId("medicine"))
+            };
+
+        private readonly WorldEconomyState _world;
+
+        public MapSupplyStockingService(WorldEconomyState world)
+        {
+            _world = world ?? throw new ArgumentNullException(nameof(world));
+        }
+
+        public MapCapitalSupplyStockReport StockFactionCapitals(
+            RealtimeMapGameplayService gameplay)
+        {
+            if (gameplay == null)
+                throw new ArgumentNullException(nameof(gameplay));
+
+            decimal food = 0m;
+            decimal equipment = 0m;
+            decimal medicine = 0m;
+            for (int companyIndex = 0;
+                 companyIndex < _world.Companies.Count;
+                 companyIndex++)
+            {
+                CompanyEconomyRuntime company =
+                    _world.Companies[companyIndex];
+                string factionId = company.Company.Id.Value;
+                MapCastleControlState capital = gameplay.FindCapital(factionId);
+                if (capital == null || capital.IsDestroyed)
+                    continue;
+
+                for (int resourceIndex = 0;
+                     resourceIndex < SupplyResources.Length;
+                     resourceIndex++)
+                {
+                    (MapSupplyKind kind, ResourceId resourceId) =
+                        SupplyResources[resourceIndex];
+                    decimal available = company.PrimaryWarehouse.GetAvailable(
+                        resourceId);
+                    if (available <= 0m ||
+                        !company.PrimaryWarehouse.TryRemoveAvailable(
+                            resourceId,
+                            available) ||
+                        !gameplay.TryStockFactionCapitalWarehouse(
+                            factionId,
+                            kind,
+                            available,
+                            out decimal stored))
+                    {
+                        continue;
+                    }
+
+                    switch (kind)
+                    {
+                        case MapSupplyKind.Food:
+                            food += stored;
+                            break;
+                        case MapSupplyKind.Equipment:
+                            equipment += stored;
+                            break;
+                        case MapSupplyKind.Medicine:
+                            medicine += stored;
+                            break;
+                    }
+                }
+            }
+
+            return new MapCapitalSupplyStockReport(
+                food,
+                equipment,
+                medicine);
+        }
+    }
 }

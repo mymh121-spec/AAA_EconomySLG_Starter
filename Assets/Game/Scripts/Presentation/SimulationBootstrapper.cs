@@ -335,6 +335,16 @@ namespace Game.Presentation
                 _catalog).Deposit(production);
         }
 
+        public MapCapitalSupplyStockReport StockMapCapitalSupplies(
+            RealtimeMapGameplayService gameplay)
+        {
+            if (_simulation == null || _worldEconomy == null)
+                BuildSimulation();
+
+            return new MapSupplyStockingService(
+                _worldEconomy).StockFactionCapitals(gameplay);
+        }
+
         public bool TryQueueWorldIntervention(
             string opportunityId,
             decimal playerCapability,

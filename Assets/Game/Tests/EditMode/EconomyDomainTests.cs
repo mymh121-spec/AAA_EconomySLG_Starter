@@ -1413,6 +1413,112 @@ namespace Game.Tests
         }
 
         [Test]
+        public void SupplyLogistics_StocksCapitalThenRoutesThroughForwardDepot()
+        {
+            var terrain = new GridTerrainKind[6 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+
+            var depotCoordinate = new GridCoordinate(3, 0);
+            var layout = new GridMapLayout(
+                6,
+                2,
+                73,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { depotCoordinate });
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    fixedStepsToCaptureCastle: 1,
+                    fixedStepsToSiegeUndefendedCastle: 1,
+                    aiDecisionIntervalSteps: 1000));
+
+            Assert.That(
+                gameplay.TryCreateUnit(
+                    "player",
+                    out MapUnitState unit,
+                    out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryIssueCastleOccupation(
+                    "player",
+                    unit.Id,
+                    depotCoordinate,
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(4);
+            Assert.That(
+                gameplay.TrySetCastleRole(
+                    "player",
+                    depotCoordinate,
+                    MapCastleRole.SupplyHub,
+                    out _),
+                Is.True);
+
+            CampaignState campaign = CreateCampaign(1000m, 1000m);
+            var warehouse = new Warehouse(
+                new WarehouseId("player_supply_warehouse"),
+                campaign.Player.Company.Id,
+                new RegionId("starter"),
+                1000m);
+            var food = new ResourceId("food");
+            var steel = new ResourceId("steel");
+            var medicine = new ResourceId("medicine");
+            Assert.That(warehouse.TryAdd(food, 100m), Is.True);
+            Assert.That(warehouse.TryAdd(steel, 10m), Is.True);
+            Assert.That(warehouse.TryAdd(medicine, 5m), Is.True);
+            var world = new WorldEconomyState();
+            world.RegisterCompany(new CompanyEconomyRuntime(
+                campaign.Player,
+                warehouse,
+                0,
+                0m,
+                0m));
+
+            MapCapitalSupplyStockReport stockReport =
+                new MapSupplyStockingService(world)
+                    .StockFactionCapitals(gameplay);
+            IReadOnlyList<MapSupplyTransportRecord> transports =
+                gameplay.CreateDailySupplyTransports();
+
+            Assert.That(stockReport.FoodAmount, Is.EqualTo(100m));
+            Assert.That(stockReport.EquipmentAmount, Is.EqualTo(10m));
+            Assert.That(stockReport.MedicineAmount, Is.EqualTo(5m));
+            Assert.That(warehouse.GetAvailable(food), Is.EqualTo(0m));
+            Assert.That(warehouse.GetAvailable(steel), Is.EqualTo(0m));
+            Assert.That(warehouse.GetAvailable(medicine), Is.EqualTo(0m));
+            Assert.That(transports.Count, Is.EqualTo(6));
+            Assert.That(
+                transports[0].DestinationKind,
+                Is.EqualTo(MapSupplyDestinationKind.ForwardDepot));
+            Assert.That(transports[0].Distance, Is.EqualTo(3));
+            Assert.That(
+                transports[3].DestinationKind,
+                Is.EqualTo(MapSupplyDestinationKind.Unit));
+            Assert.That(transports[3].DestinationUnitId, Is.EqualTo(unit.Id));
+            Assert.That(transports[3].Distance, Is.EqualTo(0));
+            Assert.That(unit.FoodSupply, Is.EqualTo(21m));
+            Assert.That(unit.EquipmentSupply, Is.EqualTo(2.8m));
+            Assert.That(unit.MedicineSupply, Is.EqualTo(0.7m));
+            Assert.That(unit.SupplyRatio, Is.EqualTo(1m));
+            MapCastleControlState depot = gameplay.FindCastle(
+                depotCoordinate);
+            Assert.That(depot.WarehouseFoodAmount, Is.EqualTo(79m));
+            Assert.That(depot.WarehouseEquipmentAmount, Is.EqualTo(7.2m));
+            Assert.That(depot.WarehouseMedicineAmount, Is.EqualTo(4.3m));
+            MapCastleControlState capital = gameplay.FindCapital("player");
+            Assert.That(capital.WarehouseFoodAmount, Is.EqualTo(0m));
+            Assert.That(capital.WarehouseEquipmentAmount, Is.EqualTo(0m));
+            Assert.That(capital.WarehouseMedicineAmount, Is.EqualTo(0m));
+        }
+
+        [Test]
         public void RealtimeMapGameplay_UsesAndRegeneratesUnitStamina()
         {
             var terrain = new GridTerrainKind[3 * 2];
