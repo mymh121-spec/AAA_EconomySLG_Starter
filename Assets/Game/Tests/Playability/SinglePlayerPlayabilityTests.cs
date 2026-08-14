@@ -1,6 +1,7 @@
 using System.Reflection;
 using Game.Domain.Campaign;
 using Game.Domain.Common;
+using Game.Domain.Economy;
 using Game.Domain.World;
 using Game.Presentation;
 using NUnit.Framework;
@@ -54,7 +55,24 @@ namespace Game.Tests.Playability
                 Assert.That(map.GameplayService.Units.Count,
                     Is.GreaterThan(0));
 
-                int resolvedDays = 0;
+                Label campaignHud = GetPrivateField<Label>(
+                    controller,
+                    "_campaignHudLabel");
+                Assert.That(campaignHud, Is.Not.Null);
+                Assert.That(campaignHud.text, Does.Contain("현재"));
+                Assert.That(campaignHud.text, Does.Contain("남은"));
+
+                simulation.ResolveCurrentTurn(false);
+                InvokePrivate(controller, "RefreshSinglePlayerStatus");
+                Assert.That(campaignHud.text, Does.Contain("경제력: 플레이어"));
+                Assert.That(campaignHud.text, Does.Contain("상대 경제력:"));
+                Assert.That(campaignHud.text, Does.Contain("경제 패권:"));
+                Assert.That(campaignHud.text,
+                    Does.Contain("12월 30일 예상 순위:"));
+                Assert.That(campaignHud.text, Does.Contain("승리 전망:"));
+                Assert.That(campaignHud.text, Does.Contain("위험 알림:"));
+
+                int resolvedDays = 1;
                 while (!simulation.IsCampaignFinished &&
                        resolvedDays < GameCalendarDate.DaysPerYear)
                 {
@@ -69,6 +87,16 @@ namespace Game.Tests.Playability
                     Is.Not.EqualTo(CampaignOutcome.InProgress));
                 Assert.That(simulation.CampaignResult.Rankings.Count,
                     Is.EqualTo(4));
+
+                InvokePrivate(controller, "ShowSinglePlayerResult");
+                Label resultText = GetPrivateField<Label>(
+                    controller,
+                    "_singlePlayerResultText");
+                Assert.That(resultText.text, Does.Contain("최종 판정:"));
+                Assert.That(resultText.text, Does.Contain("종료 사유:"));
+                Assert.That(resultText.text, Does.Contain("최종 순위:"));
+                Assert.That(resultText.text, Does.Contain("최종 현금:"));
+                Assert.That(resultText.text, Does.Contain("전체 순위:"));
             }
             finally
             {
@@ -97,6 +125,62 @@ namespace Game.Tests.Playability
             }
         }
 
+        [Test]
+        public void CampaignHud_ShowsDominanceResetBankruptcyAndCapitalRisk()
+        {
+            var playerCompany = new Company(
+                new CompanyId("player"),
+                "플레이어 기업",
+                100m);
+            playerCompany.AddDebt(850m);
+            var player = new CampaignParticipantState(playerCompany, true);
+            var opponent = new CampaignParticipantState(
+                new Company(new CompanyId("opponent"), "경쟁 기업", 200m),
+                false);
+            var state = new CampaignState(new[] { player, opponent });
+            var result = new CampaignTurnResult(
+                CampaignOutcome.InProgress,
+                CampaignEndReason.None,
+                new TurnNumber(200),
+                100m,
+                200m,
+                0,
+                181,
+                3m,
+                60,
+                new[]
+                {
+                    new EconomicPowerSnapshot(
+                        opponent.Company.Id,
+                        opponent.Company.Name,
+                        false,
+                        false,
+                        200m),
+                    new EconomicPowerSnapshot(
+                        player.Company.Id,
+                        player.Company.Name,
+                        true,
+                        false,
+                        100m)
+                });
+
+            string text = CampaignResultKoreanFormatter.FormatHud(
+                result,
+                state,
+                200,
+                GameCalendarDate.DaysPerYear,
+                1000m,
+                true,
+                20,
+                100,
+                "3배 패권 유지 중단 · 0일부터 다시 계산");
+
+            Assert.That(text, Does.Contain("3배 패권 유지 중단"));
+            Assert.That(text, Does.Contain("파산 위험"));
+            Assert.That(text, Does.Contain("수도 공성 중 · 성벽 20%"));
+            Assert.That(text, Does.Contain("현재 2위"));
+        }
+
         private static void InvokePrivate(object target, string methodName)
         {
             MethodInfo method = target.GetType().GetMethod(
@@ -105,6 +189,17 @@ namespace Game.Tests.Playability
             Assert.That(method, Is.Not.Null,
                 $"{methodName} 동작을 찾을 수 있어야 합니다.");
             method.Invoke(target, null);
+        }
+
+        private static T GetPrivateField<T>(object target, string fieldName)
+            where T : class
+        {
+            FieldInfo field = target.GetType().GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null,
+                $"{fieldName} 필드를 찾을 수 있어야 합니다.");
+            return field.GetValue(target) as T;
         }
     }
 }

@@ -293,6 +293,26 @@ namespace Game.Tests.PlayMode
                 Is.EqualTo(4));
             Assert.That(simulation.CurrentWorldEconomy.Markets.Count,
                 Is.GreaterThan(0));
+            Label campaignStatus = document.rootVisualElement.Q<Label>(
+                "campaign-status-label");
+            Assert.That(campaignStatus, Is.Not.Null,
+                "싱글플레이 HUD에 캠페인 상태 패널이 있어야 합니다.");
+            Assert.That(campaignStatus.text, Does.Contain("현재"));
+            Assert.That(campaignStatus.text, Does.Contain("남은"));
+            Button operationAgent = document.rootVisualElement.Q<Button>(
+                "operation-agent-button");
+            Assert.That(operationAgent, Is.Not.Null,
+                "경제 작전 게시판에 직접 수행/휘하 AI 실행 주체 선택이 있어야 합니다.");
+            Assert.That(operationAgent.text, Does.Contain("직접 수행"));
+            Assert.That(
+                document.rootVisualElement.Q<Button>(
+                    "map-economic-survey-button"),
+                Is.Not.Null,
+                "지도 우클릭 메뉴에 경제 탐사 명령이 있어야 합니다.");
+            Assert.That(
+                document.rootVisualElement.Q<Button>("map-build-mine-button"),
+                Is.Not.Null,
+                "지도 우클릭 메뉴에 채굴소 건설 명령이 있어야 합니다.");
 
             MapUnitState unit = map.SelectedPlayerUnit;
             Assert.That(unit, Is.Not.Null,
@@ -352,6 +372,10 @@ namespace Game.Tests.PlayMode
             });
             Assert.That(resultLabel, Is.Not.Null,
                 "캠페인 종료 후 최종 판정 UI가 표시되어야 합니다.");
+            Assert.That(resultLabel.text, Does.Contain("종료 사유:"));
+            Assert.That(resultLabel.text, Does.Contain("최종 순위:"));
+            Assert.That(resultLabel.text, Does.Contain("최종 현금:"));
+            Assert.That(resultLabel.text, Does.Contain("전체 순위:"));
         }
 
         private static GridCoordinate FindReachableDestination(

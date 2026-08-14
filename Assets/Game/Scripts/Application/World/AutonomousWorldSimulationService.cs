@@ -41,6 +41,15 @@ namespace Game.Application.World
             decimal playerCapability,
             WorldOperationApproach approach,
             TurnNumber turn);
+
+        PlayerInterventionResult TryIntervention(
+            string opportunityId,
+            decimal capability,
+            WorldOperationApproach approach,
+            string resolverId,
+            string resolverDisplayName,
+            bool wasDelegated,
+            TurnNumber turn);
     }
 
     public sealed class AutonomousWorldSimulationService :
@@ -221,6 +230,32 @@ namespace Game.Application.World
             WorldOperationApproach approach,
             TurnNumber turn)
         {
+            return TryIntervention(
+                opportunityId,
+                playerCapability,
+                approach,
+                "player",
+                State.PlayerCharacter.DisplayName,
+                false,
+                turn);
+        }
+
+        public PlayerInterventionResult TryIntervention(
+            string opportunityId,
+            decimal capability,
+            WorldOperationApproach approach,
+            string resolverId,
+            string resolverDisplayName,
+            bool wasDelegated,
+            TurnNumber turn)
+        {
+            string safeResolverId = string.IsNullOrWhiteSpace(resolverId)
+                ? "player"
+                : resolverId;
+            string safeResolverName = string.IsNullOrWhiteSpace(
+                resolverDisplayName)
+                    ? safeResolverId
+                    : resolverDisplayName;
             if (!CanPlayerIntervene(
                 opportunityId,
                 approach,
@@ -233,7 +268,10 @@ namespace Game.Application.World
                     0m,
                     0m,
                     WorldOperationOutcome.None,
-                    approach);
+                    approach,
+                    resolverId: safeResolverId,
+                    resolverDisplayName: safeResolverName,
+                    wasDelegated: wasDelegated);
                 return LastPlayerIntervention;
             }
 
@@ -254,13 +292,16 @@ namespace Game.Application.World
                     0m,
                     0m,
                     WorldOperationOutcome.None,
-                    approach);
+                    approach,
+                    resolverId: safeResolverId,
+                    resolverDisplayName: safeResolverName,
+                    wasDelegated: wasDelegated);
                 return LastPlayerIntervention;
             }
 
             opportunity.TryAccept();
-            decimal effectiveCapability = playerCapability > 0m
-                ? playerCapability
+            decimal effectiveCapability = capability > 0m
+                ? capability
                 : State.PlayerCharacter.GetCapability(opportunity.Kind);
             effectiveCapability *= profile.CapabilityMultiplier;
             decimal capabilityRatio = effectiveCapability /
@@ -283,7 +324,7 @@ namespace Game.Application.World
             bool success = outcome == WorldOperationOutcome.GreatSuccess ||
                            outcome == WorldOperationOutcome.Success;
             bool compromise = outcome == WorldOperationOutcome.Compromise;
-            opportunity.Resolve(outcome, "player", approach);
+            opportunity.Resolve(outcome, safeResolverId, approach);
 
             WorldEventInstance worldEvent =
                 State.FindEvent(opportunity.EventId);
@@ -293,7 +334,7 @@ namespace Game.Application.World
             {
                 if (worldEvent != null)
                 {
-                    worldEvent.Resolve(true, "player");
+                    worldEvent.Resolve(true, safeResolverId);
                     ApplyEventResolution(
                         worldEvent,
                         profile.ConsequenceStrength);
@@ -341,7 +382,10 @@ namespace Game.Application.World
                 reputation,
                 outcome,
                 approach,
-                upfrontCost);
+                upfrontCost,
+                safeResolverId,
+                safeResolverName,
+                wasDelegated);
             return LastPlayerIntervention;
         }
 
@@ -1375,6 +1419,9 @@ namespace Game.Application.World
         private readonly string _opportunityId;
         private readonly decimal _playerCapability;
         private readonly WorldOperationApproach? _approach;
+        private readonly string _resolverId;
+        private readonly string _resolverDisplayName;
+        private readonly bool _wasDelegated;
 
         public CompanyId ActorId { get; }
         public string DisplayName { get; }
@@ -1392,6 +1439,9 @@ namespace Game.Application.World
             _opportunityId = opportunityId ?? string.Empty;
             _playerCapability = Math.Max(0m, playerCapability);
             _approach = null;
+            _resolverId = "player";
+            _resolverDisplayName = "플레이어";
+            _wasDelegated = false;
             ActorId = actorId;
             DisplayName = string.IsNullOrWhiteSpace(displayName)
                 ? "세계 사건 개입"
@@ -1418,6 +1468,36 @@ namespace Game.Application.World
             _approach = approach;
         }
 
+        public InterveneWorldOpportunityTurnCommand(
+            IAutonomousWorldTurnService world,
+            string opportunityId,
+            CompanyId actorId,
+            decimal capability,
+            string displayName,
+            WorldOperationApproach approach,
+            string resolverId,
+            string resolverDisplayName,
+            bool wasDelegated,
+            int actionPointCost = 2)
+            : this(
+                world,
+                opportunityId,
+                actorId,
+                capability,
+                displayName,
+                approach,
+                actionPointCost)
+        {
+            _resolverId = string.IsNullOrWhiteSpace(resolverId)
+                ? "player"
+                : resolverId;
+            _resolverDisplayName = string.IsNullOrWhiteSpace(
+                resolverDisplayName)
+                    ? _resolverId
+                    : resolverDisplayName;
+            _wasDelegated = wasDelegated;
+        }
+
         public bool CanExecute(
             TurnCommandContext context,
             out string reason)
@@ -1433,10 +1513,13 @@ namespace Game.Application.World
         public void Execute(TurnCommandContext context)
         {
             PlayerInterventionResult result = _approach.HasValue
-                ? _world.TryPlayerIntervention(
+                ? _world.TryIntervention(
                     _opportunityId,
                     _playerCapability,
                     _approach.Value,
+                    _resolverId,
+                    _resolverDisplayName,
+                    _wasDelegated,
                     context.Turn)
                 : _world.TryPlayerIntervention(
                     _opportunityId,

@@ -53,6 +53,7 @@ namespace Game.Presentation
         private CampaignRuleSet _campaignRules;
         private WorldEconomyState _worldEconomy;
         private AutonomousWorldState _autonomousWorldState;
+        private WorldMapOwnershipSynchronizer _worldMapOwnership;
         private IAutonomousWorldTurnService _autonomousWorldService;
         private RealtimeSimulationClock _realtimeClock;
         private int _lastRealtimeMinuteStamp = -1;
@@ -83,6 +84,10 @@ namespace Game.Presentation
         public int MaxCampaignTurns => simulationSettings != null
             ? simulationSettings.MaxCampaignTurns
             : GameCalendarDate.DaysPerYear;
+        public decimal BankruptcyDebtLimit => simulationSettings != null
+            ? simulationSettings.CreateOperatingCostPolicy()
+                .BankruptcyDebtLimit
+            : 100000m;
         public int RealtimeDayNumber =>
             _realtimeClock?.CurrentDayNumber ?? CurrentTurn.Value;
         public int RealtimeHour => _realtimeClock?.HourOfDay ?? 0;
@@ -355,6 +360,54 @@ namespace Game.Presentation
                 _worldEconomy).SettleTransportCosts(transports);
         }
 
+        public bool ApplyMapMineOwnership(
+            GridMapLayout layout,
+            RealtimeMapGameplayService gameplay,
+            MapMineCaptureRecord capture)
+        {
+            EnsureWorldMapOwnership();
+            return _worldMapOwnership != null &&
+                _worldMapOwnership.ApplyMineCapture(
+                    layout,
+                    gameplay,
+                    capture);
+        }
+
+        public bool ApplyMapCastleOwnership(
+            GridMapLayout layout,
+            RealtimeMapGameplayService gameplay,
+            MapCastleCaptureRecord capture)
+        {
+            EnsureWorldMapOwnership();
+            return _worldMapOwnership != null &&
+                _worldMapOwnership.ApplyCastleCapture(
+                    layout,
+                    gameplay,
+                    capture);
+        }
+
+        public bool SynchronizeWorldOwnershipToMap(
+            GridMapLayout layout,
+            RealtimeMapGameplayService gameplay)
+        {
+            EnsureWorldMapOwnership();
+            return _worldMapOwnership != null &&
+                _worldMapOwnership.SynchronizeLinkedOwnershipToMap(
+                    layout,
+                    gameplay);
+        }
+
+        private void EnsureWorldMapOwnership()
+        {
+            if (_autonomousWorldState == null)
+                BuildSimulation();
+            if (_worldMapOwnership == null && _autonomousWorldState != null)
+            {
+                _worldMapOwnership = new WorldMapOwnershipSynchronizer(
+                    _autonomousWorldState);
+            }
+        }
+
         public bool TryQueueWorldIntervention(
             string opportunityId,
             decimal playerCapability,
@@ -422,6 +475,46 @@ namespace Game.Presentation
                 opportunityId,
                 approach,
                 playerCapability: 0m,
+                out reason);
+        }
+
+        public bool TryQueueDelegatedWorldIntervention(
+            string opportunityId,
+            SubordinateMissionPlan plan,
+            out string reason)
+        {
+            if (_simulation == null)
+                BuildSimulation();
+            if (_autonomousWorldService == null)
+            {
+                reason = "자율 세계 시뮬레이션이 준비되지 않았습니다.";
+                return false;
+            }
+            if (!string.Equals(
+                opportunityId,
+                plan.OpportunityId,
+                StringComparison.Ordinal))
+            {
+                reason = "휘하 지휘관의 작전 계획이 현재 미션과 다릅니다.";
+                return false;
+            }
+
+            WorldOpportunity opportunity =
+                _autonomousWorldState?.FindOpportunity(opportunityId);
+            string displayName = opportunity == null
+                ? $"{plan.CommanderDisplayName} 위임 작전"
+                : $"{opportunity.DisplayName} · {plan.CommanderDisplayName} 위임";
+            return _simulation.TryQueuePlayerCommand(
+                new InterveneWorldOpportunityTurnCommand(
+                    _autonomousWorldService,
+                    opportunityId,
+                    _playerCampaignState.Company.Id,
+                    plan.Capability,
+                    displayName,
+                    plan.Approach,
+                    plan.CommanderId,
+                    plan.CommanderDisplayName,
+                    true),
                 out reason);
         }
 
@@ -698,6 +791,9 @@ namespace Game.Presentation
                 simulationSettings != null
                     ? simulationSettings.CreateWorldGenerationSettings()
                     : new WorldGenerationSettings();
+            generationSettings = MatchWorldFactionCount(
+                generationSettings,
+                _campaignSession.State.Participants.Count);
             int seed = simulationSettings != null
                 ? simulationSettings.WorldSeed
                 : 12345;
@@ -714,6 +810,8 @@ namespace Game.Presentation
                     "플레이어",
                     _playerCampaignState.Company.Id,
                     generatedWorld.Regions[0].Id));
+            _worldMapOwnership = new WorldMapOwnershipSynchronizer(
+                _autonomousWorldState);
 
             decimal defaultStock = simulationSettings != null
                 ? simulationSettings.InitialMarketStock
@@ -840,6 +938,30 @@ namespace Game.Presentation
                     ? simulationSettings.CreateResourceSiteEventSettings()
                     : new ResourceSiteEventSettings(),
                 _autonomousWorldService);
+        }
+
+        private static WorldGenerationSettings MatchWorldFactionCount(
+            WorldGenerationSettings settings,
+            int factionCount)
+        {
+            int matched = Math.Clamp(
+                factionCount,
+                2,
+                settings.RegionCount);
+            if (settings.FactionCount == matched)
+                return settings;
+            return new WorldGenerationSettings(
+                settings.RegionCount,
+                matched,
+                settings.SettlementCount,
+                settings.NpcCount,
+                settings.InitialResourceSiteCount,
+                settings.MinimumPopulation,
+                settings.MaximumPopulation,
+                settings.InitialResourceReserve,
+                settings.InitialSiteOutput,
+                settings.MinimumSiteOutput,
+                settings.SiteDeclineRate);
         }
 
         private void RegisterGeneratedTradeRoutes(

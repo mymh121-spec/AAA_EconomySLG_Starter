@@ -906,7 +906,8 @@ namespace Game.Application.World
         public MapMineControlState(
             MinePlacement placement,
             int spawnedEconomicDay = 0,
-            bool isDynamic = false)
+            bool isDynamic = false,
+            decimal initialYieldMultiplier = 1m)
         {
             Coordinate = placement.Coordinate;
             Kind = placement.Kind;
@@ -914,7 +915,7 @@ namespace Game.Application.World
             CapturingFactionId = string.Empty;
             SpawnedEconomicDay = Math.Max(0, spawnedEconomicDay);
             IsDynamic = isDynamic;
-            YieldMultiplier = 1m;
+            YieldMultiplier = Math.Clamp(initialYieldMultiplier, 0.50m, 1.50m);
             GuardUnitId = string.Empty;
         }
 
@@ -938,15 +939,21 @@ namespace Game.Application.World
         public GridCoordinate Coordinate { get; }
         public MineKind Kind { get; }
         public int EconomicDay { get; }
+        public bool WasConstructed { get; }
+        public string OwnerFactionId { get; }
 
         public MapMineSpawnRecord(
             GridCoordinate coordinate,
             MineKind kind,
-            int economicDay)
+            int economicDay,
+            bool wasConstructed = false,
+            string ownerFactionId = "")
         {
             Coordinate = coordinate;
             Kind = kind;
             EconomicDay = Math.Max(1, economicDay);
+            WasConstructed = wasConstructed;
+            OwnerFactionId = ownerFactionId ?? string.Empty;
         }
     }
 
@@ -1104,11 +1111,23 @@ namespace Game.Application.World
         private readonly HashSet<GridCoordinate> _roadTiles =
             new HashSet<GridCoordinate>();
         private readonly List<string> _aiFactionIds = new List<string>();
+        private readonly Dictionary<string, FactionStrategyKind>
+            _aiStrategies =
+                new Dictionary<string, FactionStrategyKind>(
+                    StringComparer.Ordinal);
+        private readonly Dictionary<string, GridCoordinate>
+            _aiLongTermTargets =
+                new Dictionary<string, GridCoordinate>(StringComparer.Ordinal);
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
         private readonly List<MapCommanderState> _commanders =
             new List<MapCommanderState>();
         private readonly List<MapMineControlState> _mines =
             new List<MapMineControlState>();
+        private readonly Dictionary<GridCoordinate, MapEconomicSurveyState>
+            _economicSurveys =
+                new Dictionary<GridCoordinate, MapEconomicSurveyState>();
+        private readonly List<MapMineConstructionState> _mineConstructions =
+            new List<MapMineConstructionState>();
         private readonly List<MapCastleControlState> _castles =
             new List<MapCastleControlState>();
         private readonly Dictionary<GridCoordinate, MapRecruitmentSiteState>
@@ -1121,6 +1140,10 @@ namespace Game.Application.World
                 new List<MapSupplyTransportRecord>();
         private readonly List<PendingSupplyTransport>
             _pendingSupplyTransports = new List<PendingSupplyTransport>();
+        private readonly Dictionary<string, MapWorldMissionState>
+            _worldMissionsByUnitId =
+                new Dictionary<string, MapWorldMissionState>(
+                    StringComparer.Ordinal);
         private readonly List<MapSupplyInterdictionResult>
             _lastSupplyInterdictionResults =
                 new List<MapSupplyInterdictionResult>();
@@ -1133,6 +1156,10 @@ namespace Game.Application.World
         public IReadOnlyList<MapUnitState> Units => _units;
         public IReadOnlyList<MapCommanderState> Commanders => _commanders;
         public IReadOnlyList<MapMineControlState> Mines => _mines;
+        public IReadOnlyCollection<MapEconomicSurveyState> EconomicSurveys =>
+            _economicSurveys.Values;
+        public IReadOnlyList<MapMineConstructionState> MineConstructions =>
+            _mineConstructions;
         public IReadOnlyList<MapCastleControlState> Castles => _castles;
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
         public int FixedStepsPerMove => _tuning.FixedStepsPerMove;
@@ -1150,16 +1177,23 @@ namespace Game.Application.World
             _pendingSupplyTransports.Count;
         public IReadOnlyList<MapSupplyInterdictionResult>
             LastSupplyInterdictionResults => _lastSupplyInterdictionResults;
+        public IReadOnlyCollection<MapWorldMissionState> WorldMissions =>
+            _worldMissionsByUnitId.Values;
 
         public event Action StateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
+        public event Action<MapEconomicSurveyState> EconomicSurveyCompleted;
+        public event Action<MapMineConstructionState> MineConstructionStarted;
+        public event Action<MapMineConstructionCompletedRecord>
+            MineConstructionCompleted;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
         public event Action<MapSupplyInterdictionResult>
             SupplyInterdictionResolved;
+        public event Action<MapWorldMissionState> WorldMissionReady;
 
         public RealtimeMapGameplayService(
             GridMapLayout layout,
@@ -1185,6 +1219,7 @@ namespace Game.Application.World
 
                 _factionBases.Add(factionId, layout.OpponentStarts[i]);
                 _aiFactionIds.Add(factionId);
+                _aiStrategies[factionId] = FactionStrategicAi.GetStrategy(i);
             }
 
             for (int i = 0; i < layout.Mines.Count; i++)
@@ -1462,6 +1497,262 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public bool IsCoastalPort(GridCoordinate coordinate)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null || castle.IsDestroyed ||
+                !_layout.IsLand(coordinate))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < NeighborOffsets.Length; i++)
+            {
+                GridCoordinate offset = NeighborOffsets[i];
+                try
+                {
+                    GridCoordinate neighbor = _layout.Move(
+                        coordinate,
+                        offset.X,
+                        offset.Y);
+                    if (!_layout.IsLand(neighbor))
+                        return true;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                }
+            }
+
+            return false;
+        }
+
+        public bool IsUsingSeaTransport(MapUnitState unit)
+        {
+            if (unit == null)
+                return false;
+            if (_layout.Contains(unit.Coordinate) &&
+                !_layout.IsLand(unit.Coordinate))
+            {
+                return true;
+            }
+
+            for (int i = 0; i < unit.PlannedPath.Count; i++)
+            {
+                GridCoordinate coordinate = unit.PlannedPath[i];
+                if (_layout.Contains(coordinate) &&
+                    !_layout.IsLand(coordinate))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool WillUseSeaTransport(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate destination)
+        {
+            return CanIssueMove(
+                    ownerFactionId,
+                    unitId,
+                    destination,
+                    out IReadOnlyList<GridCoordinate> path,
+                    out _) &&
+                ContainsOceanTile(path);
+        }
+
+        public MapEconomicSurveyState FindEconomicSurvey(
+            GridCoordinate coordinate)
+        {
+            _economicSurveys.TryGetValue(coordinate, out MapEconomicSurveyState survey);
+            return survey;
+        }
+
+        public MapMineConstructionState FindMineConstruction(
+            GridCoordinate coordinate)
+        {
+            for (int i = 0; i < _mineConstructions.Count; i++)
+            {
+                if (_mineConstructions[i].Coordinate.Equals(coordinate))
+                    return _mineConstructions[i];
+            }
+
+            return null;
+        }
+
+        public bool CanSurveyEconomicSite(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (!_layout.TryNormalize(coordinate, out GridCoordinate normalized) ||
+                !_layout.IsLand(normalized))
+            {
+                reason = "경제 탐사는 육지 칸에서만 수행할 수 있습니다.";
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "경제 탐사를 수행할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (unit.IsMoving || !unit.Coordinate.Equals(normalized))
+            {
+                reason = "선택한 부대가 해당 칸에 정지한 뒤 경제 탐사를 수행할 수 있습니다.";
+                return false;
+            }
+            if (unit.Stamina < MapEconomicDevelopmentRules.SurveyStaminaCost)
+            {
+                reason = $"경제 탐사에 필요한 체력이 부족합니다. 필요 " +
+                    $"{MapEconomicDevelopmentRules.SurveyStaminaCost}, " +
+                    $"현재 {unit.Stamina}/{unit.MaxStamina}";
+                return false;
+            }
+            if (FindMine(normalized) != null ||
+                FindCastle(normalized) != null ||
+                IsFactionBase(normalized))
+            {
+                reason = "기존 거점이나 광산이 있는 칸은 경제 탐사 대상이 아닙니다.";
+                return false;
+            }
+            if (FindMineConstruction(normalized) != null)
+            {
+                reason = "이미 채굴소를 건설 중인 칸입니다.";
+                return false;
+            }
+            if (FindEconomicSurvey(normalized) != null)
+            {
+                reason = "이미 경제 탐사를 마친 칸입니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TrySurveyEconomicSite(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out MapEconomicSurveyState survey,
+            out string reason)
+        {
+            survey = null;
+            if (!CanSurveyEconomicSite(
+                    ownerFactionId,
+                    unitId,
+                    coordinate,
+                    out reason))
+            {
+                return false;
+            }
+
+            _layout.TryNormalize(coordinate, out GridCoordinate normalized);
+            MapUnitState unit = FindUnit(unitId);
+            if (!unit.TrySpendStamina(
+                    MapEconomicDevelopmentRules.SurveyStaminaCost,
+                    out reason))
+            {
+                return false;
+            }
+
+            survey = MapEconomicDevelopmentRules.Evaluate(
+                _layout,
+                normalized,
+                _economicDaySequence);
+            _economicSurveys.Add(normalized, survey);
+            EconomicSurveyCompleted?.Invoke(survey);
+            StateChanged?.Invoke();
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool CanStartMineConstruction(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out MapEconomicSurveyState survey,
+            out string reason)
+        {
+            survey = FindEconomicSurvey(coordinate);
+            if (survey == null || !survey.HasViableDeposit)
+            {
+                reason = survey == null
+                    ? "먼저 이 칸의 경제 탐사를 완료해야 합니다."
+                    : "채굴 가치가 있는 매장지를 찾지 못한 칸입니다.";
+                return false;
+            }
+            if (FindMine(coordinate) != null)
+            {
+                reason = "이미 광산이 있는 칸입니다.";
+                return false;
+            }
+            if (FindMineConstruction(coordinate) != null)
+            {
+                reason = "이미 채굴소를 건설 중인 칸입니다.";
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "건설을 지시할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (unit.IsMoving || !unit.Coordinate.Equals(coordinate))
+            {
+                reason = "선택한 부대가 탐사한 칸에 정지한 뒤 건설을 시작할 수 있습니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryStartMineConstruction(
+            string ownerFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            out MapMineConstructionState construction,
+            out string reason)
+        {
+            construction = null;
+            if (!CanStartMineConstruction(
+                    ownerFactionId,
+                    unitId,
+                    coordinate,
+                    out MapEconomicSurveyState survey,
+                    out reason))
+            {
+                return false;
+            }
+
+            MineKind kind = survey.DepositKind.Value;
+            construction = new MapMineConstructionState(
+                coordinate,
+                ownerFactionId,
+                kind,
+                MapEconomicDevelopmentRules.GetConstructionCost(kind),
+                MapEconomicDevelopmentRules.GetConstructionDays(kind),
+                survey.YieldMultiplier);
+            _mineConstructions.Add(construction);
+            MineConstructionStarted?.Invoke(construction);
+            StateChanged?.Invoke();
+            reason = string.Empty;
+            return true;
         }
 
         public bool TryRestoreAuthoritativeUnitState(
@@ -2176,12 +2467,21 @@ namespace Game.Application.World
                 return false;
             }
 
-            List<GridCoordinate> route = FindShortestLandPath(
+            List<GridCoordinate> landRoute = FindShortestLandPath(
                 unit.Coordinate,
                 normalized);
+            List<GridCoordinate> seaRoute =
+                FindShortestFriendlyPortSeaPath(
+                    ownerFactionId,
+                    unit.Coordinate,
+                    normalized);
+            List<GridCoordinate> route = seaRoute.Count > 0 &&
+                (landRoute.Count == 0 || seaRoute.Count < landRoute.Count)
+                    ? seaRoute
+                    : landRoute;
             if (route.Count == 0)
             {
-                reason = "이동 가능한 육지 경로가 없습니다.";
+                reason = "이동 가능한 육지 경로나 아군 항구 간 해상 경로가 없습니다.";
                 return false;
             }
 
@@ -2277,6 +2577,126 @@ namespace Game.Application.World
             }
 
             unit.SetPath(path);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TryAssignWorldMission(
+            string ownerFactionId,
+            string unitId,
+            string opportunityId,
+            GridCoordinate target,
+            MapWorldMissionAction action,
+            out string reason)
+        {
+            return TryAssignWorldMission(
+                ownerFactionId,
+                unitId,
+                opportunityId,
+                new WorldMissionMapTarget(target, action),
+                out reason);
+        }
+
+        public bool TryAssignWorldMission(
+            string ownerFactionId,
+            string unitId,
+            string opportunityId,
+            WorldMissionMapTarget mapTarget,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "미션을 수행할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(opportunityId))
+            {
+                reason = "경제 미션 ID가 비어 있습니다.";
+                return false;
+            }
+            if (!_layout.TryNormalize(
+                    mapTarget.Coordinate,
+                    out GridCoordinate normalized) ||
+                !_layout.IsLand(normalized))
+            {
+                reason = "미션 목표가 이동 가능한 지도 좌표가 아닙니다.";
+                return false;
+            }
+
+            var mission = new MapWorldMissionState(
+                opportunityId,
+                unitId,
+                normalized,
+                mapTarget.Action);
+            if (mapTarget.CargoKind.HasValue && mapTarget.RequiredCargo > 0m)
+            {
+                MapCastleControlState source = FindCastle(unit.Coordinate);
+                if (source == null || source.IsDestroyed || !string.Equals(
+                        source.OwnerFactionId,
+                        ownerFactionId,
+                        StringComparison.Ordinal))
+                {
+                    reason = "납품·밀수 부대는 먼저 아군 성에서 화물을 적재해야 합니다.";
+                    return false;
+                }
+                decimal available = source.GetWarehouseSupply(
+                    mapTarget.CargoKind.Value);
+                if (available < mapTarget.RequiredCargo)
+                {
+                    reason = $"성 창고 화물이 부족합니다. 필요 " +
+                        $"{mapTarget.RequiredCargo:N1}, 보유 {available:N1}";
+                    return false;
+                }
+                mission.CargoSource = source.Coordinate;
+                mission.CargoKind = mapTarget.CargoKind;
+                mission.RequiredCargo = mapTarget.RequiredCargo;
+                mission.LoadedCargo = source.TakeWarehouseSupply(
+                    mapTarget.CargoKind.Value,
+                    mapTarget.RequiredCargo);
+            }
+            _worldMissionsByUnitId[unitId] = mission;
+            if (!unit.Coordinate.Equals(normalized) &&
+                !TryIssueMove(
+                    ownerFactionId,
+                    unitId,
+                    normalized,
+                    out reason))
+            {
+                _worldMissionsByUnitId.Remove(unitId);
+                ReturnWorldMissionCargo(mission);
+                return false;
+            }
+
+            reason = string.Empty;
+            AdvanceWorldMissions();
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool CompleteWorldMission(
+            string unitId,
+            string opportunityId,
+            bool cancelled = false)
+        {
+            if (!_worldMissionsByUnitId.TryGetValue(
+                    unitId,
+                    out MapWorldMissionState mission) ||
+                !string.Equals(
+                    mission.OpportunityId,
+                    opportunityId,
+                    StringComparison.Ordinal))
+                return false;
+
+            mission.Status = cancelled
+                ? MapWorldMissionStatus.Cancelled
+                : MapWorldMissionStatus.Completed;
+            if (cancelled)
+                ReturnWorldMissionCargo(mission);
+            _worldMissionsByUnitId.Remove(unitId);
             StateChanged?.Invoke();
             return true;
         }
@@ -2405,6 +2825,11 @@ namespace Game.Application.World
             if (!unit.IsMoving)
             {
                 reason = "선택한 유닛은 현재 이동 중이 아닙니다.";
+                return false;
+            }
+            if (IsUsingSeaTransport(unit))
+            {
+                reason = "간단 해상 수송은 자동 하선 전까지 취소할 수 없습니다.";
                 return false;
             }
 
@@ -2797,6 +3222,7 @@ namespace Game.Application.World
                 changed |= MoveUnitsOneFixedStep();
                 changed |= AdvanceCastleCaptures();
                 changed |= AdvanceMineCaptures();
+                changed |= AdvanceWorldMissions();
                 changed |= RefreshMineGuards();
                 changed |= RecoverUnitStamina();
                 anyChanged |= changed;
@@ -2814,37 +3240,90 @@ namespace Game.Application.World
             bool recruitmentChanged = AdvanceRecruitmentPools();
             bool fatigueChanged = RecoverDailyUnitFatigue();
             bool siegeChanged = ResolveDailySieges();
-            spawnedMine = default;
-            if (_economicDaySequence % _tuning.MineSpawnIntervalDays != 0 ||
-                !TryFindDynamicMineCoordinate(
+            bool constructionProgressed = _mineConstructions.Count > 0;
+            bool constructionCompleted = AdvanceMineConstructions(
+                out MapMineSpawnRecord constructedMine);
+            spawnedMine = constructedMine;
+            bool mineSpawned = constructionCompleted;
+            if (_economicDaySequence % _tuning.MineSpawnIntervalDays == 0 &&
+                TryFindDynamicMineCoordinate(
                     _economicDaySequence,
                     out GridCoordinate coordinate))
             {
-                if (supplyChanged || recruitmentChanged || fatigueChanged ||
-                    siegeChanged)
-                {
-                    StateChanged?.Invoke();
-                }
-                return false;
+                int spawnSequence =
+                    _economicDaySequence / _tuning.MineSpawnIntervalDays;
+                MineKind kind = spawnSequence % 2 == 0
+                    ? MineKind.Gold
+                    : MineKind.Normal;
+                var placement = new MinePlacement(coordinate, kind);
+                _mines.Add(new MapMineControlState(
+                    placement,
+                    _economicDaySequence,
+                    true));
+                var dynamicMine = new MapMineSpawnRecord(
+                    coordinate,
+                    kind,
+                    _economicDaySequence);
+                if (!mineSpawned)
+                    spawnedMine = dynamicMine;
+                MineSpawned?.Invoke(dynamicMine);
+                mineSpawned = true;
             }
 
-            int spawnSequence =
-                _economicDaySequence / _tuning.MineSpawnIntervalDays;
-            MineKind kind = spawnSequence % 2 == 0
-                ? MineKind.Gold
-                : MineKind.Normal;
-            var placement = new MinePlacement(coordinate, kind);
-            _mines.Add(new MapMineControlState(
-                placement,
-                _economicDaySequence,
-                true));
-            spawnedMine = new MapMineSpawnRecord(
-                coordinate,
-                kind,
-                _economicDaySequence);
-            MineSpawned?.Invoke(spawnedMine);
-            StateChanged?.Invoke();
-            return true;
+            if (supplyChanged || recruitmentChanged || fatigueChanged ||
+                siegeChanged || constructionProgressed || mineSpawned)
+            {
+                StateChanged?.Invoke();
+            }
+            return mineSpawned;
+        }
+
+        private bool AdvanceMineConstructions(
+            out MapMineSpawnRecord firstCompletedMine)
+        {
+            firstCompletedMine = default;
+            bool completedAny = false;
+            bool recordedFirst = false;
+            for (int i = _mineConstructions.Count - 1; i >= 0; i--)
+            {
+                MapMineConstructionState construction = _mineConstructions[i];
+                if (!construction.AdvanceDay())
+                    continue;
+
+                completedAny = true;
+
+                var mine = new MapMineControlState(
+                    new MinePlacement(construction.Coordinate, construction.Kind),
+                    _economicDaySequence,
+                    true,
+                    construction.YieldMultiplier)
+                {
+                    OwnerFactionId = construction.OwnerFactionId
+                };
+                _mines.Add(mine);
+                _mineConstructions.RemoveAt(i);
+                var spawnRecord = new MapMineSpawnRecord(
+                    construction.Coordinate,
+                    construction.Kind,
+                    _economicDaySequence,
+                    true,
+                    construction.OwnerFactionId);
+                if (!recordedFirst)
+                {
+                    firstCompletedMine = spawnRecord;
+                    recordedFirst = true;
+                }
+                MineConstructionCompleted?.Invoke(
+                    new MapMineConstructionCompletedRecord(
+                        construction.Coordinate,
+                        construction.OwnerFactionId,
+                        construction.Kind,
+                        _economicDaySequence,
+                        construction.YieldMultiplier));
+                MineSpawned?.Invoke(spawnRecord);
+            }
+
+            return completedAny;
         }
 
         public void ConfigureFactionLogistics(
@@ -4058,6 +4537,8 @@ namespace Game.Application.World
                     index / _layout.Width);
                 if (!_layout.IsLand(candidate) ||
                     FindMine(candidate) != null ||
+                    FindEconomicSurvey(candidate) != null ||
+                    FindMineConstruction(candidate) != null ||
                     IsFactionBase(candidate) ||
                     _layout.IsNeutralCastle(candidate))
                 {
@@ -4215,51 +4696,55 @@ namespace Game.Application.World
             for (int i = 0; i < _aiFactionIds.Count; i++)
             {
                 string factionId = _aiFactionIds[i];
-                MapUnitState unit = FindFirstOwnedUnit(factionId);
-                if (unit == null)
+                if (FindFirstOwnedUnit(factionId) == null)
                 {
-                    if (!TryCreateUnit(factionId, out unit, out _))
+                    if (!TryCreateUnit(factionId, out _, out _))
                         continue;
                     changed = true;
                 }
-
-                if (unit.IsMoving || IsStandingOnCapturableObjective(unit))
-                    continue;
-
-                MapCastleControlState castleTarget =
-                    FindClosestTargetCastle(factionId, unit.Coordinate);
-                MapMineControlState target = FindClosestTargetMine(
-                    factionId,
-                    unit.Coordinate);
-                int castleDistance = castleTarget == null
-                    ? int.MaxValue
-                    : _layout.ManhattanDistance(
-                        unit.Coordinate,
-                        castleTarget.Coordinate);
-                int mineDistance = target == null
-                    ? int.MaxValue
-                    : _layout.ManhattanDistance(
-                        unit.Coordinate,
-                        target.Coordinate);
-
-                if (castleTarget != null && castleDistance < mineDistance)
+                for (int unitIndex = 0; unitIndex < _units.Count; unitIndex++)
                 {
-                    if (TryIssueCastleOccupation(
-                        factionId,
-                        unit.Id,
-                        castleTarget.Coordinate,
-                        out _))
-                    {
-                        changed = true;
-                    }
-                }
-                else if (target != null && TryIssueMove(
-                    factionId,
-                    unit.Id,
-                    target.Coordinate,
-                    out _))
-                {
-                    changed = true;
+                    MapUnitState unit = _units[unitIndex];
+                    if (!string.Equals(
+                            unit.OwnerFactionId,
+                            factionId,
+                            StringComparison.Ordinal) ||
+                        unit.IsMoving ||
+                        IsStandingOnCapturableObjective(unit))
+                        continue;
+
+                    GridCoordinate? previousTarget =
+                        _aiLongTermTargets.TryGetValue(
+                            factionId,
+                            out GridCoordinate savedTarget)
+                            ? savedTarget
+                            : (GridCoordinate?)null;
+                    if (!FactionStrategicAi.TryChooseObjective(
+                            _layout,
+                            _mines,
+                            _castles,
+                            _units,
+                            factionId,
+                            unit,
+                            _aiStrategies[factionId],
+                            previousTarget,
+                            out StrategicObjective objective))
+                        continue;
+
+                    _aiLongTermTargets[factionId] = objective.Coordinate;
+                    bool issued = objective.Kind ==
+                            StrategicObjectiveKind.Castle
+                        ? TryIssueCastleOccupation(
+                            factionId,
+                            unit.Id,
+                            objective.Coordinate,
+                            out _)
+                        : TryIssueMove(
+                            factionId,
+                            unit.Id,
+                            objective.Coordinate,
+                            out _);
+                    changed |= issued;
                 }
             }
 
@@ -4381,6 +4866,93 @@ namespace Game.Application.World
             }
 
             return changed;
+        }
+
+        private bool AdvanceWorldMissions()
+        {
+            if (_worldMissionsByUnitId.Count == 0)
+                return false;
+
+            bool changed = false;
+            var missions = new List<MapWorldMissionState>(
+                _worldMissionsByUnitId.Values);
+            for (int i = 0; i < missions.Count; i++)
+            {
+                MapWorldMissionState mission = missions[i];
+                if (mission.Status != MapWorldMissionStatus.EnRoute)
+                    continue;
+                MapUnitState unit = FindUnit(mission.UnitId);
+                if (unit == null || unit.IsMoving ||
+                    !unit.Coordinate.Equals(mission.Target))
+                    continue;
+
+                if (mission.Action == MapWorldMissionAction.Occupy)
+                {
+                    MapCastleControlState castle = FindCastle(mission.Target);
+                    MapMineControlState mine = FindMine(mission.Target);
+                    bool controlled = castle != null
+                        ? string.Equals(
+                            castle.OwnerFactionId,
+                            unit.OwnerFactionId,
+                            StringComparison.Ordinal)
+                        : mine == null || string.Equals(
+                            mine.OwnerFactionId,
+                            unit.OwnerFactionId,
+                            StringComparison.Ordinal);
+                    if (!controlled)
+                        continue;
+                }
+
+                if (mission.Action == MapWorldMissionAction.Escort)
+                    unit.AssignSupplyMission(
+                        MapSupplyMissionKind.Escort,
+                        mission.Target);
+                else if (mission.Action == MapWorldMissionAction.Raid)
+                    unit.AssignSupplyMission(
+                        MapSupplyMissionKind.Raid,
+                        mission.Target);
+                else if (mission.Action == MapWorldMissionAction.Deliver ||
+                         mission.Action == MapWorldMissionAction.Smuggle)
+                {
+                    if (mission.LoadedCargo < mission.RequiredCargo)
+                        continue;
+                    mission.DeliveredCargo = mission.LoadedCargo;
+                    mission.LoadedCargo = 0m;
+                }
+                else if (mission.Action == MapWorldMissionAction.Sabotage)
+                {
+                    MapCastleControlState targetCastle =
+                        FindCastle(mission.Target);
+                    if (targetCastle == null || targetCastle.IsDestroyed ||
+                        string.Equals(
+                            targetCastle.OwnerFactionId,
+                            unit.OwnerFactionId,
+                            StringComparison.Ordinal))
+                        continue;
+                    mission.SabotageDamage = targetCastle.ApplyWallDamage(
+                        Math.Max(25, unit.Soldiers / 2));
+                    unit.AdjustFatigue(8m);
+                }
+
+                mission.Status = MapWorldMissionStatus.Performing;
+                WorldMissionReady?.Invoke(mission);
+                changed = true;
+            }
+            return changed;
+        }
+
+        private void ReturnWorldMissionCargo(MapWorldMissionState mission)
+        {
+            if (mission == null || !mission.CargoKind.HasValue ||
+                mission.LoadedCargo <= 0m || !mission.CargoSource.HasValue)
+                return;
+            MapCastleControlState source = FindCastle(
+                mission.CargoSource.Value);
+            if (source != null && !source.IsDestroyed)
+                source.StoreWarehouseSupply(
+                    mission.CargoKind.Value,
+                    mission.LoadedCargo);
+            mission.LoadedCargo = 0m;
         }
 
         private bool RecoverUnitStamina()
@@ -4896,6 +5468,80 @@ namespace Game.Application.World
             }
 
             return new List<GridCoordinate>();
+        }
+
+        private List<GridCoordinate> FindShortestFriendlyPortSeaPath(
+            string ownerFactionId,
+            GridCoordinate origin,
+            GridCoordinate destination)
+        {
+            if (!IsFriendlyPort(ownerFactionId, origin) ||
+                !IsFriendlyPort(ownerFactionId, destination))
+            {
+                return new List<GridCoordinate>();
+            }
+
+            var frontier = new Queue<GridCoordinate>();
+            var visited = new HashSet<GridCoordinate>();
+            var previous = new Dictionary<GridCoordinate, GridCoordinate>();
+            frontier.Enqueue(origin);
+            visited.Add(origin);
+
+            while (frontier.Count > 0)
+            {
+                GridCoordinate current = frontier.Dequeue();
+                for (int i = 0; i < NeighborOffsets.Length; i++)
+                {
+                    GridCoordinate offset = NeighborOffsets[i];
+                    GridCoordinate neighbor;
+                    try
+                    {
+                        neighbor = _layout.Move(current, offset.X, offset.Y);
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        continue;
+                    }
+
+                    bool canEnter = !_layout.IsLand(neighbor) ||
+                        neighbor.Equals(destination);
+                    if (!canEnter || !visited.Add(neighbor))
+                        continue;
+
+                    previous.Add(neighbor, current);
+                    if (neighbor.Equals(destination))
+                        return ReconstructPath(origin, destination, previous);
+                    frontier.Enqueue(neighbor);
+                }
+            }
+
+            return new List<GridCoordinate>();
+        }
+
+        private bool IsFriendlyPort(
+            string ownerFactionId,
+            GridCoordinate coordinate)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            return castle != null &&
+                string.Equals(
+                    castle.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal) &&
+                IsCoastalPort(coordinate);
+        }
+
+        private bool ContainsOceanTile(IReadOnlyList<GridCoordinate> path)
+        {
+            if (path == null)
+                return false;
+            for (int i = 0; i < path.Count; i++)
+            {
+                if (!_layout.IsLand(path[i]))
+                    return true;
+            }
+
+            return false;
         }
 
         private static List<GridCoordinate> ReconstructPath(

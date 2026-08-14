@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Game.Application.PvP;
 using Game.Application.Session;
 using Game.Application.World;
+using Game.Domain.Campaign;
 using Game.Domain.Common;
 using Game.Domain.Military;
 using Game.Domain.World;
@@ -31,6 +32,7 @@ namespace Game.Presentation
         private PanelSettings _panelSettings;
         private VisualElement _uiRoot;
         private VisualElement _modeView;
+        private VisualElement _singlePlayerSetupView;
         private VisualElement _connectionView;
         private VisualElement _singlePlayerView;
         private VisualElement _singlePlayerResultView;
@@ -43,6 +45,12 @@ namespace Game.Presentation
         private TextField _hiveMatchIdField;
         private TextField _hivePointField;
         private TextField _hiveExtraDataField;
+        private EnumField _mapSizeField;
+        private EnumField _mapResourceField;
+        private EnumField _mapWaterField;
+        private IntegerField _mapSeedField;
+        private IntegerField _neutralCastleField;
+        private Toggle _mapWrapField;
         private Label _connectionStatus;
         private Label _roomStatus;
         private Label _singlePlayerStatus;
@@ -68,6 +76,8 @@ namespace Game.Presentation
         private Button _contextMoveUnitButton;
         private Button _contextCancelMoveButton;
         private Button _contextCaptureMineButton;
+        private Button _contextEconomicSurveyButton;
+        private Button _contextBuildMineButton;
         private Button _contextCastleActionButton;
         private Button _contextCastleRoleButton;
         private Button _contextSiegeActionButton;
@@ -94,10 +104,12 @@ namespace Game.Presentation
         private Label _operationBoardSummary;
         private Label _operationBoardFeedback;
         private Button _nextOperationButton;
+        private Button _operationAgentButton;
         private Button _operationApproachButton;
         private Button _acceptOperationButton;
         private VisualElement _timeHudView;
         private Label _timeHudLabel;
+        private Label _campaignHudLabel;
         private VisualElement _pauseMenuOverlay;
         private VisualElement _keyGuideView;
         private bool _resumeRealtimeAfterPauseMenu;
@@ -117,9 +129,15 @@ namespace Game.Presentation
         private GridCoordinate? _pendingRecruitmentOrigin;
         private int _pendingCommanderIndex;
         private int _selectedOperationIndex;
+        private int _selectedOperationAgentIndex;
         private int _selectedOperationApproachIndex;
         private string _queuedOperationId = string.Empty;
+        private SubordinateMissionPlan _pendingDelegatedMissionPlan;
+        private bool _hasPendingDelegatedMission;
         private float _nextMultiplayerStatusRefreshAt;
+        private int _lastCampaignResultTurn = -1;
+        private int _lastDominanceStreak;
+        private string _campaignTransitionAlert = string.Empty;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -263,7 +281,7 @@ namespace Game.Presentation
             _multiplayerEventsBound = true;
         }
 
-        private void EnsureGameplayWorld()
+        private void EnsureGameplayWorld(MapGenerationSettings settings = null)
         {
             if (gameplayMap == null)
             {
@@ -274,7 +292,18 @@ namespace Game.Presentation
 
             SetServiceActive(gameplayMap, true);
             gameplayMap.PointerSelectionBlocked = false;
-            gameplayMap.Initialize();
+            if (settings != null)
+            {
+                gameplayMap.ConfigureMapGeneration(settings);
+                if (gameplayMap.CurrentLayout == null)
+                    gameplayMap.Initialize();
+                else
+                    gameplayMap.ResetMap();
+            }
+            else
+            {
+                gameplayMap.Initialize();
+            }
             BindMapEvents();
         }
 
@@ -291,12 +320,15 @@ namespace Game.Presentation
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
             gameplayMap.MineCaptured += HandleMineCaptured;
             gameplayMap.MineSpawned += HandleMineSpawned;
+            gameplayMap.MineConstructionCompleted +=
+                HandleMineConstructionCompleted;
             gameplayMap.CastleCaptured += HandleCastleCaptured;
             gameplayMap.CapitalDestroyed += HandleCapitalDestroyed;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
             gameplayMap.SupplyInterdictionResolved +=
                 HandleSupplyInterdictionResolved;
+            gameplayMap.WorldMissionReady += HandleWorldMissionReady;
             _mapEventsBound = true;
         }
 
@@ -327,8 +359,34 @@ namespace Game.Presentation
                 _uiRoot,
                 "기업의 시대",
                 "플레이할 방식을 선택하세요.");
-            AddButton(_modeView, "1인이서 하기", SelectSinglePlayer);
+            AddButton(_modeView, "1인이서 하기", ShowSinglePlayerSetup);
             AddButton(_modeView, "여러 명이서 하기", SelectMultiplayer);
+
+            _singlePlayerSetupView = CreateCard(
+                _uiRoot,
+                "새 세계 설정",
+                "문명식 프리셋으로 지도 크기·자원·바다·시드를 정합니다.");
+            _mapSizeField = new EnumField("지도 크기", MapSizePreset.Standard);
+            _mapResourceField = new EnumField(
+                "자원량",
+                MapResourceAbundance.Standard);
+            _mapWaterField = new EnumField("바다 비율", MapWaterLevel.Standard);
+            _mapSeedField = new IntegerField("지도 시드") { value = 42 };
+            _neutralCastleField = new IntegerField("중립 성 수") { value = 8 };
+            _mapWrapField = new Toggle("가로 세계 순환") { value = true };
+            _singlePlayerSetupView.Add(_mapSizeField);
+            _singlePlayerSetupView.Add(_mapResourceField);
+            _singlePlayerSetupView.Add(_mapWaterField);
+            _singlePlayerSetupView.Add(_mapSeedField);
+            _singlePlayerSetupView.Add(_neutralCastleField);
+            _singlePlayerSetupView.Add(_mapWrapField);
+            AddButton(
+                _singlePlayerSetupView,
+                "무작위 시드",
+                () => _mapSeedField.value = unchecked(
+                    Environment.TickCount ^ DateTime.UtcNow.Millisecond));
+            AddButton(_singlePlayerSetupView, "이 설정으로 시작", SelectSinglePlayer);
+            AddButton(_singlePlayerSetupView, "뒤로", ShowModeSelection);
 
             _connectionView = CreateCard(
                 _uiRoot,
@@ -495,12 +553,20 @@ namespace Game.Presentation
                 return;
             }
 
-            EnsureGameplayWorld();
+            var mapSettings = new MapGenerationSettings(
+                (MapSizePreset)_mapSizeField.value,
+                (MapResourceAbundance)_mapResourceField.value,
+                (MapWaterLevel)_mapWaterField.value,
+                _mapSeedField.value,
+                Math.Clamp(_neutralCastleField.value, 0, 24),
+                _mapWrapField.value);
+            EnsureGameplayWorld(mapSettings);
             EnsureSinglePlayerSimulation();
             multiplayerSession?.Disconnect();
             SetServiceActive(multiplayerSession, false);
             SetServiceActive(singlePlayerSimulation, true);
             SetVisible(_modeView, false);
+            SetVisible(_singlePlayerSetupView, false);
             SetVisible(_connectionView, false);
             SetVisible(_multiplayerView, false);
             SetVisible(_singlePlayerResultView, false);
@@ -535,6 +601,7 @@ namespace Game.Presentation
                 : "직접 서버 연결은 지금 사용할 수 있습니다. HIVE 자동 매칭은 " +
                   "SDK 설치와 HIVE 콘솔 설정 후 활성화됩니다.";
             SetVisible(_modeView, false);
+            SetVisible(_singlePlayerSetupView, false);
             SetVisible(_singlePlayerView, false);
             SetVisible(_singlePlayerResultView, false);
             SetVisible(_multiplayerView, false);
@@ -870,66 +937,18 @@ namespace Game.Presentation
 
         private string BuildSinglePlayerResultText()
         {
-            var result = singlePlayerSimulation.CampaignResult;
-            decimal winningPower = decimal.MinValue;
-            for (int i = 0; i < result.Rankings.Count; i++)
-            {
-                var ranking = result.Rankings[i];
-                if (!ranking.IsEliminated &&
-                    ranking.EconomicPower > winningPower)
-                {
-                    winningPower = ranking.EconomicPower;
-                }
-            }
-
-            var winners = new StringBuilder(80);
-            var losers = new StringBuilder(160);
-            for (int i = 0; i < result.Rankings.Count; i++)
-            {
-                var ranking = result.Rankings[i];
-                bool isWinner = !ranking.IsEliminated &&
-                    ranking.EconomicPower == winningPower;
-                StringBuilder target = isWinner ? winners : losers;
-                if (target.Length > 0)
-                    target.Append(", ");
-                target.Append(ranking.CompanyName)
-                    .Append(" (")
-                    .Append(ranking.EconomicPower.ToString("N0"))
-                    .Append(")");
-            }
-
-            if (winners.Length == 0)
-                winners.Append("없음");
-            if (losers.Length == 0)
-                losers.Append("없음");
-
-            return new StringBuilder(320)
-                .Append("최종 판정: ")
-                .Append(CampaignResultKoreanFormatter.GetOutcomeName(
-                    result.Outcome))
-                .Append('\n')
-                .Append("종료 사유: ")
-                .Append(CampaignResultKoreanFormatter.GetReasonName(
-                    result.EndReason))
-                .Append('\n')
-                .Append("종료 날짜: ")
-                .Append(GameCalendarDate.FromDayNumber(
-                    result.ResolvedTurn.Value))
-                .Append(" / 전체 12개월")
-                .Append('\n')
-                .Append("승자: ")
-                .Append(winners)
-                .Append('\n')
-                .Append("패자: ")
-                .Append(losers)
-                .ToString();
+            return CampaignResultKoreanFormatter.FormatFinalSummary(
+                singlePlayerSimulation.CampaignResult,
+                singlePlayerSimulation.CurrentCampaignState);
         }
 
         private void ConfirmSinglePlayerResult()
         {
             _queuedOperationId = string.Empty;
+            _hasPendingDelegatedMission = false;
             _selectedOperationIndex = 0;
             _selectedOperationApproachIndex = 0;
+            ResetCampaignHudTracking();
             singlePlayerSimulation.RestartSimulation();
             gameplayMap?.ResetMap();
             SetVisible(_singlePlayerResultView, false);
@@ -975,6 +994,7 @@ namespace Game.Presentation
 
         private void ShowModeSelection()
         {
+            _hasPendingDelegatedMission = false;
             HideMapContextMenu();
             multiplayerSession?.Disconnect();
             SetServiceActive(singlePlayerSimulation, false);
@@ -983,11 +1003,24 @@ namespace Game.Presentation
             _selection.Clear();
 
             SetVisible(_modeView, true);
+            SetVisible(_singlePlayerSetupView, false);
             SetVisible(_connectionView, false);
             SetVisible(_singlePlayerView, false);
             SetVisible(_singlePlayerResultView, false);
             SetVisible(_multiplayerView, false);
             ShowMenuOverlay();
+        }
+
+        private void ShowSinglePlayerSetup()
+        {
+            SetVisible(_modeView, false);
+            SetVisible(_singlePlayerSetupView, true);
+            SetVisible(_connectionView, false);
+            SetVisible(_singlePlayerView, false);
+            SetVisible(_singlePlayerResultView, false);
+            SetVisible(_multiplayerView, false);
+            ShowMenuOverlay();
+            SetVisible(_singlePlayerSetupView, true);
         }
 
         private void ShowMenuOverlay()
@@ -1088,6 +1121,8 @@ namespace Game.Presentation
                     .ToString();
             }
 
+            RefreshCampaignHud();
+
             var builder = new StringBuilder(180);
             builder.Append("보유 자금 ")
                 .Append(singlePlayerSimulation.PlayerCash.ToString("N0"))
@@ -1150,6 +1185,8 @@ namespace Game.Presentation
                 {
                     RealtimeMapGameplayService mapService =
                         gameplayMap.GameplayService;
+                    if (mapService.IsUsingSeaTransport(selectedUnit))
+                        builder.Append("\n간이 해상 수송 · 자동 승선/하선");
                     int stepsPerTile =
                         mapService.GetRequiredMovementStepsPerTile(selectedUnit);
                     int remainingSteps =
@@ -1177,6 +1214,76 @@ namespace Game.Presentation
                 .Append(CampaignResultKoreanFormatter.Format(
                     singlePlayerSimulation.CampaignResult));
             _singlePlayerStatus.text = builder.ToString();
+        }
+
+        private void RefreshCampaignHud()
+        {
+            if (_campaignHudLabel == null || singlePlayerSimulation == null)
+                return;
+
+            CampaignTurnResult result = singlePlayerSimulation.CampaignResult;
+            UpdateCampaignTransitionAlert(result);
+
+            CampaignState campaign =
+                singlePlayerSimulation.CurrentCampaignState;
+            MapCastleControlState capital = null;
+            RealtimeMapGameplayService mapService = gameplayMap?.GameplayService;
+            if (mapService != null)
+                capital = mapService.FindCapital(mapService.PlayerFactionId);
+
+            decimal bankruptcyLimit =
+                singlePlayerSimulation.BankruptcyDebtLimit;
+            bool hasRisk = !string.IsNullOrEmpty(_campaignTransitionAlert) ||
+                campaign?.Player?.Company?.IsBankrupt == true ||
+                campaign?.Player?.IsCapitalStanding == false ||
+                (campaign?.Player?.Company != null &&
+                 bankruptcyLimit > 0m &&
+                 campaign.Player.Company.Debt >= bankruptcyLimit * 0.8m) ||
+                capital?.IsUnderSiege == true ||
+                (capital != null &&
+                 capital.MaxWallDurability > 0 &&
+                 capital.WallDurability * 100 <=
+                 capital.MaxWallDurability * 30);
+
+            _campaignHudLabel.text =
+                CampaignResultKoreanFormatter.FormatHud(
+                    result,
+                    campaign,
+                    singlePlayerSimulation.RealtimeDayNumber,
+                    singlePlayerSimulation.MaxCampaignTurns,
+                    bankruptcyLimit,
+                    capital?.IsUnderSiege == true,
+                    capital?.WallDurability ?? 0,
+                    capital?.MaxWallDurability ?? 0,
+                    _campaignTransitionAlert);
+            _campaignHudLabel.style.color = hasRisk
+                ? new Color(1f, 0.68f, 0.34f)
+                : new Color(0.84f, 0.90f, 0.98f);
+        }
+
+        private void UpdateCampaignTransitionAlert(CampaignTurnResult result)
+        {
+            if (result == null ||
+                result.ResolvedTurn.Value == _lastCampaignResultTurn)
+            {
+                return;
+            }
+
+            _campaignTransitionAlert =
+                _lastCampaignResultTurn >= 0 &&
+                _lastDominanceStreak > 0 &&
+                result.DominanceConsecutiveTurns == 0
+                    ? "3배 패권 유지 중단 · 0일부터 다시 계산"
+                    : string.Empty;
+            _lastCampaignResultTurn = result.ResolvedTurn.Value;
+            _lastDominanceStreak = result.DominanceConsecutiveTurns;
+        }
+
+        private void ResetCampaignHudTracking()
+        {
+            _lastCampaignResultTurn = -1;
+            _lastDominanceStreak = 0;
+            _campaignTransitionAlert = string.Empty;
         }
 
         private void HandleSinglePlayerRealtimeStateChanged()
@@ -1609,6 +1716,7 @@ namespace Game.Presentation
                 gameplayMap.SelectedPlayerUnit.Coordinate.Equals(
                     selection.Coordinate));
             ConfigureCaptureMineButton(selection);
+            ConfigureEconomicDevelopmentButtons(selection);
             ConfigureCastleButtons(selection);
 
             bool missionTarget =
@@ -1651,7 +1759,14 @@ namespace Game.Presentation
 
         private void HandleMineCaptured(MapMineCaptureRecord record)
         {
-            if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            singlePlayerSimulation?.ApplyMapMineOwnership(
+                gameplayMap.CurrentLayout,
+                gameplayMap.GameplayService,
+                record);
+            if (_singleMapActionFeedback == null)
                 return;
 
             string owner = string.Equals(
@@ -1668,6 +1783,8 @@ namespace Game.Presentation
         {
             if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
                 return;
+            if (record.WasConstructed)
+                return;
 
             string mineName = record.Kind == MineKind.Gold
                 ? "금광"
@@ -1677,9 +1794,31 @@ namespace Game.Presentation
                 $"{record.Coordinate}에서 발견되었습니다.";
         }
 
-        private void HandleCastleCaptured(MapCastleCaptureRecord record)
+        private void HandleMineConstructionCompleted(
+            MapMineConstructionCompletedRecord record)
         {
             if (!_selection.IsSinglePlayer || _singleMapActionFeedback == null)
+                return;
+
+            string mineName = record.Kind == MineKind.Gold
+                ? "금광"
+                : "철광산";
+            _singleMapActionFeedback.text =
+                $"{record.EconomicDay}일: {record.Coordinate}의 {mineName} 건설이 " +
+                $"완료되었습니다. 생산성 {record.YieldMultiplier:P0}로 기존 " +
+                "광산 생산·수송망에 합류합니다.";
+        }
+
+        private void HandleCastleCaptured(MapCastleCaptureRecord record)
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            singlePlayerSimulation?.ApplyMapCastleOwnership(
+                gameplayMap.CurrentLayout,
+                gameplayMap.GameplayService,
+                record);
+            if (_singleMapActionFeedback == null)
                 return;
 
             bool playerCaptured = string.Equals(
@@ -1786,6 +1925,9 @@ namespace Game.Presentation
                     singlePlayerSimulation);
             RefreshSelectedHeadquartersInventory();
             gameplayMap.AdvanceEconomicDay(out _);
+            singlePlayerSimulation.SynchronizeWorldOwnershipToMap(
+                gameplayMap.CurrentLayout,
+                gameplayMap.GameplayService);
             if (supplyTransports.Count > 0)
             {
                 decimal totalCost = 0m;
@@ -2229,6 +2371,8 @@ namespace Game.Presentation
             bool isReroute =
                 gameplayMap.SelectedPlayerUnit?.IsMoving == true &&
                 !appendsWaypoint;
+            bool usesSeaTransport = !appendsWaypoint &&
+                gameplayMap.WillSelectedMoveUseSeaTransport(destination);
             if (!gameplayMap.CanMoveSelectedPlayerUnit(
                 destination,
                 out string reason))
@@ -2246,7 +2390,10 @@ namespace Game.Presentation
             MapCellSelection selection = gameplayMap.CurrentSelection.Value;
             bool isMine = selection.Content == MapCellContent.NormalMine ||
                           selection.Content == MapCellContent.GoldMine;
-            SetMapActionFeedback(isMine
+            SetMapActionFeedback(usesSeaTransport
+                ? $"{destination} 아군 항구로 해상 수송을 시작합니다. " +
+                  "승선과 하선은 자동 처리됩니다."
+                : isMine
                 ? appendsWaypoint
                     ? $"{destination} 광산을 마지막 경유지로 예약했습니다."
                     : $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
@@ -2332,6 +2479,109 @@ namespace Game.Presentation
             RefreshSelectedMapActions();
         }
 
+        private void SurveySelectedEconomicSite()
+        {
+            if (gameplayMap == null ||
+                singlePlayerSimulation == null ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                return;
+            }
+
+            GridCoordinate coordinate =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            if (!gameplayMap.CanSurveySelectedEconomicSite(
+                    coordinate,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+            decimal cost = MapEconomicDevelopmentRules.SurveyCost;
+            if (!singlePlayerSimulation.CanAffordPlayerCash(cost))
+            {
+                SetMapActionFeedback(
+                    $"경제 탐사 비용이 부족합니다. 필요 {cost:N0}원 · " +
+                    $"보유 {singlePlayerSimulation.PlayerCash:N0}원");
+                return;
+            }
+            if (!singlePlayerSimulation.TrySpendPlayerCash(cost, out reason) ||
+                !gameplayMap.TrySurveySelectedEconomicSite(
+                    coordinate,
+                    out MapEconomicSurveyState survey,
+                    out reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!survey.HasViableDeposit)
+            {
+                SetMapActionFeedback(
+                    $"{coordinate} 경제 탐사 완료 · {cost:N0}원 지출 · " +
+                    "채굴 가치가 있는 매장지를 찾지 못했습니다.");
+            }
+            else
+            {
+                MineKind kind = survey.DepositKind.Value;
+                string mineName = kind == MineKind.Gold ? "금광" : "철광산";
+                SetMapActionFeedback(
+                    $"{coordinate} 경제 탐사 완료 · {mineName} 후보 발견 · " +
+                    $"예상 생산성 {survey.YieldMultiplier:P0} · " +
+                    $"건설비 {MapEconomicDevelopmentRules.GetConstructionCost(kind):N0}원");
+            }
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
+        private void StartSelectedMineConstruction()
+        {
+            if (gameplayMap == null ||
+                singlePlayerSimulation == null ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                return;
+            }
+
+            GridCoordinate coordinate =
+                gameplayMap.CurrentSelection.Value.Coordinate;
+            if (!gameplayMap.CanStartSelectedMineConstruction(
+                    coordinate,
+                    out MapEconomicSurveyState survey,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            MineKind kind = survey.DepositKind.Value;
+            decimal cost =
+                MapEconomicDevelopmentRules.GetConstructionCost(kind);
+            if (!singlePlayerSimulation.CanAffordPlayerCash(cost))
+            {
+                SetMapActionFeedback(
+                    $"채굴소 건설비가 부족합니다. 필요 {cost:N0}원 · " +
+                    $"보유 {singlePlayerSimulation.PlayerCash:N0}원");
+                return;
+            }
+            if (!singlePlayerSimulation.TrySpendPlayerCash(cost, out reason) ||
+                !gameplayMap.TryStartSelectedMineConstruction(
+                    coordinate,
+                    out MapMineConstructionState construction,
+                    out reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            string mineName = kind == MineKind.Gold ? "금광" : "철광산";
+            SetMapActionFeedback(
+                $"{coordinate} {mineName} 건설 시작 · {cost:N0}원 지출 · " +
+                $"완공까지 {construction.TotalDays}일");
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
         private void RefreshSelectedMapActions()
         {
             if (gameplayMap != null && gameplayMap.CurrentSelection.HasValue)
@@ -2389,6 +2639,7 @@ namespace Game.Presentation
                     selectedUnit != null &&
                     selectedUnit.Coordinate.Equals(selection.Coordinate));
                 ConfigureCaptureMineButton(selection);
+                ConfigureEconomicDevelopmentButtons(selection);
                 ConfigureCastleButtons(selection);
             }
 
@@ -2535,6 +2786,71 @@ namespace Game.Presentation
             _contextAutonomyButton.SetEnabled(canChooseOccupationPolicy);
         }
 
+        private void ConfigureEconomicDevelopmentButtons(
+            MapCellSelection selection)
+        {
+            if (_contextEconomicSurveyButton == null ||
+                _contextBuildMineButton == null ||
+                gameplayMap?.GameplayService == null ||
+                gameplayMap.CurrentLayout == null)
+            {
+                return;
+            }
+
+            GridCoordinate coordinate = selection.Coordinate;
+            bool emptyLand = selection.Content == MapCellContent.Empty &&
+                gameplayMap.CurrentLayout.IsLand(coordinate);
+            MapEconomicSurveyState survey =
+                gameplayMap.GameplayService.FindEconomicSurvey(coordinate);
+            MapMineConstructionState construction =
+                gameplayMap.GameplayService.FindMineConstruction(coordinate);
+
+            bool showSurvey = emptyLand && survey == null && construction == null;
+            SetVisible(_contextEconomicSurveyButton, showSurvey);
+            bool canSurvey = showSurvey &&
+                gameplayMap.CanSurveySelectedEconomicSite(coordinate, out _) &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.CanAffordPlayerCash(
+                    MapEconomicDevelopmentRules.SurveyCost);
+            _contextEconomicSurveyButton.SetEnabled(canSurvey);
+            _contextEconomicSurveyButton.text =
+                $"경제 탐사 · {MapEconomicDevelopmentRules.SurveyCost:N0}원 · 체력 " +
+                $"{MapEconomicDevelopmentRules.SurveyStaminaCost}";
+
+            bool showBuild = emptyLand &&
+                (construction != null || survey?.HasViableDeposit == true);
+            SetVisible(_contextBuildMineButton, showBuild);
+            if (!showBuild)
+                return;
+
+            if (construction != null)
+            {
+                string buildingName = construction.Kind == MineKind.Gold
+                    ? "금광"
+                    : "철광산";
+                _contextBuildMineButton.text =
+                    $"{buildingName} 건설 중 · 남은 " +
+                    $"{construction.RemainingDays}/{construction.TotalDays}일";
+                _contextBuildMineButton.SetEnabled(false);
+                return;
+            }
+
+            MineKind kind = survey.DepositKind.Value;
+            decimal cost =
+                MapEconomicDevelopmentRules.GetConstructionCost(kind);
+            int days = MapEconomicDevelopmentRules.GetConstructionDays(kind);
+            string mineName = kind == MineKind.Gold ? "금광" : "철광산";
+            bool canBuild = gameplayMap.CanStartSelectedMineConstruction(
+                    coordinate,
+                    out _,
+                    out _) &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.CanAffordPlayerCash(cost);
+            _contextBuildMineButton.text =
+                $"{mineName} 건설 · {cost:N0}원 · {days}일";
+            _contextBuildMineButton.SetEnabled(canBuild);
+        }
+
         private void SetSelectedOccupationPolicy(MapOccupationPolicy policy)
         {
             if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
@@ -2636,6 +2952,12 @@ namespace Game.Presentation
                 selection.Content == MapCellContent.NeutralCastle ||
                 selection.Content == MapCellContent.PlayerCastle ||
                 selection.Content == MapCellContent.EnemyCastle;
+            bool isFriendlyCastle =
+                selection.Content == MapCellContent.PlayerCastle ||
+                selection.Content == MapCellContent.PlayerBase;
+            bool usesSeaTransport = canMove &&
+                gameplayMap.WillSelectedMoveUseSeaTransport(
+                    selection.Coordinate);
 
             SetVisible(createButton, atRecruitmentSite);
             createButton.SetEnabled(canCreate);
@@ -2649,11 +2971,14 @@ namespace Game.Presentation
             // both buttons issue effectively the same order.
             SetVisible(
                 moveButton,
-                hasSelectedUnit && !canSelect && !isMine && !isCastle);
+                hasSelectedUnit && !canSelect && !isMine &&
+                (!isCastle || isFriendlyCastle));
             moveButton.SetEnabled(canMove);
             moveButton.text =
                 gameplayMap.CurrentMovementPreview?.AppendsWaypoint == true
                 ? "Shift 경유지 예약 확정 · 추가 체력 없음"
+                : usesSeaTransport
+                    ? "아군 항구로 해상 이동 · 자동 승선/하선"
                 : gameplayMap.SelectedPlayerUnit?.IsMoving == true
                     ? "새 목적지로 변경 · 추가 체력 없음"
                 : "이 칸으로 이동 · 체력 1";
@@ -3106,6 +3431,22 @@ namespace Game.Presentation
                     CaptureSelectedMine();
                     HideMapContextMenu();
                 });
+            _contextEconomicSurveyButton = CreateMapActionButton(
+                $"경제 탐사 · {MapEconomicDevelopmentRules.SurveyCost:N0}원",
+                () =>
+                {
+                    SurveySelectedEconomicSite();
+                    HideMapContextMenu();
+                });
+            _contextEconomicSurveyButton.name = "map-economic-survey-button";
+            _contextBuildMineButton = CreateMapActionButton(
+                "채굴소 건설",
+                () =>
+                {
+                    StartSelectedMineConstruction();
+                    HideMapContextMenu();
+                });
+            _contextBuildMineButton.name = "map-build-mine-button";
             _contextCastleActionButton = CreateMapActionButton(
                 "빈 성으로 이동·점령",
                 () =>
@@ -3157,6 +3498,8 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextMoveUnitButton);
             _mapContextMenu.Add(_contextCancelMoveButton);
             _mapContextMenu.Add(_contextCaptureMineButton);
+            _mapContextMenu.Add(_contextEconomicSurveyButton);
+            _mapContextMenu.Add(_contextBuildMineButton);
             _mapContextMenu.Add(_contextCastleActionButton);
             _mapContextMenu.Add(_contextCastleRoleButton);
             _mapContextMenu.Add(_contextSiegeActionButton);
@@ -3259,7 +3602,7 @@ namespace Game.Presentation
         {
             _operationBoardTopButton = new Button(OpenOperationBoard)
             {
-                text = "경제 작전 게시판"
+                text = "미션·경제 작전 게시판"
             };
             _operationBoardTopButton.focusable = false;
             _operationBoardTopButton.style.position = Position.Absolute;
@@ -3278,7 +3621,7 @@ namespace Game.Presentation
 
             _operationBoardView = CreateCard(
                 root,
-                "경제 작전 게시판",
+                "미션·경제 작전 게시판",
                 "세계에서 실제로 발생한 위기와 기회입니다. 해결 방식에 따라 비용·위험·보상과 후속 경제가 달라집니다.");
             _operationBoardView.style.position = Position.Absolute;
             _operationBoardView.style.top = 78;
@@ -3299,6 +3642,10 @@ namespace Game.Presentation
             _nextOperationButton = CreateMapActionButton(
                 "다음 작전 보기",
                 CycleSelectedOperation);
+            _operationAgentButton = CreateMapActionButton(
+                "실행 주체: 직접 수행",
+                CycleSelectedOperationAgent);
+            _operationAgentButton.name = "operation-agent-button";
             _operationApproachButton = CreateMapActionButton(
                 "해결 방식 선택",
                 CycleSelectedOperationApproach);
@@ -3308,6 +3655,7 @@ namespace Game.Presentation
             _acceptOperationButton.style.backgroundColor =
                 new Color(0.10f, 0.48f, 0.30f, 1f);
             _operationBoardView.Add(_nextOperationButton);
+            _operationBoardView.Add(_operationAgentButton);
             _operationBoardView.Add(_operationApproachButton);
             _operationBoardView.Add(_acceptOperationButton);
             _operationBoardFeedback = AddStatus(_operationBoardView);
@@ -3349,6 +3697,16 @@ namespace Game.Presentation
             _selectedOperationIndex =
                 (_selectedOperationIndex + 1) % offeredCount;
             _selectedOperationApproachIndex = 0;
+            SelectRecommendedApproachForCurrentAgent();
+            RefreshOperationBoard();
+        }
+
+        private void CycleSelectedOperationAgent()
+        {
+            int agentCount = CountDelegatableCommanders();
+            _selectedOperationAgentIndex =
+                (_selectedOperationAgentIndex + 1) % (agentCount + 1);
+            SelectRecommendedApproachForCurrentAgent();
             RefreshOperationBoard();
         }
 
@@ -3367,6 +3725,14 @@ namespace Game.Presentation
 
         private void QueueSelectedOperation()
         {
+            if (_hasPendingDelegatedMission)
+            {
+                SetOperationFeedback(
+                    "이미 휘하 지휘관 부대가 지도 미션을 수행 중입니다. " +
+                    "도착·수행 결과가 나온 뒤 다음 미션을 위임하세요.");
+                return;
+            }
+
             WorldOpportunity opportunity = GetSelectedOfferedOperation();
             if (opportunity == null || singlePlayerSimulation == null)
             {
@@ -3381,15 +3747,72 @@ namespace Game.Presentation
                 0,
                 approaches.Count - 1);
             WorldOperationApproachProfile profile = approaches[approachIndex];
-            if (singlePlayerSimulation.TryQueueWorldIntervention(
-                opportunity.Id,
-                profile.Approach,
-                out string reason))
+            MapCommanderState commander = GetSelectedOperationCommander();
+            bool queued;
+            string reason;
+            string executorMessage;
+            if (commander == null)
+            {
+                queued = singlePlayerSimulation.TryQueueWorldIntervention(
+                    opportunity.Id,
+                    profile.Approach,
+                    out reason);
+                executorMessage = "직접 지휘";
+            }
+            else
+            {
+                MapUnitState unit = GetCommanderUnit(commander);
+                if (!SubordinateMissionPlanner.TryCreatePlan(
+                    opportunity,
+                    commander,
+                    unit,
+                    profile.Approach,
+                    out SubordinateMissionPlan plan,
+                    out reason))
+                {
+                    SetOperationFeedback(reason);
+                    RefreshOperationBoard(false);
+                    return;
+                }
+
+                WorldEventInstance operationEvent = singlePlayerSimulation
+                    .CurrentAutonomousWorld?.FindEvent(opportunity.EventId);
+                if (!WorldMissionMapBinder.TryBind(
+                        opportunity,
+                        gameplayMap?.CurrentLayout,
+                        gameplayMap?.GameplayService,
+                        out WorldMissionMapTarget mapTarget,
+                        out reason,
+                        profile.Approach,
+                        operationEvent?.ResourceId))
+                {
+                    SetOperationFeedback(reason);
+                    RefreshOperationBoard(false);
+                    return;
+                }
+
+                _pendingDelegatedMissionPlan = plan;
+                _hasPendingDelegatedMission = true;
+                queued = gameplayMap.TryAssignWorldMission(
+                    plan,
+                    mapTarget,
+                    out reason);
+                if (!queued)
+                    _hasPendingDelegatedMission = false;
+                executorMessage =
+                    $"휘하 AI {commander.DisplayName}에게 위임 · " +
+                    $"지도 {mapTarget.Coordinate}로 {mapTarget.Action}";
+            }
+
+            if (queued)
             {
                 _queuedOperationId = opportunity.Id;
                 SetOperationFeedback(
-                    $"{profile.DisplayName} 준비 명령을 등록했습니다. " +
-                    "다음 경제 정산 때 결과가 확정됩니다.");
+                    $"{executorMessage} · {profile.DisplayName} 준비 명령을 " +
+                    "등록했습니다. " +
+                    (commander == null
+                        ? "다음 경제 정산 때 결과가 확정됩니다."
+                        : "부대가 실제 목표에서 임무를 수행한 뒤 경제 정산됩니다."));
             }
             else
             {
@@ -3398,6 +3821,59 @@ namespace Game.Presentation
 
             RefreshOperationBoard(false);
             RefreshSinglePlayerStatus();
+        }
+
+        private void HandleWorldMissionReady(MapWorldMissionState mission)
+        {
+            if (!_selection.IsSinglePlayer ||
+                !_hasPendingDelegatedMission ||
+                !string.Equals(
+                    mission.OpportunityId,
+                    _pendingDelegatedMissionPlan.OpportunityId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    mission.UnitId,
+                    _pendingDelegatedMissionPlan.UnitId,
+                    StringComparison.Ordinal))
+                return;
+
+            bool queued = singlePlayerSimulation
+                .TryQueueDelegatedWorldIntervention(
+                    mission.OpportunityId,
+                    AddMapExecutionBonus(
+                        _pendingDelegatedMissionPlan,
+                        mission.ExecutionBonus),
+                    out string reason);
+            gameplayMap.CompleteWorldMission(
+                mission.UnitId,
+                mission.OpportunityId,
+                !queued);
+            _hasPendingDelegatedMission = false;
+            SetOperationFeedback(queued
+                ? $"{mission.Target} 도착 · {mission.Action} 수행 완료. " +
+                  (mission.DeliveredCargo > 0m
+                      ? $"화물 {mission.DeliveredCargo:N1} 전달 · "
+                      : mission.SabotageDamage > 0
+                          ? $"시설 피해 {mission.SabotageDamage:N0} · "
+                          : string.Empty) +
+                  "다음 경제 정산에 보급·생산·시장 결과가 반영됩니다."
+                : $"지도 임무 도착 후 경제 명령 등록 실패: {reason}");
+            RefreshOperationBoard(false);
+        }
+
+        private static SubordinateMissionPlan AddMapExecutionBonus(
+            SubordinateMissionPlan plan,
+            decimal bonus)
+        {
+            return new SubordinateMissionPlan(
+                plan.OpportunityId,
+                plan.CommanderId,
+                plan.CommanderDisplayName,
+                plan.UnitId,
+                plan.Approach,
+                Math.Min(150m, plan.Capability + Math.Max(0m, bonus)),
+                plan.UnitReadiness,
+                plan.IsRecommendedApproach);
         }
 
         private void RefreshOperationBoard(bool refreshFeedback = true)
@@ -3422,6 +3898,7 @@ namespace Game.Presentation
                     "시장 부족·광산 사고·도적·공장 장애 같은 실제 세계 문제가 " +
                     "발생하면 계약이 올라옵니다.";
                 _nextOperationButton.SetEnabled(false);
+                _operationAgentButton.SetEnabled(false);
                 _operationApproachButton.SetEnabled(false);
                 _acceptOperationButton.SetEnabled(false);
                 if (refreshFeedback)
@@ -3437,6 +3914,51 @@ namespace Game.Presentation
                 approaches.Count - 1);
             WorldOperationApproachProfile profile =
                 approaches[_selectedOperationApproachIndex];
+            int commanderCount = CountDelegatableCommanders();
+            _selectedOperationAgentIndex = Math.Clamp(
+                _selectedOperationAgentIndex,
+                0,
+                commanderCount);
+            MapCommanderState commander = GetSelectedOperationCommander();
+            MapUnitState commanderUnit = GetCommanderUnit(commander);
+            SubordinateMissionPlan delegationPlan = default;
+            bool delegationValid = commander == null ||
+                SubordinateMissionPlanner.TryCreatePlan(
+                    opportunity,
+                    commander,
+                    commanderUnit,
+                    profile.Approach,
+                    out delegationPlan,
+                    out _);
+            string executorSummary;
+            if (commander == null)
+            {
+                executorSummary = "실행 주체: 플레이어 직접 지휘";
+            }
+            else
+            {
+                WorldOperationApproach recommended =
+                    SubordinateMissionPlanner.GetRecommendedApproach(
+                        opportunity,
+                        commander,
+                        commanderUnit);
+                WorldOperationCatalog.TryGet(
+                    opportunity.Kind,
+                    recommended,
+                    out WorldOperationApproachProfile recommendedProfile);
+                executorSummary = delegationValid
+                    ? $"실행 주체: 휘하 AI {commander.DisplayName} · " +
+                      $"{commanderUnit.Id}\n" +
+                      $"성향 {MapCommanderPersonalityNames.GetKoreanName(commander.Personality)} · " +
+                      $"충성 {commander.Loyalty} · 부대 준비도 " +
+                      $"{delegationPlan.UnitReadiness:F0} · 작전 능력 " +
+                      $"{delegationPlan.Capability:F0}\n" +
+                      $"AI 권장 방식: {recommendedProfile.DisplayName}" +
+                      (delegationPlan.IsRecommendedApproach
+                          ? " · 현재 선택과 일치"
+                          : " · 현재 선택은 지휘관 판단과 다름")
+                    : $"실행 주체: {commander.DisplayName} · 위임 불가";
+            }
             decimal upfrontCost = WorldOperationCatalog.CalculateUpfrontCost(
                 opportunity,
                 profile);
@@ -3450,12 +3972,19 @@ namespace Game.Presentation
                 $"{_selectedOperationIndex + 1}/{offeredCount}\n" +
                 $"{opportunity.DisplayName} · {opportunity.RegionId}\n" +
                 $"마감 {deadline} · 난도 {opportunity.Difficulty:P0}\n" +
+                $"{executorSummary}\n" +
                 $"해결 방식: {profile.DisplayName}\n" +
                 $"{profile.Description}\n" +
                 $"준비금 {upfrontCost:N0}원 · 기본 예상 보상 " +
                 $"{estimatedReward:N0}원 · 평판 배율 " +
                 $"x{profile.ReputationRewardMultiplier:F2}";
             _nextOperationButton.SetEnabled(offeredCount > 1);
+            _operationAgentButton.SetEnabled(commanderCount > 0);
+            _operationAgentButton.text = commander == null
+                ? commanderCount > 0
+                    ? $"실행 주체: 직접 수행 · 휘하 지휘관 {commanderCount}명"
+                    : "실행 주체: 직접 수행 · 고용 지휘관 없음"
+                : $"실행 주체: {commander.DisplayName} AI · 클릭해 변경";
             _operationApproachButton.SetEnabled(approaches.Count > 1);
             _operationApproachButton.text =
                 $"해결 방식: {profile.DisplayName} · 클릭해 변경";
@@ -3468,6 +3997,7 @@ namespace Game.Presentation
                 : $"{profile.DisplayName} 준비 · {upfrontCost:N0}원";
             _acceptOperationButton.SetEnabled(
                 !alreadyQueued &&
+                delegationValid &&
                 singlePlayerSimulation != null &&
                 singlePlayerSimulation.PlayerCash >= upfrontCost &&
                 singlePlayerSimulation.RemainingActionPoints >= 2);
@@ -3523,6 +4053,97 @@ namespace Game.Presentation
             return null;
         }
 
+        private int CountDelegatableCommanders()
+        {
+            IReadOnlyList<MapCommanderState> commanders =
+                gameplayMap?.Commanders;
+            RealtimeMapGameplayService service = gameplayMap?.GameplayService;
+            if (commanders == null || service == null)
+                return 0;
+
+            int count = 0;
+            for (int i = 0; i < commanders.Count; i++)
+            {
+                MapCommanderState commander = commanders[i];
+                MapUnitState unit = GetCommanderUnit(commander);
+                if (unit != null && string.Equals(
+                    commander.EmployerFactionId,
+                    service.PlayerFactionId,
+                    StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private MapCommanderState GetSelectedOperationCommander()
+        {
+            if (_selectedOperationAgentIndex <= 0)
+                return null;
+
+            IReadOnlyList<MapCommanderState> commanders =
+                gameplayMap?.Commanders;
+            RealtimeMapGameplayService service = gameplayMap?.GameplayService;
+            if (commanders == null || service == null)
+                return null;
+
+            int candidateIndex = 0;
+            for (int i = 0; i < commanders.Count; i++)
+            {
+                MapCommanderState commander = commanders[i];
+                if (GetCommanderUnit(commander) == null || !string.Equals(
+                    commander.EmployerFactionId,
+                    service.PlayerFactionId,
+                    StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                candidateIndex++;
+                if (candidateIndex == _selectedOperationAgentIndex)
+                    return commander;
+            }
+            return null;
+        }
+
+        private MapUnitState GetCommanderUnit(MapCommanderState commander)
+        {
+            if (commander == null || string.IsNullOrEmpty(
+                commander.AssignedUnitId))
+            {
+                return null;
+            }
+            MapUnitState unit = gameplayMap?.GameplayService?.FindUnit(
+                commander.AssignedUnitId);
+            return unit?.Commander == commander ? unit : null;
+        }
+
+        private void SelectRecommendedApproachForCurrentAgent()
+        {
+            WorldOpportunity opportunity = GetSelectedOfferedOperation();
+            MapCommanderState commander = GetSelectedOperationCommander();
+            MapUnitState unit = GetCommanderUnit(commander);
+            if (opportunity == null || commander == null || unit == null)
+                return;
+
+            WorldOperationApproach recommended =
+                SubordinateMissionPlanner.GetRecommendedApproach(
+                    opportunity,
+                    commander,
+                    unit);
+            IReadOnlyList<WorldOperationApproachProfile> approaches =
+                WorldOperationCatalog.GetApproaches(opportunity.Kind);
+            for (int i = 0; i < approaches.Count; i++)
+            {
+                if (approaches[i].Approach == recommended)
+                {
+                    _selectedOperationApproachIndex = i;
+                    return;
+                }
+            }
+        }
+
         private void RefreshLastOperationFeedback()
         {
             PlayerInterventionResult? result =
@@ -3531,10 +4152,14 @@ namespace Game.Presentation
                 !string.IsNullOrWhiteSpace(result.Value.Message))
             {
                 SetOperationFeedback(
-                    $"최근 결과: {result.Value.Message}\n" +
+                    $"최근 결과 · {result.Value.ResolverDisplayName}: " +
+                    $"{result.Value.Message}\n" +
                     $"보상 {result.Value.MoneyReward:N0}원 · 평판 " +
                     $"{result.Value.ReputationReward:N1} · 준비금 " +
-                    $"{result.Value.UpfrontCost:N0}원");
+                    $"{result.Value.UpfrontCost:N0}원" +
+                    (result.Value.WasDelegated
+                        ? " · 휘하 AI 위임 수행"
+                        : string.Empty));
             }
             else
             {
@@ -3735,7 +4360,7 @@ namespace Game.Presentation
             _timeHudView.style.position = Position.Absolute;
             _timeHudView.style.top = 16;
             _timeHudView.style.right = 24;
-            _timeHudView.style.width = 350;
+            _timeHudView.style.width = 400;
             _timeHudView.style.paddingLeft = 14;
             _timeHudView.style.paddingRight = 14;
             _timeHudView.style.paddingTop = 12;
@@ -3754,6 +4379,19 @@ namespace Game.Presentation
             _timeHudLabel.style.whiteSpace = WhiteSpace.Normal;
             _timeHudLabel.style.marginBottom = 7;
             _timeHudView.Add(_timeHudLabel);
+
+            _campaignHudLabel = new Label
+            {
+                name = "campaign-status-label"
+            };
+            _campaignHudLabel.style.fontSize = 13;
+            _campaignHudLabel.style.color = new Color(
+                0.84f,
+                0.90f,
+                0.98f);
+            _campaignHudLabel.style.whiteSpace = WhiteSpace.Normal;
+            _campaignHudLabel.style.marginBottom = 9;
+            _timeHudView.Add(_campaignHudLabel);
             AddRealtimeSpeedControls(_timeHudView);
             root.Add(_timeHudView);
 
@@ -4146,6 +4784,8 @@ namespace Game.Presentation
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;
                 gameplayMap.MineCaptured -= HandleMineCaptured;
                 gameplayMap.MineSpawned -= HandleMineSpawned;
+                gameplayMap.MineConstructionCompleted -=
+                    HandleMineConstructionCompleted;
                 gameplayMap.CastleCaptured -= HandleCastleCaptured;
                 gameplayMap.CapitalDestroyed -= HandleCapitalDestroyed;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;

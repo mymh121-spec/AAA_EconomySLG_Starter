@@ -22,6 +22,8 @@ Unity C# starter architecture for an economic simulation + SLG game.
 - Real-time map gameplay with a Korean action panel, player and AI units, horizontally wrapped land pathfinding, mine capture, ownership markers, and daily mine production.
 - Single-player neutral-castle occupation with garrison tracking, faction flags, selectable outpost roles, and defended-siege state transitions.
 - Distinct military-site rules: headquarters/castles recruit from recovering local manpower pools, while mines allow one guard and never recruit locally.
+- Release-MVP sea travel: friendly coastal castles act as simple ports with automatic embarkation and disembarkation; fleets, naval combat, and amphibious assaults remain optional extensions.
+- A disabled-by-default HIVE platform extension slot keeps future authentication, achievements, cloud-save, analytics, and notification integrations outside the playable core.
 
 ## Open in Unity
 

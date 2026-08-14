@@ -6,6 +6,7 @@ using Game.Application;
 using Game.Application.AI;
 using Game.Application.Campaign;
 using Game.Application.PvP;
+using Game.Application.Platform;
 using Game.Application.Session;
 using Game.Application.Turn;
 using Game.Application.World;
@@ -245,6 +246,36 @@ namespace Game.Tests
                     new GridCoordinate(10, -1),
                     out _),
                 Is.False);
+        }
+
+        [Test]
+        public void GridMapLayout_AllFactionStartsHaveLandExitsAcrossSeeds()
+        {
+            var generator = new GridMapLayoutGenerator();
+            var playerStart = new GridCoordinate(4, 24);
+            var opponentStarts = new[]
+            {
+                new GridCoordinate(44, 23),
+                new GridCoordinate(30, 32),
+                new GridCoordinate(57, 16)
+            };
+
+            for (int seed = 0; seed < 256; seed++)
+            {
+                GridMapLayout layout = generator.Generate(
+                    80,
+                    48,
+                    128,
+                    seed,
+                    playerStart,
+                    opponentStarts,
+                    true,
+                    neutralCastleCount: 8);
+
+                AssertStartHasLandExit(layout, playerStart, seed);
+                for (int i = 0; i < opponentStarts.Length; i++)
+                    AssertStartHasLandExit(layout, opponentStarts[i], seed);
+            }
         }
 
         [Test]
@@ -808,6 +839,581 @@ namespace Game.Tests
                 Is.GreaterThan(lowLoyalty.AttackModifier));
             Assert.That(highLoyalty.MobilityModifier,
                 Is.GreaterThan(lowLoyalty.MobilityModifier));
+        }
+
+        [Test]
+        public void SubordinateMissionPlanner_UsesCommanderPersonalityAndUnitReadiness()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                4 * 2).ToArray();
+            var layout = new GridMapLayout(
+                4,
+                2,
+                362,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(fixedStepsPerMove: 1000));
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            MapCommanderState commander = service.Commanders.Single(
+                candidate => candidate.Personality ==
+                    MapCommanderPersonality.Aggressive);
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    commander.Id,
+                    unit.Id,
+                    out _),
+                Is.True);
+            var opportunity = new WorldOpportunity(
+                "bandit_contract",
+                "bandit_event",
+                WorldOpportunityKind.SuppressBandits,
+                "도적 토벌",
+                new RegionId("starter"),
+                new TurnNumber(1),
+                new TurnNumber(4),
+                0.5m,
+                2500m,
+                3m);
+
+            WorldOperationApproach recommended =
+                SubordinateMissionPlanner.GetRecommendedApproach(
+                    opportunity,
+                    commander,
+                    unit);
+            Assert.That(
+                recommended,
+                Is.EqualTo(WorldOperationApproach.ArmedSecurity));
+            Assert.That(
+                SubordinateMissionPlanner.TryCreatePlan(
+                    opportunity,
+                    commander,
+                    unit,
+                    recommended,
+                    out SubordinateMissionPlan plan,
+                    out _),
+                Is.True);
+            Assert.That(plan.CommanderId, Is.EqualTo(commander.Id));
+            Assert.That(plan.UnitId, Is.EqualTo(unit.Id));
+            Assert.That(plan.UnitReadiness, Is.EqualTo(100m));
+            Assert.That(plan.Capability, Is.GreaterThan(60m));
+            Assert.That(plan.IsRecommendedApproach, Is.True);
+
+            var unassigned = new MapCommanderState(
+                "unassigned",
+                "미배속 지휘관",
+                90,
+                90,
+                90,
+                MapCommanderPersonality.Logistician,
+                90,
+                0m);
+            Assert.That(
+                SubordinateMissionPlanner.TryCreatePlan(
+                    opportunity,
+                    unassigned,
+                    unit,
+                    recommended,
+                    out _,
+                    out string reason),
+                Is.False);
+            Assert.That(reason, Does.Contain("고용"));
+        }
+
+        [Test]
+        public void MapGenerationSettings_ControlSizeResourcesWaterAndSeed()
+        {
+            var sparse = new MapGenerationSettings(
+                MapSizePreset.Standard,
+                MapResourceAbundance.Sparse,
+                MapWaterLevel.Low,
+                seed: 777);
+            var rich = new MapGenerationSettings(
+                MapSizePreset.Standard,
+                MapResourceAbundance.Rich,
+                MapWaterLevel.High,
+                seed: 777);
+            Assert.That(rich.MineCount, Is.GreaterThan(sparse.MineCount));
+
+            var generator = new GridMapLayoutGenerator();
+            var start = new GridCoordinate(4, 24);
+            GridMapLayout lowWater = generator.Generate(
+                sparse.Width,
+                sparse.Height,
+                sparse.MineCount,
+                sparse.Seed,
+                start,
+                new GridCoordinate[0],
+                sparse.WrapHorizontally,
+                sparse.NeutralCastleCount,
+                sparse.OceanThreshold);
+            GridMapLayout highWater = generator.Generate(
+                rich.Width,
+                rich.Height,
+                rich.MineCount,
+                rich.Seed,
+                start,
+                new GridCoordinate[0],
+                rich.WrapHorizontally,
+                rich.NeutralCastleCount,
+                rich.OceanThreshold);
+
+            Assert.That(lowWater.Seed, Is.EqualTo(777));
+            Assert.That(
+                highWater.Terrain.Count(x => x == GridTerrainKind.Ocean),
+                Is.GreaterThan(
+                    lowWater.Terrain.Count(x => x == GridTerrainKind.Ocean)));
+        }
+
+        [Test]
+        public void WorldMission_MovesUnitToBoundMapCoordinateBeforeReady()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                6 * 2).ToArray();
+            var layout = new GridMapLayout(
+                6,
+                2,
+                91,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new[]
+                {
+                    new MinePlacement(new GridCoordinate(4, 0), MineKind.Normal)
+                },
+                false,
+                terrain);
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000),
+                enableAi: false);
+            Assert.That(
+                gameplay.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            var opportunity = new WorldOpportunity(
+                "survey_1",
+                "vein_1",
+                WorldOpportunityKind.SurveyVein,
+                "광맥 정찰",
+                new RegionId("north"),
+                new TurnNumber(1),
+                new TurnNumber(5),
+                0.4m,
+                100m,
+                1m);
+            Assert.That(
+                WorldMissionMapBinder.TryBind(
+                    opportunity,
+                    layout,
+                    gameplay,
+                    out WorldMissionMapTarget target,
+                    out _),
+                Is.True);
+            Assert.That(target.Coordinate, Is.EqualTo(new GridCoordinate(4, 0)));
+            Assert.That(target.Action, Is.EqualTo(MapWorldMissionAction.Scout));
+
+            int readyCount = 0;
+            gameplay.WorldMissionReady += _ => readyCount++;
+            Assert.That(
+                gameplay.TryAssignWorldMission(
+                    "player",
+                    unit.Id,
+                    opportunity.Id,
+                    target.Coordinate,
+                    target.Action,
+                    out _),
+                Is.True);
+            gameplay.AdvanceFixedSteps(3);
+            Assert.That(readyCount, Is.Zero);
+            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(3, 0)));
+            gameplay.AdvanceFixedSteps(1);
+            Assert.That(readyCount, Is.EqualTo(1));
+            Assert.That(unit.Coordinate, Is.EqualTo(target.Coordinate));
+        }
+
+        [Test]
+        public void CargoMission_LoadsRealCastleStockBeforeDelivery()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                6 * 2).ToArray();
+            var layout = new GridMapLayout(
+                6,
+                2,
+                93,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000),
+                enableAi: false);
+            Assert.That(
+                gameplay.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                gameplay.TryStockFactionCapitalWarehouse(
+                    "player",
+                    MapSupplyKind.Food,
+                    20m,
+                    out decimal stored),
+                Is.True);
+            Assert.That(stored, Is.EqualTo(20m));
+            var target = new WorldMissionMapTarget(
+                new GridCoordinate(4, 0),
+                MapWorldMissionAction.Deliver,
+                MapSupplyKind.Food,
+                12m);
+            MapWorldMissionState ready = null;
+            gameplay.WorldMissionReady += mission => ready = mission;
+
+            Assert.That(
+                gameplay.TryAssignWorldMission(
+                    "player",
+                    unit.Id,
+                    "delivery_1",
+                    target,
+                    out string reason),
+                Is.True,
+                reason);
+            Assert.That(
+                gameplay.FindCapital("player").WarehouseFoodAmount,
+                Is.EqualTo(8m));
+            gameplay.AdvanceFixedSteps(4);
+
+            Assert.That(ready, Is.Not.Null);
+            Assert.That(ready.DeliveredCargo, Is.EqualTo(12m));
+            Assert.That(ready.LoadedCargo, Is.Zero);
+            Assert.That(ready.ExecutionBonus, Is.GreaterThan(0m));
+        }
+
+        [Test]
+        public void MissionBinder_MapsApproachesToDeliverySmugglingAndSabotage()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                6 * 2).ToArray();
+            var layout = new GridMapLayout(
+                6,
+                2,
+                96,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(4, 0) },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                enableAi: false);
+
+            WorldOpportunity Create(WorldOpportunityKind kind, string id) =>
+                new WorldOpportunity(
+                    id,
+                    id + "_event",
+                    kind,
+                    id,
+                    new RegionId("r0"),
+                    new TurnNumber(1),
+                    new TurnNumber(4),
+                    0.5m,
+                    100m,
+                    1m);
+
+            Assert.That(
+                WorldMissionMapBinder.TryBind(
+                    Create(WorldOpportunityKind.EmergencyDelivery, "delivery"),
+                    layout,
+                    gameplay,
+                    out WorldMissionMapTarget delivery,
+                    out _,
+                    WorldOperationApproach.Logistics,
+                    new ResourceId("food")),
+                Is.True);
+            Assert.That(delivery.Action, Is.EqualTo(MapWorldMissionAction.Deliver));
+            Assert.That(delivery.CargoKind, Is.EqualTo(MapSupplyKind.Food));
+
+            Assert.That(
+                WorldMissionMapBinder.TryBind(
+                    Create(WorldOpportunityKind.EscortSupply, "smuggle"),
+                    layout,
+                    gameplay,
+                    out WorldMissionMapTarget smuggle,
+                    out _,
+                    WorldOperationApproach.CovertAction,
+                    new ResourceId("steel")),
+                Is.True);
+            Assert.That(smuggle.Action, Is.EqualTo(MapWorldMissionAction.Smuggle));
+            Assert.That(smuggle.CargoKind, Is.EqualTo(MapSupplyKind.Equipment));
+
+            Assert.That(
+                WorldMissionMapBinder.TryBind(
+                    Create(WorldOpportunityKind.ProtectFacility, "sabotage"),
+                    layout,
+                    gameplay,
+                    out WorldMissionMapTarget sabotage,
+                    out _,
+                    WorldOperationApproach.CovertAction),
+                Is.True);
+            Assert.That(sabotage.Action, Is.EqualTo(MapWorldMissionAction.Sabotage));
+            Assert.That(sabotage.Coordinate, Is.EqualTo(new GridCoordinate(4, 0)));
+        }
+
+        [Test]
+        public void SabotageMission_DamagesEnemyFacilityProxyAfterArrival()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                6 * 2).ToArray();
+            var enemyStart = new GridCoordinate(4, 0);
+            var layout = new GridMapLayout(
+                6,
+                2,
+                94,
+                new GridCoordinate(0, 0),
+                new[] { enemyStart },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000),
+                enableAi: false);
+            Assert.That(
+                gameplay.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            MapCastleControlState targetCastle = gameplay.FindCastle(enemyStart);
+            int wallBefore = targetCastle.WallDurability;
+            MapWorldMissionState ready = null;
+            gameplay.WorldMissionReady += mission => ready = mission;
+
+            Assert.That(
+                gameplay.TryAssignWorldMission(
+                    "player",
+                    unit.Id,
+                    "sabotage_1",
+                    new WorldMissionMapTarget(
+                        enemyStart,
+                        MapWorldMissionAction.Sabotage),
+                    out string reason),
+                Is.True,
+                reason);
+            gameplay.AdvanceFixedSteps(4);
+
+            Assert.That(ready, Is.Not.Null);
+            Assert.That(ready.SabotageDamage, Is.GreaterThan(0));
+            Assert.That(targetCastle.WallDurability, Is.LessThan(wallBefore));
+            Assert.That(unit.Fatigue, Is.GreaterThan(0m));
+        }
+
+        [Test]
+        public void WorldMapOwnership_SynchronizesCapturedSitesAndRegionsBothWays()
+        {
+            var regions = new[]
+            {
+                new GeneratedRegionState(
+                    new RegionId("r0"), "서부", TerrainType.Plains,
+                    1000, 0.4m, 0.7m, 0.5m, 0.8m, 0.1m),
+                new GeneratedRegionState(
+                    new RegionId("r1"), "동부", TerrainType.Hills,
+                    1000, 0.3m, 0.8m, 0.4m, 0.8m, 0.1m)
+            };
+            var factions = new[]
+            {
+                new WorldFactionState("wf_player", "청람", 1000m, 0.5m, 0.5m, 0.5m),
+                new WorldFactionState("wf_ai", "적월", 1000m, 0.5m, 0.5m, 0.5m)
+            };
+            var facility = new WorldFacilityState(
+                "facility_r1",
+                WorldFacilityKind.Workshop,
+                regions[1].Id,
+                factions[1].Id,
+                new ResourceId("iron"),
+                new ResourceId("steel"),
+                2m, 1m, 10m, 5m);
+            var procedural = new ProceduralWorldState(
+                95,
+                regions,
+                factions,
+                new FactionRelationState[0],
+                new WorldNpcState[0],
+                new[] { facility },
+                new RegionalEconomySeed[0],
+                new ResourceSiteSeed[0]);
+            var world = new AutonomousWorldState(procedural);
+            var site = new ResourceExtractionSite(
+                "site_r0",
+                regions[0].Id,
+                new ResourceId("iron"),
+                new TurnNumber(1),
+                10m,
+                2m,
+                0m);
+            world.AddResourceSite(site);
+
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                4 * 2).ToArray();
+            var mineCoordinate = new GridCoordinate(1, 0);
+            var castleCoordinate = new GridCoordinate(3, 1);
+            var layout = new GridMapLayout(
+                4,
+                2,
+                95,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(3, 0) },
+                new[] { new MinePlacement(mineCoordinate, MineKind.Normal) },
+                false,
+                terrain,
+                new[] { castleCoordinate });
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                enableAi: false);
+            var sync = new WorldMapOwnershipSynchronizer(world);
+
+            Assert.That(
+                sync.ApplyMineCapture(
+                    layout,
+                    gameplay,
+                    new MapMineCaptureRecord(
+                        mineCoordinate,
+                        MineKind.Normal,
+                        string.Empty,
+                        "player")),
+                Is.True);
+            Assert.That(site.OwnerFactionId, Is.EqualTo("wf_player"));
+            Assert.That(
+                sync.ApplyCastleCapture(
+                    layout,
+                    gameplay,
+                    new MapCastleCaptureRecord(
+                        castleCoordinate,
+                        string.Empty,
+                        "player",
+                        false)),
+                Is.True);
+            Assert.That(regions[1].OwnerFactionId, Is.EqualTo("wf_player"));
+            Assert.That(facility.OwnerFactionId, Is.EqualTo("wf_player"));
+
+            site.AssignOwner("wf_ai");
+            regions[1].AssignOwner("wf_ai");
+            Assert.That(
+                sync.SynchronizeLinkedOwnershipToMap(layout, gameplay),
+                Is.True);
+            Assert.That(
+                gameplay.FindMine(mineCoordinate).OwnerFactionId,
+                Is.EqualTo("ai_1"));
+            Assert.That(
+                gameplay.FindCastle(castleCoordinate).OwnerFactionId,
+                Is.EqualTo("ai_1"));
+        }
+
+        [Test]
+        public void FactionStrategicAi_ChangesTargetsByEconomicAndMilitaryPlan()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                10 * 2).ToArray();
+            var layout = new GridMapLayout(
+                10,
+                2,
+                92,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new[]
+                {
+                    new MinePlacement(new GridCoordinate(1, 0), MineKind.Normal)
+                },
+                false,
+                terrain,
+                new[] { new GridCoordinate(3, 0) });
+            var gameplay = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                enableAi: false);
+            Assert.That(
+                gameplay.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+
+            Assert.That(
+                FactionStrategicAi.TryChooseObjective(
+                    layout,
+                    gameplay.Mines,
+                    gameplay.Castles,
+                    gameplay.Units,
+                    "player",
+                    unit,
+                    FactionStrategyKind.EconomicExpansion,
+                    null,
+                    out StrategicObjective economic),
+                Is.True);
+            Assert.That(economic.Kind, Is.EqualTo(StrategicObjectiveKind.Mine));
+
+            Assert.That(
+                FactionStrategicAi.TryChooseObjective(
+                    layout,
+                    gameplay.Mines,
+                    gameplay.Castles,
+                    gameplay.Units,
+                    "player",
+                    unit,
+                    FactionStrategyKind.MilitaryDominance,
+                    null,
+                    out StrategicObjective military),
+                Is.True);
+            Assert.That(
+                military.Kind,
+                Is.EqualTo(StrategicObjectiveKind.Castle));
+        }
+
+        [Test]
+        public void DelegatedMissionCommand_AttributesResultToCommander()
+        {
+            var world = new RecordingAutonomousWorldService();
+            var command = new InterveneWorldOpportunityTurnCommand(
+                world,
+                "mission_1",
+                new CompanyId("player"),
+                82m,
+                "도적 토벌 · 윤서 위임",
+                WorldOperationApproach.ArmedSecurity,
+                "commander_yunseo",
+                "윤서",
+                true);
+
+            command.Execute(new TurnCommandContext(null));
+
+            Assert.That(world.ResolverId, Is.EqualTo("commander_yunseo"));
+            Assert.That(world.ResolverDisplayName, Is.EqualTo("윤서"));
+            Assert.That(world.WasDelegated, Is.True);
+            Assert.That(world.Capability, Is.EqualTo(82m));
+            Assert.That(
+                world.Approach,
+                Is.EqualTo(WorldOperationApproach.ArmedSecurity));
         }
 
         [Test]
@@ -2247,6 +2853,252 @@ namespace Game.Tests
             Assert.That(
                 service.CreateDailyProduction()[0].CashAmount,
                 Is.EqualTo(1500m));
+        }
+
+        [Test]
+        public void EconomicSurvey_IsDeterministicForTheSameMapAndCoordinate()
+        {
+            var terrain = new GridTerrainKind[6 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Hills;
+            var layout = new GridMapLayout(
+                6,
+                3,
+                90210,
+                new GridCoordinate(0, 1),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var coordinate = new GridCoordinate(3, 1);
+
+            MapEconomicSurveyState first =
+                MapEconomicDevelopmentRules.Evaluate(layout, coordinate, 1);
+            MapEconomicSurveyState second =
+                MapEconomicDevelopmentRules.Evaluate(layout, coordinate, 99);
+
+            Assert.That(second.HasViableDeposit,
+                Is.EqualTo(first.HasViableDeposit));
+            Assert.That(second.DepositKind, Is.EqualTo(first.DepositKind));
+            Assert.That(second.YieldMultiplier,
+                Is.EqualTo(first.YieldMultiplier));
+            Assert.That(second.SurveyedEconomicDay, Is.EqualTo(99));
+        }
+
+        [Test]
+        public void EconomicSurveyAndConstruction_CreateOwnedProducingMine()
+        {
+            var terrain = new GridTerrainKind[10 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Hills;
+            var layout = new GridMapLayout(
+                10,
+                2,
+                417,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    mineSpawnIntervalDays: 1000,
+                    aiDecisionIntervalSteps: 1000),
+                enableAi: false);
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+
+            GridCoordinate? target = null;
+            for (int x = 1; x < layout.Width && !target.HasValue; x++)
+            {
+                for (int y = 0; y < layout.Height; y++)
+                {
+                    var candidate = new GridCoordinate(x, y);
+                    if (MapEconomicDevelopmentRules
+                        .Evaluate(layout, candidate, 0)
+                        .HasViableDeposit)
+                    {
+                        target = candidate;
+                        break;
+                    }
+                }
+            }
+            Assert.That(target.HasValue, Is.True);
+            GridCoordinate coordinate = target.Value;
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    coordinate,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(30);
+            Assert.That(unit.Coordinate, Is.EqualTo(coordinate));
+
+            int staminaBeforeSurvey = unit.Stamina;
+            Assert.That(
+                service.TrySurveyEconomicSite(
+                    "player",
+                    unit.Id,
+                    coordinate,
+                    out MapEconomicSurveyState survey,
+                    out _),
+                Is.True);
+            Assert.That(survey.HasViableDeposit, Is.True);
+            Assert.That(
+                unit.Stamina,
+                Is.EqualTo(staminaBeforeSurvey -
+                    MapEconomicDevelopmentRules.SurveyStaminaCost));
+            Assert.That(
+                service.TrySurveyEconomicSite(
+                    "player",
+                    unit.Id,
+                    coordinate,
+                    out _,
+                    out string duplicateReason),
+                Is.False);
+            Assert.That(duplicateReason, Does.Contain("이미"));
+
+            Assert.That(
+                service.TryStartMineConstruction(
+                    "player",
+                    unit.Id,
+                    coordinate,
+                    out MapMineConstructionState construction,
+                    out _),
+                Is.True);
+            Assert.That(
+                construction.Cost,
+                Is.EqualTo(MapEconomicDevelopmentRules
+                    .GetConstructionCost(construction.Kind)));
+            for (int day = 1; day < construction.TotalDays; day++)
+            {
+                Assert.That(service.AdvanceEconomicDay(out _), Is.False);
+                Assert.That(service.FindMine(coordinate), Is.Null);
+            }
+
+            Assert.That(
+                service.AdvanceEconomicDay(out MapMineSpawnRecord completed),
+                Is.True);
+            Assert.That(completed.WasConstructed, Is.True);
+            Assert.That(completed.OwnerFactionId, Is.EqualTo("player"));
+            MapMineControlState mine = service.FindMine(coordinate);
+            Assert.That(mine, Is.Not.Null);
+            Assert.That(mine.OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(mine.YieldMultiplier,
+                Is.EqualTo(survey.YieldMultiplier));
+
+            IReadOnlyList<MapMineProductionRecord> production =
+                service.CreateDailyProduction();
+            Assert.That(production.Count, Is.EqualTo(1));
+            Assert.That(production[0].OwnerFactionId, Is.EqualTo("player"));
+            Assert.That(
+                production[0].IronAmount + production[0].CashAmount,
+                Is.GreaterThan(0m));
+            Assert.That(production[0].Transports.Count, Is.EqualTo(1));
+            Assert.That(
+                production[0].Transports[0].MineCoordinate,
+                Is.EqualTo(coordinate));
+            Assert.That(
+                production[0].Transports[0].WarehouseCoordinate,
+                Is.EqualTo(layout.PlayerStart));
+        }
+
+        [Test]
+        public void FriendlyCoastalCastles_ProvideAutomaticSeaTransport()
+        {
+            var terrain = new GridTerrainKind[7 * 3];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Ocean;
+            var origin = new GridCoordinate(0, 1);
+            var destination = new GridCoordinate(6, 1);
+            terrain[origin.Y * 7 + origin.X] = GridTerrainKind.Plains;
+            terrain[destination.Y * 7 + destination.X] =
+                GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                7,
+                3,
+                301,
+                origin,
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain,
+                new[] { destination });
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000),
+                enableAi: false);
+            Assert.That(
+                service.TryRestoreAuthoritativeCastleState(
+                    destination,
+                    "player",
+                    string.Empty,
+                    0,
+                    MapCastleRole.Port,
+                    MapCastleConflictKind.None,
+                    MapSiegeAction.None,
+                    MapOccupationPolicy.Preserve,
+                    false,
+                    100,
+                    100,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+
+            Assert.That(service.IsCoastalPort(origin), Is.True);
+            Assert.That(service.IsCoastalPort(destination), Is.True);
+            Assert.That(
+                service.WillUseSeaTransport(
+                    "player",
+                    unit.Id,
+                    destination),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    destination,
+                    out _),
+                Is.True);
+            Assert.That(service.IsUsingSeaTransport(unit), Is.True);
+            Assert.That(
+                service.CanCancelMove("player", unit.Id, out string reason),
+                Is.False);
+            Assert.That(reason, Does.Contain("자동 하선"));
+
+            service.AdvanceFixedSteps(20);
+
+            Assert.That(unit.Coordinate, Is.EqualTo(destination));
+            Assert.That(unit.IsMoving, Is.False);
+            Assert.That(service.IsUsingSeaTransport(unit), Is.False);
+        }
+
+        [Test]
+        public void HivePlatformExtensionSlot_DefaultsToInactiveNoSdkBoundary()
+        {
+            HivePlatformExtensionSlot.ResetToDisabled();
+
+            Assert.That(HivePlatformExtensionSlot.HasActiveExtension, Is.False);
+            Assert.That(
+                HivePlatformExtensionSlot.Current.Capabilities,
+                Is.EqualTo(HivePlatformCapability.None));
+            HivePlatformResult result = HivePlatformExtensionSlot.Current
+                .InitializeAsync(default)
+                .GetAwaiter()
+                .GetResult();
+            Assert.That(result.IsAvailable, Is.False);
+            Assert.That(result.Succeeded, Is.False);
+            Assert.That(result.Message, Does.Contain("비활성"));
         }
 
         [Test]
@@ -3810,6 +4662,37 @@ namespace Game.Tests
                 demand));
         }
 
+        private static void AssertStartHasLandExit(
+            GridMapLayout layout,
+            GridCoordinate start,
+            int seed)
+        {
+            var offsets = new[]
+            {
+                new GridCoordinate(1, 0),
+                new GridCoordinate(-1, 0),
+                new GridCoordinate(0, 1),
+                new GridCoordinate(0, -1)
+            };
+            int landExitCount = 0;
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                var candidate = new GridCoordinate(
+                    start.X + offsets[i].X,
+                    start.Y + offsets[i].Y);
+                if (layout.TryNormalize(candidate, out GridCoordinate normalized) &&
+                    layout.IsLand(normalized))
+                {
+                    landExitCount++;
+                }
+            }
+
+            Assert.That(
+                landExitCount,
+                Is.GreaterThanOrEqualTo(2),
+                $"seed {seed} 시작점 {start}에는 이동 가능한 육지 출구가 필요합니다.");
+        }
+
         private static CampaignState CreateCampaign(
             decimal playerCash,
             params decimal[] opponentCash)
@@ -3835,6 +4718,97 @@ namespace Game.Tests
             }
 
             return new CampaignState(participants);
+        }
+
+        private sealed class RecordingAutonomousWorldService :
+            IAutonomousWorldTurnService
+        {
+            public AutonomousWorldState State => null;
+            public decimal Capability { get; private set; }
+            public WorldOperationApproach Approach { get; private set; }
+            public string ResolverId { get; private set; }
+            public string ResolverDisplayName { get; private set; }
+            public bool WasDelegated { get; private set; }
+
+            public void SynchronizeResourceSites()
+            {
+            }
+
+            public AutonomousWorldTurnReport PrepareTurn(
+                TurnNumber turn,
+                GameDay calendarDay) => AutonomousWorldTurnReport.Empty;
+
+            public void CompleteTurn(
+                TurnNumber turn,
+                GameDay calendarDay,
+                MarketTickReport marketReport)
+            {
+            }
+
+            public bool CanPlayerIntervene(
+                string opportunityId,
+                out string reason)
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            public bool CanPlayerIntervene(
+                string opportunityId,
+                WorldOperationApproach approach,
+                out string reason)
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            public PlayerInterventionResult TryPlayerIntervention(
+                string opportunityId,
+                decimal playerCapability,
+                TurnNumber turn) => new PlayerInterventionResult(
+                    true,
+                    true,
+                    "직접 수행",
+                    0m,
+                    0m);
+
+            public PlayerInterventionResult TryPlayerIntervention(
+                string opportunityId,
+                decimal playerCapability,
+                WorldOperationApproach approach,
+                TurnNumber turn) => new PlayerInterventionResult(
+                    true,
+                    true,
+                    "직접 수행",
+                    0m,
+                    0m,
+                    approach: approach);
+
+            public PlayerInterventionResult TryIntervention(
+                string opportunityId,
+                decimal capability,
+                WorldOperationApproach approach,
+                string resolverId,
+                string resolverDisplayName,
+                bool wasDelegated,
+                TurnNumber turn)
+            {
+                Capability = capability;
+                Approach = approach;
+                ResolverId = resolverId;
+                ResolverDisplayName = resolverDisplayName;
+                WasDelegated = wasDelegated;
+                return new PlayerInterventionResult(
+                    true,
+                    true,
+                    "위임 수행",
+                    0m,
+                    0m,
+                    approach: approach,
+                    resolverId: resolverId,
+                    resolverDisplayName: resolverDisplayName,
+                    wasDelegated: wasDelegated);
+            }
         }
     }
 }

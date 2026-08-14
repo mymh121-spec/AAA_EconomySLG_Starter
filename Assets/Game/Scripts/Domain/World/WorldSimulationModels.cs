@@ -616,6 +616,9 @@ namespace Game.Domain.World
         public decimal MoneyReward { get; }
         public decimal ReputationReward { get; }
         public decimal UpfrontCost { get; }
+        public string ResolverId { get; }
+        public string ResolverDisplayName { get; }
+        public bool WasDelegated { get; }
 
         public PlayerInterventionResult(
             bool accepted,
@@ -625,7 +628,10 @@ namespace Game.Domain.World
             decimal reputationReward,
             WorldOperationOutcome outcome = WorldOperationOutcome.None,
             WorldOperationApproach approach = WorldOperationApproach.Negotiation,
-            decimal upfrontCost = 0m)
+            decimal upfrontCost = 0m,
+            string resolverId = "player",
+            string resolverDisplayName = "플레이어",
+            bool wasDelegated = false)
         {
             Accepted = accepted;
             Success = success;
@@ -635,6 +641,11 @@ namespace Game.Domain.World
             MoneyReward = Math.Max(0m, moneyReward);
             ReputationReward = Math.Max(0m, reputationReward);
             UpfrontCost = Math.Max(0m, upfrontCost);
+            ResolverId = resolverId ?? string.Empty;
+            ResolverDisplayName = string.IsNullOrWhiteSpace(resolverDisplayName)
+                ? ResolverId
+                : resolverDisplayName;
+            WasDelegated = wasDelegated;
         }
     }
 

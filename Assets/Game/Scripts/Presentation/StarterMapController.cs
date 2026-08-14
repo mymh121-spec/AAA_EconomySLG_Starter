@@ -210,6 +210,7 @@ namespace Game.Presentation
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
         public IReadOnlyList<MapCommanderState> Commanders =>
             _gameplayService?.Commanders ?? Array.Empty<MapCommanderState>();
+        public MapGenerationSettings GenerationSettings { get; private set; }
         public MapMovementPreview? CurrentMovementPreview { get; private set; }
         public event Action<MapCellSelection> CellSelected;
         public event Action<MapCellSelection, bool>
@@ -219,12 +220,15 @@ namespace Game.Presentation
         public event Action GameplayStateChanged;
         public event Action<MapMineCaptureRecord> MineCaptured;
         public event Action<MapMineSpawnRecord> MineSpawned;
+        public event Action<MapMineConstructionCompletedRecord>
+            MineConstructionCompleted;
         public event Action<MapCastleCaptureRecord> CastleCaptured;
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
         public event Action<MapSupplyInterdictionResult>
             SupplyInterdictionResolved;
+        public event Action<MapWorldMissionState> WorldMissionReady;
 
         public void Initialize()
         {
@@ -405,6 +409,17 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public void ConfigureMapGeneration(MapGenerationSettings settings)
+        {
+            GenerationSettings = settings ?? new MapGenerationSettings();
+            mapWidth = GenerationSettings.Width;
+            mapHeight = GenerationSettings.Height;
+            mineCount = GenerationSettings.MineCount;
+            neutralCastleCount = GenerationSettings.NeutralCastleCount;
+            playerStartX = Math.Max(2, GenerationSettings.Width / 20);
+            playerStartY = GenerationSettings.Height / 2;
+        }
+
         public bool TrySetSelectedPlayerUnitFormation(
             MapUnitFormationPreset preset,
             out string reason)
@@ -527,6 +542,17 @@ namespace Game.Presentation
                 destination,
                 out _,
                 out reason);
+        }
+
+        public bool WillSelectedMoveUseSeaTransport(
+            GridCoordinate destination)
+        {
+            return _gameplayService != null &&
+                SelectedPlayerUnit != null &&
+                _gameplayService.WillUseSeaTransport(
+                    _gameplayService.PlayerFactionId,
+                    _selectedPlayerUnitId,
+                    destination);
         }
 
         public bool TryPreviewSelectedPlayerUnitMove(
@@ -849,6 +875,83 @@ namespace Game.Presentation
             return _gameplayService.AdvanceEconomicDay(out spawnedMine);
         }
 
+        public bool CanSurveySelectedEconomicSite(
+            GridCoordinate coordinate,
+            out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.CanSurveyEconomicSite(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out reason);
+        }
+
+        public bool TrySurveySelectedEconomicSite(
+            GridCoordinate coordinate,
+            out MapEconomicSurveyState survey,
+            out string reason)
+        {
+            survey = null;
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.TrySurveyEconomicSite(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out survey,
+                out reason);
+        }
+
+        public bool CanStartSelectedMineConstruction(
+            GridCoordinate coordinate,
+            out MapEconomicSurveyState survey,
+            out string reason)
+        {
+            survey = null;
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.CanStartMineConstruction(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out survey,
+                out reason);
+        }
+
+        public bool TryStartSelectedMineConstruction(
+            GridCoordinate coordinate,
+            out MapMineConstructionState construction,
+            out string reason)
+        {
+            construction = null;
+            if (_gameplayService == null)
+            {
+                reason = "지도 게임플레이가 아직 준비되지 않았습니다.";
+                return false;
+            }
+
+            return _gameplayService.TryStartMineConstruction(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                coordinate,
+                out construction,
+                out reason);
+        }
+
         public IReadOnlyList<MapSupplyTransportRecord>
             AdvanceDailySupplyLogistics(
                 SimulationBootstrapper simulation)
@@ -896,6 +999,34 @@ namespace Game.Presentation
                 out reason);
         }
 
+        public bool TryAssignWorldMission(
+            SubordinateMissionPlan plan,
+            WorldMissionMapTarget target,
+            out string reason)
+        {
+            if (_gameplayService == null)
+            {
+                reason = "실시간 지도가 준비되지 않았습니다.";
+                return false;
+            }
+            return _gameplayService.TryAssignWorldMission(
+                _gameplayService.PlayerFactionId,
+                plan.UnitId,
+                plan.OpportunityId,
+                target,
+                out reason);
+        }
+
+        public bool CompleteWorldMission(
+            string unitId,
+            string opportunityId,
+            bool cancelled = false) =>
+            _gameplayService != null &&
+            _gameplayService.CompleteWorldMission(
+                unitId,
+                opportunityId,
+                cancelled);
+
         private void GenerateNewMap()
         {
             IsAuthoritativeMap = false;
@@ -906,10 +1037,12 @@ namespace Game.Presentation
             var playerStart = new GridCoordinate(startX, startY);
             IReadOnlyList<GridCoordinate> opponentStarts =
                 CreateOpponentStarts(width, height, playerStart);
-            int seed = unchecked(
-                Environment.TickCount ^
-                GetInstanceID() ^
-                (++_generationSequence * 397));
+            int seed = GenerationSettings != null
+                ? GenerationSettings.Seed
+                : unchecked(
+                    Environment.TickCount ^
+                    GetInstanceID() ^
+                    (++_generationSequence * 397));
             int minimumMineCount = Mathf.RoundToInt(width * height * 0.03f);
             int requestedMines = Mathf.Max(mineCount, minimumMineCount);
 
@@ -920,8 +1053,9 @@ namespace Game.Presentation
                 seed,
                 playerStart,
                 opponentStarts,
-                true,
-                Mathf.Clamp(neutralCastleCount, 0, 24));
+                GenerationSettings?.WrapHorizontally ?? true,
+                Mathf.Clamp(neutralCastleCount, 0, 24),
+                GenerationSettings?.OceanThreshold ?? 0.34d);
 
             var rootObject = new GameObject(
                 $"대형 평면 경제 월드_{width}x{height}");
@@ -1260,12 +1394,15 @@ namespace Game.Presentation
             _gameplayService.StateChanged += HandleGameplayStateChanged;
             _gameplayService.MineCaptured += HandleMineCaptured;
             _gameplayService.MineSpawned += HandleMineSpawned;
+            _gameplayService.MineConstructionCompleted +=
+                HandleMineConstructionCompleted;
             _gameplayService.CastleCaptured += HandleCastleCaptured;
             _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
             _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
             _gameplayService.SupplyInterdictionResolved +=
                 HandleSupplyInterdictionResolved;
+            _gameplayService.WorldMissionReady += HandleWorldMissionReady;
         }
 
         private void DetachGameplayService()
@@ -1275,12 +1412,15 @@ namespace Game.Presentation
                 _gameplayService.StateChanged -= HandleGameplayStateChanged;
                 _gameplayService.MineCaptured -= HandleMineCaptured;
                 _gameplayService.MineSpawned -= HandleMineSpawned;
+                _gameplayService.MineConstructionCompleted -=
+                    HandleMineConstructionCompleted;
                 _gameplayService.CastleCaptured -= HandleCastleCaptured;
                 _gameplayService.CapitalDestroyed -= HandleCapitalDestroyed;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
                 _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
                 _gameplayService.SupplyInterdictionResolved -=
                     HandleSupplyInterdictionResolved;
+                _gameplayService.WorldMissionReady -= HandleWorldMissionReady;
             }
 
             _gameplayService = null;
@@ -1289,6 +1429,11 @@ namespace Game.Presentation
             ClearMovementPreviewState();
             _unitMarkerRoots.Clear();
             _unitVisualPositions.Clear();
+        }
+
+        private void HandleWorldMissionReady(MapWorldMissionState mission)
+        {
+            WorldMissionReady?.Invoke(mission);
         }
 
         private void BuildFlatMapCopies(GridMapLayout layout)
@@ -1637,6 +1782,11 @@ namespace Game.Presentation
                           $" 최종 x{unit.MobilityModifier:F2}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
+                if (_gameplayService != null &&
+                    _gameplayService.IsUsingSeaTransport(unit))
+                {
+                    detail += " · 해상 수송 중 (자동 승선·하선)";
+                }
                 if (unit.SupplyMissionKind != MapSupplyMissionKind.None)
                 {
                     detail += " · " +
@@ -1675,6 +1825,43 @@ namespace Game.Presentation
                               $" ({transportRoute.Count}칸)";
                 }
             }
+            else if (_gameplayService != null)
+            {
+                MapMineConstructionState construction =
+                    _gameplayService.FindMineConstruction(coordinate);
+                MapEconomicSurveyState survey =
+                    _gameplayService.FindEconomicSurvey(coordinate);
+                if (construction != null)
+                {
+                    string mineName = construction.Kind == MineKind.Gold
+                        ? "금광"
+                        : "철광산";
+                    detail += $"\n{mineName} 건설 중 · 남은 " +
+                              $"{construction.RemainingDays}/" +
+                              $"{construction.TotalDays}일 · " +
+                              $"투입 비용 {construction.Cost:N0}원 · " +
+                              $"예상 생산성 {construction.YieldMultiplier:P0}";
+                }
+                else if (survey != null)
+                {
+                    if (!survey.HasViableDeposit)
+                    {
+                        detail += "\n경제 탐사 완료 · 채굴 가치가 있는 " +
+                                  "매장지를 찾지 못했습니다.";
+                    }
+                    else
+                    {
+                        MineKind kind = survey.DepositKind.Value;
+                        string mineName = kind == MineKind.Gold
+                            ? "금광"
+                            : "철광산";
+                        detail += $"\n경제 탐사 완료 · {mineName} 후보지 · " +
+                                  $"예상 생산성 {survey.YieldMultiplier:P0} · " +
+                                  $"건설비 {MapEconomicDevelopmentRules.GetConstructionCost(kind):N0}원 · " +
+                                  $"공기 {MapEconomicDevelopmentRules.GetConstructionDays(kind)}일";
+                    }
+                }
+            }
             if (castle?.IsCapital == true)
             {
                 string capitalOwner = castle.IsDestroyed
@@ -1690,6 +1877,12 @@ namespace Game.Presentation
                           $" / 무기 {castle.WarehouseEquipmentAmount:N1}" +
                           $" / 의약품 {castle.WarehouseMedicineAmount:N1}" +
                           $" · 방어 보너스 +{castle.DefenseBonus:P0}";
+            }
+            if (castle != null &&
+                _gameplayService != null &&
+                _gameplayService.IsCoastalPort(castle.Coordinate))
+            {
+                detail += "\n해안 성 · 간이 항구 사용 가능";
             }
             if (castle != null && !castle.IsCapital)
             {
@@ -2007,6 +2200,23 @@ namespace Game.Presentation
                         0.07f,
                         tileSize * 0.78f),
                     color,
+                    _gameplayMarkerRoot,
+                    false));
+            }
+
+            for (int i = 0; i < _gameplayService.MineConstructions.Count; i++)
+            {
+                MapMineConstructionState construction =
+                    _gameplayService.MineConstructions[i];
+                ForEachSurfaceCopy(xOffset => CreateBlock(
+                    $"채굴소 건설_{construction.Coordinate.X}_{construction.Coordinate.Y}",
+                    ToWorldPosition(construction.Coordinate, xOffset) +
+                    new Vector3(0f, 0.16f, 0f),
+                    new Vector3(
+                        tileSize * 0.58f,
+                        0.24f,
+                        tileSize * 0.58f),
+                    new Color(0.95f, 0.58f, 0.12f, 1f),
                     _gameplayMarkerRoot,
                     false));
             }
@@ -2535,6 +2745,13 @@ namespace Game.Presentation
             BuildMineVisual(new MinePlacement(record.Coordinate, record.Kind));
             RefreshCurrentSelection();
             MineSpawned?.Invoke(record);
+        }
+
+        private void HandleMineConstructionCompleted(
+            MapMineConstructionCompletedRecord record)
+        {
+            RefreshCurrentSelection();
+            MineConstructionCompleted?.Invoke(record);
         }
 
         private void HandleCastleCaptured(MapCastleCaptureRecord record)

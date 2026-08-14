@@ -256,7 +256,8 @@ namespace Game.Domain.World
             GridCoordinate playerStart,
             IReadOnlyList<GridCoordinate> opponentStarts,
             bool wrapHorizontally = true,
-            int neutralCastleCount = 0)
+            int neutralCastleCount = 0,
+            double oceanThreshold = 0.34d)
         {
             if (width < 2)
                 throw new ArgumentOutOfRangeException(nameof(width));
@@ -293,11 +294,16 @@ namespace Game.Domain.World
             GridTerrainKind[] terrain = GenerateTerrain(
                 width,
                 height,
-                seed);
+                seed,
+                oceanThreshold);
             foreach (GridCoordinate start in blockedStarts)
             {
-                terrain[start.Y * width + start.X] =
-                    GridTerrainKind.Plains;
+                EnsureTraversableStartArea(
+                    terrain,
+                    width,
+                    height,
+                    start,
+                    wrapHorizontally);
             }
 
             var candidates = new List<GridCoordinate>(
@@ -452,6 +458,45 @@ namespace Game.Domain.World
             return true;
         }
 
+        private static void EnsureTraversableStartArea(
+            GridTerrainKind[] terrain,
+            int width,
+            int height,
+            GridCoordinate start,
+            bool wrapHorizontally)
+        {
+            const int protectedRadius = 2;
+            for (int deltaY = -protectedRadius;
+                 deltaY <= protectedRadius;
+                 deltaY++)
+            {
+                for (int deltaX = -protectedRadius;
+                     deltaX <= protectedRadius;
+                     deltaX++)
+                {
+                    if (Math.Abs(deltaX) + Math.Abs(deltaY) >
+                        protectedRadius)
+                    {
+                        continue;
+                    }
+
+                    int y = start.Y + deltaY;
+                    if (y < 0 || y >= height)
+                        continue;
+
+                    int x = start.X + deltaX;
+                    if (wrapHorizontally)
+                        x = ((x % width) + width) % width;
+                    else if (x < 0 || x >= width)
+                        continue;
+
+                    int index = y * width + x;
+                    if (terrain[index] == GridTerrainKind.Ocean)
+                        terrain[index] = GridTerrainKind.Plains;
+                }
+            }
+        }
+
         private static bool IsCoastalLand(
             GridCoordinate coordinate,
             IReadOnlyList<GridTerrainKind> terrain,
@@ -487,9 +532,11 @@ namespace Game.Domain.World
         private static GridTerrainKind[] GenerateTerrain(
             int width,
             int height,
-            int seed)
+            int seed,
+            double oceanThreshold)
         {
             var terrain = new GridTerrainKind[width * height];
+            double waterLine = Math.Clamp(oceanThreshold, 0.20d, 0.48d);
             double phase = PositiveHash01(seed, 17, 31) * Math.PI * 2d;
 
             for (int y = 0; y < height; y++)
@@ -514,7 +561,7 @@ namespace Game.Domain.World
                         0.12d * (PositiveHash01(seed, x, y) - 0.5d);
 
                     GridTerrainKind kind;
-                    if (continent < 0.34d)
+                    if (continent < waterLine)
                         kind = GridTerrainKind.Ocean;
                     else if (latitude > 0.84d)
                         kind = GridTerrainKind.Tundra;

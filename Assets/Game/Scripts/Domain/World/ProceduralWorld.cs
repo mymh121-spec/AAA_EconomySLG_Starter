@@ -164,6 +164,11 @@ namespace Game.Domain.World
         {
             Population = Math.Max(0, Population + delta);
         }
+
+        public void AssignOwner(string ownerFactionId)
+        {
+            OwnerFactionId = ownerFactionId ?? string.Empty;
+        }
     }
 
     public sealed class WorldFactionState
@@ -280,7 +285,7 @@ namespace Game.Domain.World
         public string Id { get; }
         public WorldFacilityKind Kind { get; }
         public RegionId RegionId { get; }
-        public string OwnerFactionId { get; }
+        public string OwnerFactionId { get; private set; }
         public ResourceId? InputResourceId { get; }
         public ResourceId? OutputResourceId { get; }
         public decimal InputPerTurn { get; }
@@ -320,6 +325,11 @@ namespace Game.Domain.World
         public void SetOperational(bool operational)
         {
             IsOperational = operational;
+        }
+
+        public void AssignOwner(string ownerFactionId)
+        {
+            OwnerFactionId = ownerFactionId ?? string.Empty;
         }
 
         public void SetOperatingRatio(decimal ratio)
