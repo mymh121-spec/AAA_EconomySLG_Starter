@@ -16,7 +16,7 @@ public sealed class PvpMatchRuntime
         string RequestHash,
         ReadyResponse Response);
 
-    public const string ServerVersion = "0.2.0";
+    public const string ServerVersion = "0.3.0";
 
     private readonly object _gate = new();
     private readonly PvpMatchId _matchId;
@@ -56,7 +56,9 @@ public sealed class PvpMatchRuntime
             var authenticated = new AuthenticatedPlayer(
                 configured.PlayerId,
                 configured.CompanyId);
-            string tokenHash = HashToken(configured.Token);
+            string tokenHash = configured.TokenIsSha256Hash
+                ? configured.Token.ToUpperInvariant()
+                : HashToken(configured.Token);
 
             if (!_playersByTokenHash.TryAdd(tokenHash, authenticated) ||
                 !_playersById.TryAdd(configured.PlayerId, authenticated))
@@ -81,7 +83,9 @@ public sealed class PvpMatchRuntime
                 maxPlayers: 4,
                 maxActionPointsPerPlayer: 5,
                 maxCommandsPerPlayer: 16));
-        _simulation = new AuthoritativeSimulationRuntime(slots);
+        _simulation = new AuthoritativeSimulationRuntime(
+            slots,
+            _matchId.Value);
         _journal = new JsonMatchJournal(dataDirectory, _matchId.Value);
         _turnTimeout = TimeSpan.FromSeconds(GetTurnTimeoutSeconds());
         _turnDeadlineUtc = DateTimeOffset.UtcNow + _turnTimeout;
@@ -103,6 +107,21 @@ public sealed class PvpMatchRuntime
             matchId,
             LoadPlayersFromEnvironment(),
             dataDirectory);
+    }
+
+    public static PvpMatchRuntime Create(
+        string matchId,
+        IReadOnlyList<ServerPlayerConfiguration> players,
+        string dataDirectory) =>
+        new(matchId, players, dataDirectory);
+
+    public bool IsFinished
+    {
+        get
+        {
+            lock (_gate)
+                return _simulation.IsFinished;
+        }
     }
 
     public bool TryAuthenticate(
@@ -239,23 +258,30 @@ public sealed class PvpMatchRuntime
             return cached.Response with { IsReplay = true };
         }
 
-        CommandResponse? validationFailure = ValidateSubmitRequest(request);
-        if (validationFailure != null)
-            return CacheCommand(cacheKey, requestHash, validationFailure);
-
         if (!Enum.TryParse(request.Kind, true, out PvpCommandKind kind) ||
-            (kind != PvpCommandKind.MarketBuy &&
-             kind != PvpCommandKind.MarketSell))
+            !IsSupportedCommand(kind))
         {
             return CacheCommand(cacheKey, requestHash, RejectedCommand(
                 request.RequestId,
                 PvpOperationCode.UnsupportedRequest,
-                "현재 서버는 시장 구매·판매 명령만 지원합니다."));
+                "현재 서버가 지원하지 않는 명령입니다."));
         }
+
+        CommandResponse? validationFailure =
+            ValidateSubmitRequest(request, kind);
+        if (validationFailure != null)
+            return CacheCommand(cacheKey, requestHash, validationFailure);
 
         PvpCommandEnvelope command;
         try
         {
+            ResourceId? resourceId = null;
+            if (!string.IsNullOrWhiteSpace(request.ResourceId))
+                resourceId = new ResourceId(request.ResourceId);
+            CompanyId? targetCompanyId = null;
+            if (!string.IsNullOrWhiteSpace(request.TargetCompanyId))
+                targetCompanyId = new CompanyId(request.TargetCompanyId);
+
             command = new PvpCommandEnvelope(
                 request.CommandId,
                 _matchId,
@@ -265,14 +291,17 @@ public sealed class PvpMatchRuntime
                 request.Sequence,
                 kind,
                 new PvpCommandPayload(
-                    new RegionId(request.RegionId),
-                    new ResourceId(request.ResourceId!),
-                    string.IsNullOrWhiteSpace(request.TargetCompanyId)
-                        ? null
-                        : new CompanyId(request.TargetCompanyId),
+                    new RegionId(string.IsNullOrWhiteSpace(request.RegionId)
+                        ? "map"
+                        : request.RegionId),
+                    resourceId,
+                    targetCompanyId,
                     request.TargetId,
                     request.Quantity,
-                    request.LimitPrice));
+                    request.LimitPrice,
+                    request.TargetX,
+                    request.TargetY,
+                    request.Action));
         }
         catch (ArgumentException exception)
         {
@@ -280,6 +309,16 @@ public sealed class PvpMatchRuntime
                 request.RequestId,
                 PvpOperationCode.InvalidPayload,
                 exception.Message));
+        }
+
+        PvpOperationCode authoritativeValidation =
+            _simulation.ValidateCommand(command, out string validationReason);
+        if (authoritativeValidation != PvpOperationCode.Accepted)
+        {
+            return CacheCommand(cacheKey, requestHash, RejectedCommand(
+                request.RequestId,
+                authoritativeValidation,
+                validationReason));
         }
 
         PvpOperationResult result = _coordinator.SubmitCommand(command);
@@ -437,22 +476,20 @@ public sealed class PvpMatchRuntime
         return CacheReady(cacheKey, requestHash, response);
     }
 
-    private CommandResponse? ValidateSubmitRequest(SubmitCommandRequest request)
+    private CommandResponse? ValidateSubmitRequest(
+        SubmitCommandRequest request,
+        PvpCommandKind kind)
     {
         if (request == null ||
             string.IsNullOrWhiteSpace(request.RequestId) ||
             request.RequestId.Length > 128 ||
             string.IsNullOrWhiteSpace(request.CommandId) ||
-            request.CommandId.Length > 128 ||
-            string.IsNullOrWhiteSpace(request.RegionId) ||
-            request.RegionId.Length > 64 ||
-            string.IsNullOrWhiteSpace(request.ResourceId) ||
-            request.ResourceId.Length > 64)
+            request.CommandId.Length > 128)
         {
             return RejectedCommand(
                 request?.RequestId ?? string.Empty,
                 PvpOperationCode.InvalidPayload,
-                "요청 ID, 명령 ID, 지역 ID, 자원 ID를 확인하십시오.");
+                "요청 ID와 명령 ID를 확인하십시오.");
         }
         if (request.ProtocolVersion != PvpProtocol.CurrentVersion)
             return RejectedCommand(request.RequestId, PvpOperationCode.ProtocolMismatch, "프로토콜 버전이 다릅니다.");
@@ -462,10 +499,40 @@ public sealed class PvpMatchRuntime
             return RejectedCommand(request.RequestId, PvpOperationCode.StaleRevision, "서버 Revision과 다릅니다.");
         if (request.Turn < 1 || request.Turn != _coordinator.CurrentTurn.Value)
             return RejectedCommand(request.RequestId, PvpOperationCode.WrongTurn, "현재 턴과 다른 명령입니다.");
-        if (request.Quantity <= 0m || request.LimitPrice <= 0m)
-            return RejectedCommand(request.RequestId, PvpOperationCode.InvalidPayload, "수량과 가격은 0보다 커야 합니다.");
+        if (kind is PvpCommandKind.MarketBuy or PvpCommandKind.MarketSell)
+        {
+            if (string.IsNullOrWhiteSpace(request.RegionId) ||
+                request.RegionId.Length > 64 ||
+                string.IsNullOrWhiteSpace(request.ResourceId) ||
+                request.ResourceId.Length > 64 ||
+                request.Quantity <= 0m ||
+                request.LimitPrice <= 0m)
+            {
+                return RejectedCommand(
+                    request.RequestId,
+                    PvpOperationCode.InvalidPayload,
+                    "시장 명령의 지역·자원·수량·가격을 확인하십시오.");
+            }
+        }
+        else if (string.IsNullOrWhiteSpace(request.TargetId) ||
+                 request.TargetId.Length > 128)
+        {
+            return RejectedCommand(
+                request.RequestId,
+                PvpOperationCode.InvalidPayload,
+                "지도 명령에는 대상 부대 ID가 필요합니다.");
+        }
         return null;
     }
+
+    private static bool IsSupportedCommand(PvpCommandKind kind) =>
+        kind is PvpCommandKind.MarketBuy or
+            PvpCommandKind.MarketSell or
+            PvpCommandKind.MoveUnit or
+            PvpCommandKind.OccupyResourceSite or
+            PvpCommandKind.OccupyCastle or
+            PvpCommandKind.StartSiege or
+            PvpCommandKind.CancelOrder;
 
     private ReadyResponse? ValidateReadyRequest(
         AuthenticatedPlayer player,
@@ -656,6 +723,11 @@ public sealed class PvpMatchRuntime
             string.IsNullOrWhiteSpace(player.Token) || player.Token.Length < 32 || player.Token.Length > 512)
         {
             throw new InvalidOperationException("PvP 플레이어 설정이 올바르지 않습니다.");
+        }
+        if (player.TokenIsSha256Hash &&
+            (player.Token.Length != 64 || !player.Token.All(Uri.IsHexDigit)))
+        {
+            throw new InvalidOperationException("PvP 토큰 해시가 올바르지 않습니다.");
         }
     }
 

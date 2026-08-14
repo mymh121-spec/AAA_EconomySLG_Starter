@@ -12,6 +12,36 @@ public sealed record ApiError(string Code, string Message)
         new("인증실패", "유효한 Bearer 토큰이 필요합니다.");
 }
 
+public sealed record CreateRoomRequest(
+    string DisplayName,
+    int MaxPlayers);
+
+public sealed record JoinRoomRequest(string DisplayName);
+
+public sealed record RoomPlayerResponse(
+    int Slot,
+    string PlayerId,
+    string DisplayName,
+    bool IsHost,
+    bool Connected);
+
+public sealed record RoomStateResponse(
+    string RoomCode,
+    string MatchId,
+    string Status,
+    int MaxPlayers,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset LastActivityUtc,
+    IReadOnlyList<RoomPlayerResponse> Players);
+
+public sealed record RoomSessionResponse(
+    string RoomCode,
+    string PlayerId,
+    string CompanyId,
+    string AccessToken,
+    bool IsHost,
+    RoomStateResponse Room);
+
 public sealed record SubmitCommandRequest(
     string RequestId,
     int ProtocolVersion,
@@ -26,7 +56,10 @@ public sealed record SubmitCommandRequest(
     string? TargetCompanyId,
     string? TargetId,
     decimal Quantity,
-    decimal LimitPrice);
+    decimal LimitPrice,
+    int? TargetX,
+    int? TargetY,
+    string? Action);
 
 public sealed record ReadyRequest(
     string RequestId,
@@ -116,6 +149,69 @@ public sealed record ResourceSiteStateResponse(
     decimal MinimumOutput,
     bool IsActive);
 
+public sealed record MapCoordinateResponse(int X, int Y);
+
+public sealed record MapUnitStateResponse(
+    string UnitId,
+    string OwnerCompanyId,
+    string Archetype,
+    int X,
+    int Y,
+    int? DestinationX,
+    int? DestinationY,
+    int MovementProgress,
+    int MovementStepsPerTile,
+    int RemainingTiles,
+    int Stamina,
+    int MaxStamina,
+    int Soldiers,
+    decimal AttackPower,
+    decimal DefensePower,
+    decimal Morale,
+    decimal Fatigue,
+    IReadOnlyList<MapCoordinateResponse> PlannedPath);
+
+public sealed record MapMineStateResponse(
+    int X,
+    int Y,
+    string Kind,
+    string OwnerCompanyId,
+    string CapturingCompanyId,
+    int CaptureProgress,
+    int CaptureRequired);
+
+public sealed record MapCastleStateResponse(
+    int X,
+    int Y,
+    string OwnerCompanyId,
+    string OriginalOwnerCompanyId,
+    string CapturingCompanyId,
+    bool IsCapital,
+    bool IsDestroyed,
+    string Role,
+    string ConflictKind,
+    string SiegeAction,
+    string OccupationPolicy,
+    int CaptureProgress,
+    int CaptureRequired,
+    int WallDurability,
+    int MaxWallDurability,
+    int FoodSupply,
+    int MaxFoodSupply,
+    int GarrisonUnitCount);
+
+public sealed record MapWorldStateResponse(
+    int Width,
+    int Height,
+    int Seed,
+    bool WrapHorizontally,
+    int FixedStepsPerTurn,
+    int CurrentEconomicDay,
+    IReadOnlyList<int> Terrain,
+    IReadOnlyList<MapUnitStateResponse> Units,
+    IReadOnlyList<MapMineStateResponse> Mines,
+    IReadOnlyList<MapCastleStateResponse> Castles);
+
 public sealed record WorldStateResponse(
     int Turn,
     int CalendarDay,
@@ -123,6 +219,7 @@ public sealed record WorldStateResponse(
     IReadOnlyList<PublicCompanyStateResponse> Companies,
     OwnCompanyStateResponse? OwnCompany,
     IReadOnlyList<ResourceSiteStateResponse> ResourceSites,
+    MapWorldStateResponse Map,
     bool IsFinished,
     string WinnerCompanyId);
 
@@ -142,7 +239,8 @@ public sealed record ServerPlayerConfiguration(
     string PlayerId,
     string CompanyId,
     string DisplayName,
-    string Token);
+    string Token,
+    bool TokenIsSha256Hash = false);
 
 public readonly record struct AuthenticatedPlayer(
     string PlayerId,

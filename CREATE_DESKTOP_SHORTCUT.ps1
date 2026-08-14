@@ -28,8 +28,12 @@ $shortcut.TargetPath = $launcher
 $shortcut.WorkingDirectory = $sourceProject
 $shortcut.Description = "Synchronize and run Economy SLG"
 
-$unityEditor = "C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Unity.exe"
-if (Test-Path -LiteralPath $unityEditor -PathType Leaf) {
+$unityEditor = @(
+    "D:\Unity\Editor\6000.3.21f1\Editor\Unity.exe",
+    "C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Unity.exe"
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+if (-not [string]::IsNullOrWhiteSpace($unityEditor)) {
     $shortcut.IconLocation = $unityEditor + ",0"
 }
 

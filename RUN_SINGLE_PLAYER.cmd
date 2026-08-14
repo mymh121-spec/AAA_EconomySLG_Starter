@@ -1,11 +1,12 @@
 @echo off
 setlocal
-set "UNITY_EDITOR=C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Unity.exe"
+set "UNITY_EDITOR=D:\Unity\Editor\6000.3.21f1\Editor\Unity.exe"
+if not exist "%UNITY_EDITOR%" set "UNITY_EDITOR=C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Unity.exe"
 for %%I in ("%~dp0.") do set "GAME_PROJECT=%%~fI"
 
 if not exist "%UNITY_EDITOR%" (
     echo Unity 6.3 LTS was not found.
-    echo Expected: %UNITY_EDITOR%
+    echo Checked D:\Unity\Editor and the default Unity Hub installation path.
     pause
     exit /b 1
 )

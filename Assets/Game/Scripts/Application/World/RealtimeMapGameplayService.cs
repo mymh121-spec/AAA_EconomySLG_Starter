@@ -111,6 +111,105 @@ namespace Game.Application.World
         }
     }
 
+    public enum MapCommanderPersonality
+    {
+        Aggressive,
+        Cautious,
+        Opportunistic,
+        Logistician
+    }
+
+    public static class MapCommanderPersonalityNames
+    {
+        public static string GetKoreanName(MapCommanderPersonality personality)
+        {
+            switch (personality)
+            {
+                case MapCommanderPersonality.Aggressive: return "공격적";
+                case MapCommanderPersonality.Cautious: return "신중함";
+                case MapCommanderPersonality.Opportunistic: return "기회주의";
+                case MapCommanderPersonality.Logistician: return "병참 중시";
+                default: return personality.ToString();
+            }
+        }
+    }
+
+    public sealed class MapCommanderState
+    {
+        public string Id { get; }
+        public string DisplayName { get; }
+        public int Command { get; }
+        public int Tactics { get; }
+        public int Logistics { get; }
+        public MapCommanderPersonality Personality { get; }
+        public int Loyalty { get; private set; }
+        public decimal HiringCost { get; }
+        public string EmployerFactionId { get; private set; }
+        public string AssignedUnitId { get; private set; }
+        public bool IsAvailable => string.IsNullOrEmpty(EmployerFactionId);
+        public decimal AttackModifier => GetModifier(
+            Command * 0.55m + Tactics * 0.45m,
+            Personality == MapCommanderPersonality.Aggressive ? 0.05m :
+            Personality == MapCommanderPersonality.Opportunistic ? 0.03m :
+            Personality == MapCommanderPersonality.Cautious ? -0.02m : 0m);
+        public decimal DefenseModifier => GetModifier(
+            Command * 0.70m + Tactics * 0.30m,
+            Personality == MapCommanderPersonality.Cautious ? 0.05m :
+            Personality == MapCommanderPersonality.Aggressive ? -0.03m :
+            Personality == MapCommanderPersonality.Logistician ? 0.01m : 0m);
+        public decimal MobilityModifier => GetModifier(
+            Logistics,
+            Personality == MapCommanderPersonality.Logistician ? 0.06m :
+            Personality == MapCommanderPersonality.Opportunistic ? 0.04m : 0m);
+
+        public MapCommanderState(
+            string id,
+            string displayName,
+            int command,
+            int tactics,
+            int logistics,
+            MapCommanderPersonality personality,
+            int loyalty,
+            decimal hiringCost)
+        {
+            Id = string.IsNullOrWhiteSpace(id)
+                ? throw new ArgumentException("지휘관 ID가 필요합니다.", nameof(id))
+                : id;
+            DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? Id
+                : displayName;
+            Command = Math.Clamp(command, 0, 100);
+            Tactics = Math.Clamp(tactics, 0, 100);
+            Logistics = Math.Clamp(logistics, 0, 100);
+            Personality = personality;
+            Loyalty = Math.Clamp(loyalty, 0, 100);
+            HiringCost = Math.Max(0m, hiringCost);
+            EmployerFactionId = string.Empty;
+            AssignedUnitId = string.Empty;
+        }
+
+        internal void Hire(string factionId, string unitId)
+        {
+            EmployerFactionId = factionId ?? string.Empty;
+            AssignedUnitId = unitId ?? string.Empty;
+        }
+
+        internal void AdjustLoyalty(int amount)
+        {
+            Loyalty = Math.Clamp(Loyalty + amount, 0, 100);
+        }
+
+        private decimal GetModifier(decimal skill, decimal personalityBonus)
+        {
+            decimal loyaltyScale = 0.50m + Loyalty / 200m;
+            decimal skillBonus = (skill - 50m) / 500m;
+            return Math.Clamp(
+                1m + (skillBonus + personalityBonus) * loyaltyScale,
+                0.80m,
+                1.20m);
+        }
+    }
+
     public readonly struct MapUnitFormation
     {
         public MapUnitFormationPreset Preset { get; }
@@ -286,8 +385,39 @@ namespace Game.Application.World
                 : UnitEquipmentCatalog.GetDurabilityCombatModifier(
                     ArmorDurability,
                     ArmorQuality));
-        public decimal MobilityModifier =>
-            UnitEquipmentCatalog.GetMobilityModifier(Archetype, ArmorClass);
+        public MapCommanderState Commander { get; private set; }
+        public decimal CommanderAttackModifier =>
+            Commander?.AttackModifier ?? 1m;
+        public decimal CommanderDefenseModifier =>
+            Commander?.DefenseModifier ?? 1m;
+        public decimal CommanderMobilityModifier =>
+            Commander?.MobilityModifier ?? 1m;
+        public decimal ArmorMobilityModifier =>
+            UnitEquipmentCatalog.GetMobilityModifier(ArmorClass);
+        public decimal WeightedBranchMobilityModifier
+        {
+            get
+            {
+                decimal frontlineMobility =
+                    UnitEquipmentCatalog.GetArchetypeMobilityModifier(
+                        GetFrontlineArchetype());
+                decimal rangedMobility =
+                    UnitEquipmentCatalog.GetArchetypeMobilityModifier(
+                        GetRangedArchetype());
+                decimal cavalryMobility =
+                    UnitEquipmentCatalog.GetArchetypeMobilityModifier(
+                        UnitArchetype.Cavalry);
+                return Formation.FrontlineRatio * frontlineMobility +
+                    Formation.RangedRatio * rangedMobility +
+                    Formation.CavalryRatio * cavalryMobility;
+            }
+        }
+        public decimal MobilityModifier => Math.Clamp(
+            WeightedBranchMobilityModifier *
+            ArmorMobilityModifier *
+            CommanderMobilityModifier,
+            0.25m,
+            2.50m);
         public GridCoordinate Coordinate { get; internal set; }
         public GridCoordinate? Destination { get; internal set; }
         public int MovementProgress { get; internal set; }
@@ -382,6 +512,7 @@ namespace Game.Application.World
             UsesSupplySystem = false;
             SupplyMissionKind = MapSupplyMissionKind.None;
             SupplyMissionCoordinate = null;
+            Commander = null;
             MovementFatiguePerTile = Math.Clamp(
                 movementFatiguePerTile,
                 0m,
@@ -406,7 +537,9 @@ namespace Game.Application.World
                 Soldiers * basePower * moraleFactor * fatigueFactor *
                 supplyFactor * (attack
                     ? FormationAttackModifier
-                    : FormationDefenseModifier),
+                    : FormationDefenseModifier) * (attack
+                    ? CommanderAttackModifier
+                    : CommanderDefenseModifier),
                 2,
                 MidpointRounding.AwayFromZero);
         }
@@ -432,6 +565,48 @@ namespace Game.Application.World
         internal void SetFormation(MapUnitFormation formation)
         {
             Formation = formation;
+        }
+
+        internal void RestoreAuthoritativeDisplayState(
+            int soldiers,
+            int stamina,
+            decimal morale,
+            decimal fatigue)
+        {
+            Formation = Formation.ScaleTo(Math.Max(0, soldiers));
+            Stamina = Math.Clamp(stamina, 0, MaxStamina);
+            Morale = Math.Clamp(morale, 0m, 125m);
+            Fatigue = Math.Clamp(fatigue, 0m, 100m);
+        }
+
+        internal void AssignCommander(MapCommanderState commander)
+        {
+            Commander = commander;
+        }
+
+        private UnitArchetype GetFrontlineArchetype()
+        {
+            switch (Archetype)
+            {
+                case UnitArchetype.Spearman:
+                case UnitArchetype.Maceman:
+                case UnitArchetype.Swordsman:
+                    return Archetype;
+                default:
+                    return UnitArchetype.Swordsman;
+            }
+        }
+
+        private UnitArchetype GetRangedArchetype()
+        {
+            switch (Archetype)
+            {
+                case UnitArchetype.Archer:
+                case UnitArchetype.Slinger:
+                    return Archetype;
+                default:
+                    return UnitArchetype.Archer;
+            }
         }
 
         internal void AdjustMorale(decimal amount)
@@ -930,6 +1105,8 @@ namespace Game.Application.World
             new HashSet<GridCoordinate>();
         private readonly List<string> _aiFactionIds = new List<string>();
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
+        private readonly List<MapCommanderState> _commanders =
+            new List<MapCommanderState>();
         private readonly List<MapMineControlState> _mines =
             new List<MapMineControlState>();
         private readonly List<MapCastleControlState> _castles =
@@ -950,9 +1127,11 @@ namespace Game.Application.World
         private int _unitSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
+        private readonly bool _enableAi;
 
         public string PlayerFactionId { get; }
         public IReadOnlyList<MapUnitState> Units => _units;
+        public IReadOnlyList<MapCommanderState> Commanders => _commanders;
         public IReadOnlyList<MapMineControlState> Mines => _mines;
         public IReadOnlyList<MapCastleControlState> Castles => _castles;
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
@@ -986,11 +1165,13 @@ namespace Game.Application.World
             GridMapLayout layout,
             string playerFactionId,
             IReadOnlyList<string> aiFactionIds = null,
-            MapGameplayTuning tuning = null)
+            MapGameplayTuning tuning = null,
+            bool enableAi = true)
         {
             _layout = layout ?? throw new ArgumentNullException(nameof(layout));
             PlayerFactionId = RequireFactionId(playerFactionId);
             _tuning = tuning ?? new MapGameplayTuning();
+            _enableAi = enableAi;
             _factionBases.Add(PlayerFactionId, layout.PlayerStart);
 
             int opponentCount = Math.Min(
@@ -1041,6 +1222,7 @@ namespace Game.Application.World
             }
 
             BuildRoadNetwork();
+            SeedNeutralCommanders();
         }
 
         public MapUnitState FindUnit(string unitId)
@@ -1055,6 +1237,141 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public MapCommanderState FindCommander(string commanderId)
+        {
+            if (string.IsNullOrWhiteSpace(commanderId))
+                return null;
+
+            for (int i = 0; i < _commanders.Count; i++)
+            {
+                if (string.Equals(
+                        _commanders[i].Id,
+                        commanderId,
+                        StringComparison.Ordinal))
+                {
+                    return _commanders[i];
+                }
+            }
+
+            return null;
+        }
+
+        public bool CanHireCommander(
+            string ownerFactionId,
+            string commanderId,
+            string unitId,
+            out string reason)
+        {
+            if (string.IsNullOrWhiteSpace(ownerFactionId))
+            {
+                reason = "지휘관을 고용할 세력이 필요합니다.";
+                return false;
+            }
+
+            MapCommanderState commander = FindCommander(commanderId);
+            if (commander == null)
+            {
+                reason = "고용할 중립 지휘관을 찾을 수 없습니다.";
+                return false;
+            }
+            if (!commander.IsAvailable)
+            {
+                reason = "이미 다른 부대에 고용된 지휘관입니다.";
+                return false;
+            }
+
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "지휘관을 배속할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (unit.Commander != null)
+            {
+                reason = $"{unit.Id}에는 이미 {unit.Commander.DisplayName} 지휘관이 있습니다.";
+                return false;
+            }
+            MapCastleControlState castle = FindCastle(unit.Coordinate);
+            if (castle == null || !string.Equals(
+                    castle.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "지휘관 고용과 배속은 부대가 주둔한 아군 성에서만 가능합니다.";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryHireCommander(
+            string ownerFactionId,
+            string commanderId,
+            string unitId,
+            out string reason)
+        {
+            if (!CanHireCommander(
+                    ownerFactionId,
+                    commanderId,
+                    unitId,
+                    out reason))
+            {
+                return false;
+            }
+
+            MapCommanderState commander = FindCommander(commanderId);
+            MapUnitState unit = FindUnit(unitId);
+            commander.Hire(ownerFactionId, unit.Id);
+            unit.AssignCommander(commander);
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        private void SeedNeutralCommanders()
+        {
+            _commanders.Add(new MapCommanderState(
+                "commander_yoon_harin",
+                "윤하린",
+                72,
+                84,
+                48,
+                MapCommanderPersonality.Aggressive,
+                68,
+                35000m));
+            _commanders.Add(new MapCommanderState(
+                "commander_kang_doyoon",
+                "강도윤",
+                80,
+                65,
+                62,
+                MapCommanderPersonality.Cautious,
+                82,
+                40000m));
+            _commanders.Add(new MapCommanderState(
+                "commander_seo_mirae",
+                "서미래",
+                66,
+                74,
+                72,
+                MapCommanderPersonality.Opportunistic,
+                57,
+                30000m));
+            _commanders.Add(new MapCommanderState(
+                "commander_han_yujin",
+                "한유진",
+                70,
+                60,
+                90,
+                MapCommanderPersonality.Logistician,
+                76,
+                42000m));
         }
 
         public MapUnitState FindOwnedUnitAt(
@@ -1145,6 +1462,128 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public bool TryRestoreAuthoritativeUnitState(
+            string unitId,
+            GridCoordinate coordinate,
+            IReadOnlyList<GridCoordinate> remainingPath,
+            int movementProgress,
+            int soldiers,
+            int stamina,
+            decimal morale,
+            decimal fatigue,
+            out string reason)
+        {
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null)
+            {
+                reason = "복원할 지도 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (!_layout.Contains(coordinate) ||
+                !_layout.IsLand(coordinate))
+            {
+                reason = "서버 부대 좌표가 이동 가능한 지도 칸이 아닙니다.";
+                return false;
+            }
+
+            var path = new List<GridCoordinate>();
+            if (remainingPath != null)
+            {
+                for (int i = 0; i < remainingPath.Count; i++)
+                {
+                    if (!_layout.Contains(remainingPath[i]) ||
+                        !_layout.IsLand(remainingPath[i]))
+                    {
+                        reason = "서버 부대 이동 경로가 올바르지 않습니다.";
+                        return false;
+                    }
+                    path.Add(remainingPath[i]);
+                }
+            }
+
+            unit.Coordinate = coordinate;
+            unit.RestoreAuthoritativeDisplayState(
+                soldiers,
+                stamina,
+                morale,
+                fatigue);
+            unit.SetPath(path);
+            unit.MovementProgress = path.Count == 0
+                ? 0
+                : Math.Clamp(
+                    movementProgress,
+                    0,
+                    Math.Max(0, GetRequiredMovementStepsPerTile(unit) - 1));
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryRestoreAuthoritativeMineState(
+            GridCoordinate coordinate,
+            string ownerFactionId,
+            string capturingFactionId,
+            int captureProgress,
+            out string reason)
+        {
+            MapMineControlState mine = FindMine(coordinate);
+            if (mine == null)
+            {
+                reason = "복원할 광산을 찾을 수 없습니다.";
+                return false;
+            }
+
+            mine.OwnerFactionId = ownerFactionId ?? string.Empty;
+            mine.CapturingFactionId = capturingFactionId ?? string.Empty;
+            mine.CaptureProgress = Math.Clamp(
+                captureProgress,
+                0,
+                FixedStepsToCapture);
+            reason = string.Empty;
+            return true;
+        }
+
+        public bool TryRestoreAuthoritativeCastleState(
+            GridCoordinate coordinate,
+            string ownerFactionId,
+            string capturingFactionId,
+            int captureProgress,
+            MapCastleRole role,
+            MapCastleConflictKind conflictKind,
+            MapSiegeAction siegeAction,
+            MapOccupationPolicy occupationPolicy,
+            bool isDestroyed,
+            int wallDurability,
+            int foodSupply,
+            out string reason)
+        {
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (castle == null)
+            {
+                reason = "복원할 성을 찾을 수 없습니다.";
+                return false;
+            }
+
+            castle.RestoreAuthoritativeState(
+                ownerFactionId,
+                capturingFactionId,
+                captureProgress,
+                role,
+                conflictKind,
+                siegeAction,
+                occupationPolicy,
+                isDestroyed,
+                wallDurability,
+                foodSupply);
+            RefreshCastleGarrison(castle);
+            reason = string.Empty;
+            return true;
+        }
+
+        public void RestoreAuthoritativeEconomicDay(int economicDay)
+        {
+            _economicDaySequence = Math.Max(0, economicDay);
         }
 
         public MapCastleControlState FindCapital(string factionId)
@@ -2352,7 +2791,8 @@ namespace Game.Application.World
             {
                 _fixedStepSequence++;
                 bool changed = false;
-                if (_fixedStepSequence % _tuning.AiDecisionIntervalSteps == 0)
+                if (_enableAi &&
+                    _fixedStepSequence % _tuning.AiDecisionIntervalSteps == 0)
                     changed |= RunAiDecisions();
                 changed |= MoveUnitsOneFixedStep();
                 changed |= AdvanceCastleCaptures();

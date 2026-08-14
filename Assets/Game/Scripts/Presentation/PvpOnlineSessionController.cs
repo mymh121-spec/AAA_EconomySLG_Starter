@@ -30,12 +30,17 @@ namespace Game.Presentation
         public bool IsMatchmakingRequestRunning { get; private set; }
         public string LastError { get; private set; } = string.Empty;
         public PvpReconnectDto CurrentState { get; private set; }
+        public PvpRoomSessionDto CurrentRoomSession { get; private set; }
+        public PvpRoomStateDto CurrentRoom { get; private set; }
         public PvpMatchmakingSnapshot CurrentMatchmaking { get; private set; }
         public string ServerEndpoint => serverEndpoint;
+        public string RoomCode => CurrentRoom?.roomCode ?? string.Empty;
+        public bool IsRoomHost => CurrentRoomSession?.isHost == true;
         public bool IsHiveMatchmakingAvailable =>
             EnsureMatchmakingProvider().IsAvailable;
 
         public event Action<PvpReconnectDto> StateChanged;
+        public event Action<PvpRoomStateDto> RoomChanged;
         public event Action<PvpMatchmakingSnapshot> MatchmakingChanged;
         public event Action<string> ErrorRaised;
 
@@ -59,6 +64,13 @@ namespace Game.Presentation
 
         public async Task<bool> ConnectAsync(string accessToken)
         {
+            return await ConnectAsync(string.Empty, accessToken);
+        }
+
+        public async Task<bool> ConnectAsync(
+            string roomCode,
+            string accessToken)
+        {
             if (IsRequestRunning || IsMatchmakingRequestRunning)
                 return false;
 
@@ -68,7 +80,146 @@ namespace Game.Presentation
 
             try
             {
-                _client = new PvpHttpClient(serverEndpoint, accessToken);
+                _client = new PvpHttpClient(serverEndpoint, accessToken, roomCode);
+                await RefreshAsync(_lifetime.Token);
+                IsConnected = true;
+                if (!string.IsNullOrWhiteSpace(roomCode))
+                {
+                    CurrentRoomSession = new PvpRoomSessionDto
+                    {
+                        roomCode = roomCode.Trim().ToUpperInvariant(),
+                        accessToken = string.Empty,
+                        isHost = false
+                    };
+                    CurrentRoom = await _client.GetRoomAsync(_lifetime.Token);
+                    RoomChanged?.Invoke(CurrentRoom);
+                }
+                LastError = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                SetError(exception.Message);
+                DisposeClient();
+                return false;
+            }
+            finally
+            {
+                IsRequestRunning = false;
+            }
+        }
+
+        public async Task<bool> CreateRoomAsync(
+            string displayName,
+            int maxPlayers)
+        {
+            if (IsRequestRunning || IsMatchmakingRequestRunning)
+                return false;
+
+            DisposeClient();
+            _lifetime = new CancellationTokenSource();
+            IsRequestRunning = true;
+            try
+            {
+                PvpRoomSessionDto session = await PvpHttpClient.CreateRoomAsync(
+                    serverEndpoint,
+                    displayName,
+                    maxPlayers,
+                    _lifetime.Token);
+                BeginRoomSession(session);
+                LastError = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                SetError(exception.Message);
+                DisposeClient();
+                return false;
+            }
+            finally
+            {
+                IsRequestRunning = false;
+            }
+        }
+
+        public async Task<bool> JoinRoomAsync(
+            string roomCode,
+            string displayName)
+        {
+            if (IsRequestRunning || IsMatchmakingRequestRunning)
+                return false;
+
+            DisposeClient();
+            _lifetime = new CancellationTokenSource();
+            IsRequestRunning = true;
+            try
+            {
+                PvpRoomSessionDto session = await PvpHttpClient.JoinRoomAsync(
+                    serverEndpoint,
+                    roomCode,
+                    displayName,
+                    _lifetime.Token);
+                BeginRoomSession(session);
+                LastError = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                SetError(exception.Message);
+                DisposeClient();
+                return false;
+            }
+            finally
+            {
+                IsRequestRunning = false;
+            }
+        }
+
+        public async Task<bool> RefreshRoomAsync()
+        {
+            if (_client == null || CurrentRoomSession == null || IsRequestRunning)
+                return false;
+
+            IsRequestRunning = true;
+            try
+            {
+                CurrentRoom = await _client.GetRoomAsync(_lifetime.Token);
+                RoomChanged?.Invoke(CurrentRoom);
+                if (string.Equals(CurrentRoom.status, "Active", StringComparison.Ordinal))
+                {
+                    await RefreshAsync(_lifetime.Token);
+                    IsConnected = true;
+                }
+                LastError = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                SetError(exception.Message);
+                return false;
+            }
+            finally
+            {
+                IsRequestRunning = false;
+            }
+        }
+
+        public async Task<bool> StartRoomAsync()
+        {
+            if (_client == null || CurrentRoomSession == null ||
+                !CurrentRoomSession.isHost || IsRequestRunning)
+            {
+                return false;
+            }
+
+            IsRequestRunning = true;
+            try
+            {
+                CurrentRoom = await _client.StartRoomAsync(_lifetime.Token);
+                RoomChanged?.Invoke(CurrentRoom);
+                if (!string.Equals(CurrentRoom.status, "Active", StringComparison.Ordinal))
+                    return false;
+
                 await RefreshAsync(_lifetime.Token);
                 IsConnected = true;
                 LastError = string.Empty;
@@ -77,7 +228,6 @@ namespace Game.Presentation
             catch (Exception exception)
             {
                 SetError(exception.Message);
-                DisposeClient();
                 return false;
             }
             finally
@@ -391,6 +541,93 @@ namespace Game.Presentation
             MatchmakingChanged?.Invoke(snapshot);
         }
 
+        public async Task<bool> SubmitMapOrderAsync(
+            PvpCommandKind kind,
+            string unitId,
+            int targetX,
+            int targetY,
+            string action = "")
+        {
+            if (!CanSendRequest() ||
+                string.IsNullOrWhiteSpace(unitId) ||
+                (kind != PvpCommandKind.MoveUnit &&
+                 kind != PvpCommandKind.OccupyResourceSite &&
+                 kind != PvpCommandKind.OccupyCastle &&
+                 kind != PvpCommandKind.StartSiege &&
+                 kind != PvpCommandKind.CancelOrder))
+            {
+                return false;
+            }
+
+            PvpPlayerStateDto ownPlayer = FindOwnPlayer();
+            if (ownPlayer == null)
+            {
+                SetError("서버 상태에서 내 플레이어 슬롯을 찾지 못했습니다.");
+                return false;
+            }
+
+            IsRequestRunning = true;
+            try
+            {
+                string id = Guid.NewGuid().ToString("N");
+                var request = new PvpSubmitCommandDto
+                {
+                    requestId = "map_request_" + id,
+                    matchId = CurrentState.matchId,
+                    expectedRevision = CurrentState.revision,
+                    commandId = "map_command_" + id,
+                    turn = CurrentState.turn,
+                    sequence = ownPlayer.expectedSequence,
+                    kind = kind.ToString(),
+                    regionId = "map",
+                    targetId = unitId,
+                    targetX = targetX,
+                    targetY = targetY,
+                    action = action ?? string.Empty
+                };
+
+                PvpCommandResponseDto response =
+                    await _client.SubmitCommandAsync(
+                        request,
+                        _lifetime.Token);
+                if (!response.accepted)
+                {
+                    SetError(response.message);
+                    await RefreshAsync(_lifetime.Token);
+                    return false;
+                }
+
+                await RefreshAsync(_lifetime.Token);
+                LastError = string.Empty;
+                return true;
+            }
+            catch (Exception exception)
+            {
+                SetError(exception.Message);
+                return false;
+            }
+            finally
+            {
+                IsRequestRunning = false;
+            }
+        }
+
+        private void BeginRoomSession(PvpRoomSessionDto session)
+        {
+            if (session == null || string.IsNullOrWhiteSpace(session.accessToken) ||
+                string.IsNullOrWhiteSpace(session.roomCode))
+            {
+                throw new InvalidOperationException("서버가 유효한 방 세션을 발급하지 않았습니다.");
+            }
+
+            string accessToken = session.accessToken;
+            _client = new PvpHttpClient(serverEndpoint, accessToken, session.roomCode);
+            session.accessToken = string.Empty;
+            CurrentRoomSession = session;
+            CurrentRoom = session.room;
+            RoomChanged?.Invoke(CurrentRoom);
+        }
+
         private IPvpMatchmakingProvider EnsureMatchmakingProvider()
         {
             if (_matchmakingProvider != null)
@@ -441,6 +678,8 @@ namespace Game.Presentation
             _client = null;
             IsConnected = false;
             CurrentState = null;
+            CurrentRoomSession = null;
+            CurrentRoom = null;
         }
     }
 }

@@ -36,11 +36,15 @@ namespace Game.Presentation
         private VisualElement _singlePlayerResultView;
         private VisualElement _multiplayerView;
         private TextField _endpointField;
+        private TextField _displayNameField;
+        private TextField _maxPlayersField;
+        private TextField _roomCodeField;
         private TextField _tokenField;
         private TextField _hiveMatchIdField;
         private TextField _hivePointField;
         private TextField _hiveExtraDataField;
         private Label _connectionStatus;
+        private Label _roomStatus;
         private Label _singlePlayerStatus;
         private Label _singleMapSelectionStatus;
         private VisualElement _singleMapActionPanel;
@@ -83,6 +87,8 @@ namespace Game.Presentation
         private Button _npcArmorButton;
         private Button _npcRecruitButton;
         private Button _npcEquipButton;
+        private Button _npcCommanderButton;
+        private Button _npcHireCommanderButton;
         private Button _operationBoardTopButton;
         private VisualElement _operationBoardView;
         private Label _operationBoardSummary;
@@ -98,6 +104,10 @@ namespace Game.Presentation
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
         private Label _multiplayerMapSelectionStatus;
+        private Label _multiplayerMapActionFeedback;
+        private Button _multiplayerMapOrderButton;
+        private Button _multiplayerSiegeButton;
+        private Button _multiplayerCancelOrderButton;
         private bool _singlePlayerEventsBound;
         private bool _multiplayerEventsBound;
         private bool _mapEventsBound;
@@ -105,6 +115,7 @@ namespace Game.Presentation
         private UnitWeaponType _pendingWeaponType = UnitWeaponType.Sword;
         private ArmorClass _pendingArmorClass = ArmorClass.Light;
         private GridCoordinate? _pendingRecruitmentOrigin;
+        private int _pendingCommanderIndex;
         private int _selectedOperationIndex;
         private int _selectedOperationApproachIndex;
         private string _queuedOperationId = string.Empty;
@@ -237,6 +248,7 @@ namespace Game.Presentation
                 return;
 
             multiplayerSession.StateChanged += HandleMultiplayerStateChanged;
+            multiplayerSession.RoomChanged += HandleMultiplayerRoomChanged;
             multiplayerSession.MatchmakingChanged +=
                 HandleMultiplayerMatchmakingChanged;
             multiplayerSession.ErrorRaised += HandleMultiplayerError;
@@ -313,7 +325,7 @@ namespace Game.Presentation
             _connectionView = CreateCard(
                 _uiRoot,
                 "여러 명 플레이 연결",
-                "서버 주소와 발급받은 접속 토큰을 입력하세요.");
+                "방을 만들거나 6자리 초대 코드로 참가하세요.");
             _endpointField = new TextField("서버 주소")
             {
                 value = multiplayerSession != null
@@ -322,6 +334,39 @@ namespace Game.Presentation
             };
             StyleInput(_endpointField);
             _connectionView.Add(_endpointField);
+
+            _displayNameField = new TextField("표시 이름")
+            {
+                value = "플레이어"
+            };
+            StyleInput(_displayNameField);
+            _connectionView.Add(_displayNameField);
+
+            _maxPlayersField = new TextField("방 정원 (2~4)")
+            {
+                value = "2"
+            };
+            StyleInput(_maxPlayersField);
+            _connectionView.Add(_maxPlayersField);
+            AddButton(_connectionView, "새 방 만들기", CreateMultiplayerRoom);
+
+            _roomCodeField = new TextField("6자리 초대 코드");
+            StyleInput(_roomCodeField);
+            _connectionView.Add(_roomCodeField);
+            AddButton(_connectionView, "초대 코드로 참가", JoinMultiplayerRoom);
+            AddButton(
+                _connectionView,
+                "방 상태 갱신 / 방장 경기 시작",
+                RefreshOrStartMultiplayerRoom);
+            _roomStatus = AddStatus(_connectionView);
+            _roomStatus.text = "방을 만들거나 초대 코드로 참가하세요.";
+
+            var developerTitle = new Label("개발용 직접 세션 연결");
+            developerTitle.style.fontSize = 16;
+            developerTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            developerTitle.style.color = new Color(0.72f, 0.76f, 0.82f);
+            developerTitle.style.marginTop = 8;
+            _connectionView.Add(developerTitle);
 
             _tokenField = new TextField("접속 토큰")
             {
@@ -369,6 +414,9 @@ namespace Game.Presentation
                 CancelHiveMatchmaking);
             AddButton(_connectionView, "직접 서버 연결", ConnectMultiplayer);
             AddButton(_connectionView, "뒤로", ShowModeSelection);
+            MakeCardVerticallyScrollable(
+                _connectionView,
+                "multiplayer-connection-scroll");
 
             _singlePlayerView = CreateCard(
                 _uiRoot,
@@ -379,6 +427,9 @@ namespace Game.Presentation
             _singleMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
             BuildSinglePlayerMapActionPanel(_singlePlayerView);
+            MakeCardVerticallyScrollable(
+                _singlePlayerView,
+                "single-player-scroll");
             StyleGameplayHud(_singlePlayerView);
             RegisterMapInputGuard(_singlePlayerView);
 
@@ -401,6 +452,21 @@ namespace Game.Presentation
             _multiplayerMapSelectionStatus = AddStatus(_multiplayerView);
             _multiplayerMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
+            _multiplayerMapOrderButton = AddButton(
+                _multiplayerView,
+                "선택 부대 이동 / 목표 점령",
+                IssueMultiplayerMapOrder);
+            _multiplayerSiegeButton = AddButton(
+                _multiplayerView,
+                "선택한 적 성 강습",
+                IssueMultiplayerSiege);
+            _multiplayerCancelOrderButton = AddButton(
+                _multiplayerView,
+                "선택 부대 이동 취소",
+                CancelMultiplayerMapOrder);
+            _multiplayerMapActionFeedback = AddStatus(_multiplayerView);
+            _multiplayerMapActionFeedback.text =
+                "서버 지도에서 아군 부대를 선택한 뒤 목표 칸을 선택하세요.";
             AddButton(_multiplayerView, "이번 턴 준비 완료", MarkMultiplayerReady);
             AddButton(_multiplayerView, "서버 상태 새로고침", RefreshMultiplayer);
             AddButton(_multiplayerView, "연결 종료 후 모드 선택", ShowModeSelection);
@@ -437,6 +503,8 @@ namespace Game.Presentation
             {
                 SetVisible(_singlePlayerView, true);
                 RefreshSinglePlayerStatus();
+                if (gameplayMap.CurrentSelection.HasValue)
+                    HandleMapCellSelected(gameplayMap.CurrentSelection.Value);
             }
         }
 
@@ -466,12 +534,140 @@ namespace Game.Presentation
             ShowConnectionOverlay();
         }
 
+        private async void CreateMultiplayerRoom()
+        {
+            if (!PrepareRoomRequest(out string displayName))
+                return;
+            if (!int.TryParse(_maxPlayersField.value, out int maxPlayers) ||
+                maxPlayers < 2 || maxPlayers > 4)
+            {
+                _roomStatus.text = "방 정원은 2~4명으로 입력하세요.";
+                return;
+            }
+
+            _roomStatus.text = "새 방을 만드는 중입니다...";
+            bool created = await multiplayerSession.CreateRoomAsync(
+                displayName,
+                maxPlayers);
+            if (!created)
+            {
+                _roomStatus.text = multiplayerSession.LastError;
+                return;
+            }
+
+            _roomCodeField.value = multiplayerSession.RoomCode;
+            _roomStatus.text = FormatRoomStatus(multiplayerSession.CurrentRoom) +
+                "\n초대 코드를 다른 플레이어에게 알려주세요.";
+        }
+
+        private async void JoinMultiplayerRoom()
+        {
+            if (!PrepareRoomRequest(out string displayName))
+                return;
+            string roomCode = _roomCodeField.value?.Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(roomCode) || roomCode.Length != 6)
+            {
+                _roomStatus.text = "6자리 초대 코드를 입력하세요.";
+                return;
+            }
+
+            _roomStatus.text = "방에 참가하는 중입니다...";
+            bool joined = await multiplayerSession.JoinRoomAsync(
+                roomCode,
+                displayName);
+            if (!joined)
+            {
+                _roomStatus.text = multiplayerSession.LastError;
+                return;
+            }
+
+            _roomCodeField.value = multiplayerSession.RoomCode;
+            _roomStatus.text = FormatRoomStatus(multiplayerSession.CurrentRoom) +
+                "\n방장이 경기를 시작하면 상태 갱신을 누르세요.";
+        }
+
+        private async void RefreshOrStartMultiplayerRoom()
+        {
+            if (multiplayerSession.CurrentRoomSession == null)
+            {
+                _roomStatus.text = "먼저 방을 만들거나 참가하세요.";
+                return;
+            }
+
+            _roomStatus.text = "방 상태를 확인하는 중입니다...";
+            bool success = multiplayerSession.IsRoomHost &&
+                string.Equals(
+                    multiplayerSession.CurrentRoom?.status,
+                    "Lobby",
+                    StringComparison.Ordinal)
+                ? await multiplayerSession.StartRoomAsync()
+                : await multiplayerSession.RefreshRoomAsync();
+            if (!success)
+            {
+                _roomStatus.text = multiplayerSession.LastError;
+                return;
+            }
+
+            _roomStatus.text = FormatRoomStatus(multiplayerSession.CurrentRoom);
+            if (multiplayerSession.IsConnected)
+                EnterConnectedMultiplayer();
+        }
+
+        private bool PrepareRoomRequest(out string displayName)
+        {
+            displayName = _displayNameField.value?.Trim();
+            string endpoint = _endpointField.value?.Trim();
+            if (string.IsNullOrWhiteSpace(displayName) || displayName.Length > 24)
+            {
+                _roomStatus.text = "표시 이름을 1~24자로 입력하세요.";
+                return false;
+            }
+            if (!multiplayerSession.ConfigureServerEndpoint(endpoint))
+            {
+                _roomStatus.text = multiplayerSession.LastError;
+                return false;
+            }
+            return true;
+        }
+
+        private static string FormatRoomStatus(PvpRoomStateDto room)
+        {
+            if (room == null)
+                return "방 상태를 받지 못했습니다.";
+
+            int playerCount = room.players?.Length ?? 0;
+            var builder = new StringBuilder(160)
+                .Append("초대 코드: ")
+                .Append(room.roomCode)
+                .Append("\n상태: ")
+                .Append(room.status)
+                .Append(" · 참가자 ")
+                .Append(playerCount)
+                .Append('/')
+                .Append(room.maxPlayers);
+            if (room.players != null)
+            {
+                for (int i = 0; i < room.players.Length; i++)
+                {
+                    PvpRoomPlayerDto player = room.players[i];
+                    builder.Append("\nP")
+                        .Append(player.slot + 1)
+                        .Append(' ')
+                        .Append(player.displayName);
+                    if (player.isHost)
+                        builder.Append(" (방장)");
+                }
+            }
+            return builder.ToString();
+        }
+
         private async void ConnectMultiplayer()
         {
             if (multiplayerSession.IsRequestRunning)
                 return;
 
             string endpoint = _endpointField.value?.Trim();
+            string roomCode = _roomCodeField.value?.Trim();
             string token = _tokenField.value;
             _tokenField.value = string.Empty;
 
@@ -479,6 +675,12 @@ namespace Game.Presentation
             {
                 _connectionStatus.text =
                     "게임 서버가 발급한 32자 이상의 접속 토큰이 필요합니다.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(roomCode) || roomCode.Length != 6)
+            {
+                _connectionStatus.text =
+                    "개발용 직접 연결에도 6자리 방 코드가 필요합니다.";
                 return;
             }
 
@@ -491,7 +693,9 @@ namespace Game.Presentation
             _connectionStatus.text = "서버에 연결하는 중입니다...";
             try
             {
-                bool connected = await multiplayerSession.ConnectAsync(token);
+                bool connected = await multiplayerSession.ConnectAsync(
+                    roomCode,
+                    token);
                 if (!connected)
                 {
                     _connectionStatus.text = multiplayerSession.LastError;
@@ -515,12 +719,19 @@ namespace Game.Presentation
             }
 
             string endpoint = _endpointField.value?.Trim();
+            string roomCode = _roomCodeField.value?.Trim();
             string token = _tokenField.value;
             if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
             {
                 _connectionStatus.text =
                     "HIVE 매칭 뒤 게임 서버에 들어갈 32자 이상의 접속 " +
                     "토큰이 필요합니다.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(roomCode) || roomCode.Length != 6)
+            {
+                _connectionStatus.text =
+                    "HIVE 매칭과 연결할 6자리 게임 방 코드를 입력하세요.";
                 return;
             }
             if (!int.TryParse(_hiveMatchIdField.value, out int matchId) ||
@@ -569,7 +780,9 @@ namespace Game.Presentation
                 _connectionStatus.text =
                     $"HIVE 매칭 완료({snapshot.Players.Count}명). " +
                     "게임 서버에 접속합니다...";
-                bool connected = await multiplayerSession.ConnectAsync(token);
+                bool connected = await multiplayerSession.ConnectAsync(
+                    roomCode,
+                    token);
                 if (!connected)
                 {
                     _connectionStatus.text = multiplayerSession.LastError;
@@ -605,7 +818,7 @@ namespace Game.Presentation
             SetVisible(_connectionView, false);
             SetVisible(_multiplayerView, true);
             ShowGameplayHud();
-            RefreshMultiplayerStatus(multiplayerSession.CurrentState);
+            HandleMultiplayerStateChanged(multiplayerSession.CurrentState);
         }
 
         private void ToggleSinglePlayerPause()
@@ -715,6 +928,8 @@ namespace Game.Presentation
             SetVisible(_singlePlayerView, true);
             ShowGameplayHud();
             RefreshSinglePlayerStatus();
+            if (gameplayMap?.CurrentSelection.HasValue == true)
+                HandleMapCellSelected(gameplayMap.CurrentSelection.Value);
         }
 
         private async void MarkMultiplayerReady()
@@ -897,7 +1112,31 @@ namespace Game.Presentation
                     .Append(" · 원거리 ")
                     .Append(selectedUnit.Formation.RangedSoldiers.ToString("N0"))
                     .Append(" · 기병 ")
-                    .Append(selectedUnit.Formation.CavalrySoldiers.ToString("N0"));
+                    .Append(selectedUnit.Formation.CavalrySoldiers.ToString("N0"))
+                    .Append("\n이동 배율 편성 x")
+                    .Append(selectedUnit.WeightedBranchMobilityModifier.ToString("F2"))
+                    .Append(" · 갑옷 x")
+                    .Append(selectedUnit.ArmorMobilityModifier.ToString("F2"))
+                    .Append(" · 지휘관 병참 x")
+                    .Append(selectedUnit.CommanderMobilityModifier.ToString("F2"))
+                    .Append(" · 최종 x")
+                    .Append(selectedUnit.MobilityModifier.ToString("F2"));
+                if (selectedUnit.Commander != null)
+                {
+                    builder.Append("\n지휘관 ")
+                        .Append(selectedUnit.Commander.DisplayName)
+                        .Append(" · ")
+                        .Append(MapCommanderPersonalityNames.GetKoreanName(
+                            selectedUnit.Commander.Personality))
+                        .Append(" · 충성 ")
+                        .Append(selectedUnit.Commander.Loyalty)
+                        .Append(" · 통솔 ")
+                        .Append(selectedUnit.Commander.Command)
+                        .Append(" · 전술 ")
+                        .Append(selectedUnit.Commander.Tactics)
+                        .Append(" · 병참 ")
+                        .Append(selectedUnit.Commander.Logistics);
+                }
 
                 if (selectedUnit.IsMoving && gameplayMap.GameplayService != null)
                 {
@@ -949,7 +1188,38 @@ namespace Game.Presentation
 
         private void HandleMultiplayerStateChanged(PvpReconnectDto state)
         {
+            if (_selection.IsMultiplayer &&
+                gameplayMap != null &&
+                state?.world?.map != null &&
+                state.world.ownCompany != null)
+            {
+                if (gameplayMap.ApplyAuthoritativeSnapshot(
+                        state.world.map,
+                        state.world.ownCompany.companyId,
+                        out string reason))
+                {
+                    if (gameplayMap.CurrentSelection.HasValue)
+                    {
+                        HandleMapCellSelected(
+                            gameplayMap.CurrentSelection.Value);
+                    }
+                }
+                else if (_multiplayerMapActionFeedback != null)
+                {
+                    _multiplayerMapActionFeedback.text = reason;
+                }
+            }
+
             RefreshMultiplayerStatus(state);
+            RefreshMultiplayerMapActions(
+                gameplayMap?.CurrentSelection);
+        }
+
+        private void HandleMultiplayerRoomChanged(PvpRoomStateDto room)
+        {
+            if (!_selection.IsMultiplayer || _roomStatus == null)
+                return;
+            _roomStatus.text = FormatRoomStatus(room);
         }
 
         private void HandleMultiplayerMatchmakingChanged(
@@ -991,7 +1261,170 @@ namespace Game.Presentation
             if (_multiplayerMapSelectionStatus != null)
                 _multiplayerMapSelectionStatus.text = description;
 
+            if (_selection.IsMultiplayer && gameplayMap != null)
+            {
+                string ownCompanyId =
+                    multiplayerSession?.CurrentState?.world?.ownCompany?.companyId;
+                if (!string.IsNullOrWhiteSpace(selection.UnitId) &&
+                    !string.Equals(
+                        gameplayMap.SelectedPlayerUnitId,
+                        selection.UnitId,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        selection.UnitOwnerFactionId,
+                        ownCompanyId,
+                        StringComparison.Ordinal))
+                {
+                    gameplayMap.TrySelectPlayerUnitAt(
+                        selection.Coordinate,
+                        out _);
+                }
+                RefreshMultiplayerMapActions(selection);
+            }
+
             RefreshSinglePlayerMapActions(selection);
+        }
+
+        private async void IssueMultiplayerMapOrder()
+        {
+            if (!TryGetMultiplayerMapOrderContext(
+                    out string unitId,
+                    out MapCellSelection selection))
+            {
+                return;
+            }
+
+            PvpCommandKind kind;
+            switch (selection.Content)
+            {
+                case MapCellContent.NormalMine:
+                case MapCellContent.GoldMine:
+                    kind = PvpCommandKind.OccupyResourceSite;
+                    break;
+                case MapCellContent.PlayerBase:
+                case MapCellContent.EnemyBase:
+                case MapCellContent.NeutralCastle:
+                case MapCellContent.PlayerCastle:
+                case MapCellContent.EnemyCastle:
+                    kind = PvpCommandKind.OccupyCastle;
+                    break;
+                default:
+                    kind = PvpCommandKind.MoveUnit;
+                    break;
+            }
+
+            await SubmitMultiplayerMapOrder(
+                kind,
+                unitId,
+                selection.Coordinate,
+                string.Empty,
+                "지도 명령이 서버에 반영되었습니다.");
+        }
+
+        private async void IssueMultiplayerSiege()
+        {
+            if (!TryGetMultiplayerMapOrderContext(
+                    out string unitId,
+                    out MapCellSelection selection))
+            {
+                return;
+            }
+
+            await SubmitMultiplayerMapOrder(
+                PvpCommandKind.StartSiege,
+                unitId,
+                selection.Coordinate,
+                "Assault",
+                "강습 명령이 서버에 반영되었습니다.");
+        }
+
+        private async void CancelMultiplayerMapOrder()
+        {
+            if (!TryGetMultiplayerMapOrderContext(
+                    out string unitId,
+                    out _))
+            {
+                return;
+            }
+
+            GridCoordinate coordinate = gameplayMap.SelectedPlayerUnit.Coordinate;
+            await SubmitMultiplayerMapOrder(
+                PvpCommandKind.CancelOrder,
+                unitId,
+                coordinate,
+                string.Empty,
+                "이동 취소가 서버에 반영되었습니다.");
+        }
+
+        private bool TryGetMultiplayerMapOrderContext(
+            out string unitId,
+            out MapCellSelection selection)
+        {
+            unitId = gameplayMap?.SelectedAuthoritativeServerUnitId ??
+                string.Empty;
+            selection = gameplayMap?.CurrentSelection ?? default;
+            if (!_selection.IsMultiplayer ||
+                multiplayerSession == null ||
+                !multiplayerSession.IsConnected ||
+                multiplayerSession.IsRequestRunning ||
+                gameplayMap == null ||
+                !gameplayMap.IsAuthoritativeMap ||
+                string.IsNullOrWhiteSpace(unitId) ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                if (_multiplayerMapActionFeedback != null)
+                {
+                    _multiplayerMapActionFeedback.text =
+                        "서버 지도에서 아군 부대와 목표 칸을 선택하세요.";
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task SubmitMultiplayerMapOrder(
+            PvpCommandKind kind,
+            string unitId,
+            GridCoordinate coordinate,
+            string action,
+            string successMessage)
+        {
+            _multiplayerMapActionFeedback.text =
+                "지도 명령을 서버에 전송하는 중입니다...";
+            bool succeeded = await multiplayerSession.SubmitMapOrderAsync(
+                kind,
+                unitId,
+                coordinate.X,
+                coordinate.Y,
+                action);
+            _multiplayerMapActionFeedback.text = succeeded
+                ? successMessage
+                : multiplayerSession.LastError;
+            RefreshMultiplayerMapActions(gameplayMap?.CurrentSelection);
+        }
+
+        private void RefreshMultiplayerMapActions(
+            MapCellSelection? selection)
+        {
+            bool canIssue = _selection.IsMultiplayer &&
+                multiplayerSession != null &&
+                multiplayerSession.IsConnected &&
+                !multiplayerSession.IsRequestRunning &&
+                gameplayMap != null &&
+                gameplayMap.IsAuthoritativeMap &&
+                !string.IsNullOrWhiteSpace(
+                    gameplayMap.SelectedAuthoritativeServerUnitId) &&
+                selection.HasValue;
+            _multiplayerMapOrderButton?.SetEnabled(canIssue);
+
+            bool isCastle = selection.HasValue &&
+                (selection.Value.Content == MapCellContent.EnemyBase ||
+                 selection.Value.Content == MapCellContent.EnemyCastle ||
+                 selection.Value.Content == MapCellContent.NeutralCastle);
+            _multiplayerSiegeButton?.SetEnabled(canIssue && isCastle);
+            _multiplayerCancelOrderButton?.SetEnabled(
+                canIssue && gameplayMap.SelectedPlayerUnit?.IsMoving == true);
         }
 
         private void HandleMapMovementPreviewRequested(
@@ -1469,6 +1902,116 @@ namespace Game.Presentation
             RefreshSelectedMapActions();
         }
 
+        private MapCommanderState GetPendingCommander()
+        {
+            IReadOnlyList<MapCommanderState> commanders =
+                gameplayMap?.Commanders;
+            if (commanders == null || commanders.Count == 0)
+                return null;
+
+            _pendingCommanderIndex = Math.Clamp(
+                _pendingCommanderIndex,
+                0,
+                commanders.Count - 1);
+            return commanders[_pendingCommanderIndex];
+        }
+
+        private void CyclePendingCommander()
+        {
+            IReadOnlyList<MapCommanderState> commanders =
+                gameplayMap?.Commanders;
+            if (commanders == null || commanders.Count == 0)
+            {
+                SetNeutralNpcFeedback("고용 가능한 중립 지휘관이 없습니다.");
+                return;
+            }
+
+            _pendingCommanderIndex =
+                (_pendingCommanderIndex + 1) % commanders.Count;
+            RefreshNeutralNpcView();
+        }
+
+        private string BuildCommanderCandidateList()
+        {
+            IReadOnlyList<MapCommanderState> commanders =
+                gameplayMap?.Commanders;
+            if (commanders == null || commanders.Count == 0)
+                return "중립 지휘관 후보 없음";
+
+            var builder = new StringBuilder("중립 지휘관 후보 목록");
+            for (int i = 0; i < commanders.Count; i++)
+            {
+                MapCommanderState commander = commanders[i];
+                builder.Append('\n')
+                    .Append(i == _pendingCommanderIndex ? "▶ " : "  ")
+                    .Append(commander.DisplayName)
+                    .Append(" · 통솔 ")
+                    .Append(commander.Command)
+                    .Append(" / 전술 ")
+                    .Append(commander.Tactics)
+                    .Append(" / 병참 ")
+                    .Append(commander.Logistics)
+                    .Append(" · ")
+                    .Append(MapCommanderPersonalityNames.GetKoreanName(
+                        commander.Personality))
+                    .Append(" · 충성 ")
+                    .Append(commander.Loyalty)
+                    .Append(commander.IsAvailable
+                        ? " · 고용 가능"
+                        : $" · {commander.AssignedUnitId} 배속 중");
+            }
+
+            return builder.ToString();
+        }
+
+        private void HirePendingCommander()
+        {
+            if (gameplayMap == null || singlePlayerSimulation == null)
+                return;
+
+            MapCommanderState commander = GetPendingCommander();
+            MapUnitState unit = gameplayMap.SelectedPlayerUnit;
+            if (commander == null || unit == null)
+            {
+                SetNeutralNpcFeedback(
+                    "중립 지휘관과 배속할 플레이어 부대를 선택하세요.");
+                return;
+            }
+            if (!singlePlayerSimulation.CanAffordPlayerCash(
+                    commander.HiringCost))
+            {
+                SetNeutralNpcFeedback(
+                    $"자금이 부족합니다. 필요 {commander.HiringCost:N0}, " +
+                    $"보유 {singlePlayerSimulation.PlayerCash:N0}");
+                return;
+            }
+
+            if (!gameplayMap.TryHireCommanderForSelectedPlayerUnit(
+                    commander.Id,
+                    out string reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+            if (!singlePlayerSimulation.TrySpendPlayerCash(
+                    commander.HiringCost,
+                    out reason))
+            {
+                SetNeutralNpcFeedback(reason);
+                return;
+            }
+
+            string result =
+                $"{commander.DisplayName} 지휘관을 {unit.Id}에 배속했습니다. " +
+                $"성향 {MapCommanderPersonalityNames.GetKoreanName(commander.Personality)} · " +
+                $"충성도 {commander.Loyalty} · 고용비 {commander.HiringCost:N0}";
+            SetMapActionFeedback(result);
+            SetNeutralNpcFeedback(result);
+            RefreshNeutralNpcView();
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
         private void CyclePendingUnitArchetype()
         {
             UnitArchetype[] order =
@@ -1616,6 +2159,16 @@ namespace Game.Presentation
             string movement = unit.Destination.HasValue
                 ? $"이동 중 → {unit.Destination.Value}"
                 : "대기 중";
+            string commander = unit.Commander == null
+                ? "지휘관 없음"
+                : $"지휘관 {unit.Commander.DisplayName} · " +
+                  $"{MapCommanderPersonalityNames.GetKoreanName(unit.Commander.Personality)} · " +
+                  $"충성 {unit.Commander.Loyalty}";
+            string mobility =
+                $"이동 편성 x{unit.WeightedBranchMobilityModifier:F2} · " +
+                $"갑옷 x{unit.ArmorMobilityModifier:F2} · " +
+                $"지휘관 병참 x{unit.CommanderMobilityModifier:F2} · " +
+                $"최종 x{unit.MobilityModifier:F2}";
             SetMapActionFeedback(
                 $"부대 정보 | {owner} | {unit.ArchetypeDisplayName} | " +
                 $"{unit.WeaponDisplayName} / {unit.ArmorDisplayName} | " +
@@ -1626,6 +2179,8 @@ namespace Game.Presentation
                 $"편성 전열 {unit.Formation.FrontlineSoldiers:N0} · " +
                 $"원거리 {unit.Formation.RangedSoldiers:N0} · " +
                 $"기병 {unit.Formation.CavalrySoldiers:N0} | " +
+                $"{mobility} | " +
+                $"{commander} | " +
                 $"피로 {unit.Fatigue:N0} | " +
                 $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
                 $"위치 {unit.Coordinate} | {movement}");
@@ -2322,7 +2877,7 @@ namespace Game.Presentation
             return card;
         }
 
-        private static void AddButton(
+        private static Button AddButton(
             VisualElement parent,
             string text,
             Action clicked)
@@ -2337,6 +2892,7 @@ namespace Game.Presentation
             button.style.backgroundColor = new Color(0.16f, 0.39f, 0.68f);
             button.style.color = Color.white;
             parent.Add(button);
+            return button;
         }
 
         private void BuildSinglePlayerMapActionPanel(VisualElement parent)
@@ -2561,7 +3117,7 @@ namespace Game.Presentation
         {
             _neutralNpcTopButton = new Button(OpenNeutralNpcView)
             {
-                text = "중립 NPC · 용병/장비 상인"
+                text = "중립 NPC · 용병/장비/지휘관"
             };
             _neutralNpcTopButton.focusable = false;
             _neutralNpcTopButton.style.position = Position.Absolute;
@@ -2579,8 +3135,8 @@ namespace Game.Presentation
 
             _neutralNpcView = CreateCard(
                 root,
-                "중립 용병·장비 상인",
-                "병종과 장비를 직접 구성해 모집하거나 선택 부대의 장비를 변경합니다.");
+                "중립 용병·장비·지휘관",
+                "병종과 장비를 구성하거나 능력·성향·충성도가 다른 지휘관을 선택 부대에 고용합니다.");
             _neutralNpcView.style.position = Position.Absolute;
             _neutralNpcView.style.top = 78;
             _neutralNpcView.style.left = 440;
@@ -2614,12 +3170,22 @@ namespace Game.Presentation
                 EquipSelectedPlayerUnit);
             _npcEquipButton.style.backgroundColor =
                 new Color(0.45f, 0.31f, 0.12f, 1f);
+            _npcCommanderButton = CreateMapActionButton(
+                "중립 지휘관 선택",
+                CyclePendingCommander);
+            _npcHireCommanderButton = CreateMapActionButton(
+                "선택 부대에 지휘관 고용",
+                HirePendingCommander);
+            _npcHireCommanderButton.style.backgroundColor =
+                new Color(0.34f, 0.20f, 0.50f, 1f);
 
             _neutralNpcView.Add(_npcArchetypeButton);
             _neutralNpcView.Add(_npcWeaponButton);
             _neutralNpcView.Add(_npcArmorButton);
             _neutralNpcView.Add(_npcRecruitButton);
             _neutralNpcView.Add(_npcEquipButton);
+            _neutralNpcView.Add(_npcCommanderButton);
+            _neutralNpcView.Add(_npcHireCommanderButton);
             _neutralNpcFeedback = AddStatus(_neutralNpcView);
             AddButton(_neutralNpcView, "닫기", CloseNeutralNpcView);
 
@@ -3017,6 +3583,8 @@ namespace Game.Presentation
                 _pendingWeaponType,
                 _pendingArmorClass);
             MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
+            MapCommanderState pendingCommander = GetPendingCommander();
+            string commanderCandidateList = BuildCommanderCandidateList();
             GridCoordinate recruitOrigin = GetRecruitmentOrigin();
             string recruitmentStatus = "징병소 정보 없음";
             if (gameplayMap != null &&
@@ -3040,7 +3608,16 @@ namespace Game.Presentation
                 $"모집비 {recruitCost:N0} · 장비 구입비 {equipmentCost:N0}\n" +
                 (selectedUnit == null
                     ? "장비 변경 대상: 선택된 부대 없음"
-                    : $"장비 변경 대상: {selectedUnit.ArchetypeDisplayName} {selectedUnit.Id}");
+                    : $"장비 변경 대상: {selectedUnit.ArchetypeDisplayName} {selectedUnit.Id}") +
+                (pendingCommander == null
+                    ? "\n중립 지휘관 후보 없음"
+                    : $"\n지휘관 후보: {pendingCommander.DisplayName} · " +
+                      $"통솔 {pendingCommander.Command} / 전술 {pendingCommander.Tactics} / " +
+                      $"병참 {pendingCommander.Logistics} · " +
+                      $"{MapCommanderPersonalityNames.GetKoreanName(pendingCommander.Personality)} · " +
+                      $"충성 {pendingCommander.Loyalty} · " +
+                      $"고용비 {pendingCommander.HiringCost:N0}") +
+                "\n" + commanderCandidateList;
 
             _npcArchetypeButton.text = $"병종: {archetypeName} · 클릭해 변경";
             _npcWeaponButton.text = $"무기: {weaponName} · 클릭해 변경";
@@ -3049,6 +3626,15 @@ namespace Game.Presentation
             _npcEquipButton.text = selectedUnit == null
                 ? "선택 부대 장비 변경"
                 : $"{selectedUnit.Id} 장비 변경 · {equipmentCost:N0}";
+            _npcCommanderButton.text = pendingCommander == null
+                ? "중립 지휘관 후보 없음"
+                : $"지휘관: {pendingCommander.DisplayName} · 클릭해 변경";
+            _npcHireCommanderButton.text = pendingCommander == null
+                ? "고용할 지휘관 없음"
+                : selectedUnit?.Commander != null
+                    ? $"{selectedUnit.Commander.DisplayName} 지휘 중"
+                    : $"{pendingCommander.DisplayName} 고용 · " +
+                      $"{pendingCommander.HiringCost:N0}";
 
             bool canCreate = gameplayMap != null &&
                 gameplayMap.CanCreatePlayerUnitAt(recruitOrigin, out _) &&
@@ -3061,8 +3647,20 @@ namespace Game.Presentation
                 !sameEquipment &&
                 singlePlayerSimulation != null &&
                 singlePlayerSimulation.CanAffordPlayerCash(equipmentCost);
+            bool commanderAssignmentAllowed = pendingCommander != null &&
+                gameplayMap != null &&
+                gameplayMap.CanHireCommanderForSelectedPlayerUnit(
+                    pendingCommander.Id,
+                    out _);
+            bool canHireCommander = commanderAssignmentAllowed &&
+                singlePlayerSimulation != null &&
+                singlePlayerSimulation.CanAffordPlayerCash(
+                    pendingCommander.HiringCost);
             _npcRecruitButton.SetEnabled(canCreate);
             _npcEquipButton.SetEnabled(canEquip);
+            _npcCommanderButton.SetEnabled(
+                gameplayMap != null && gameplayMap.Commanders.Count > 1);
+            _npcHireCommanderButton.SetEnabled(canHireCommander);
         }
 
         private void SetNeutralNpcFeedback(string message)
@@ -3346,6 +3944,7 @@ namespace Game.Presentation
         {
             card.style.width = 420;
             card.style.maxWidth = new Length(46, LengthUnit.Percent);
+            card.style.height = new Length(94, LengthUnit.Percent);
             card.style.paddingLeft = 20;
             card.style.paddingRight = 20;
             card.style.paddingTop = 18;
@@ -3354,6 +3953,29 @@ namespace Game.Presentation
             card.style.marginTop = 20;
             card.style.backgroundColor =
                 new Color(0.07f, 0.095f, 0.14f, 0.92f);
+        }
+
+        private static void MakeCardVerticallyScrollable(
+            VisualElement card,
+            string scrollName)
+        {
+            var children = new List<VisualElement>(card.childCount);
+            for (int i = 0; i < card.childCount; i++)
+                children.Add(card[i]);
+
+            var scroll = new ScrollView(ScrollViewMode.Vertical)
+            {
+                name = scrollName,
+                verticalScrollerVisibility = ScrollerVisibility.Auto
+            };
+            scroll.style.flexGrow = 1;
+            scroll.style.minHeight = 0;
+            for (int i = 0; i < children.Count; i++)
+            {
+                children[i].RemoveFromHierarchy();
+                scroll.Add(children[i]);
+            }
+            card.Add(scroll);
         }
 
         private void RegisterMapInputGuard(VisualElement element)
@@ -3447,6 +4069,7 @@ namespace Game.Presentation
             if (multiplayerSession != null && _multiplayerEventsBound)
             {
                 multiplayerSession.StateChanged -= HandleMultiplayerStateChanged;
+                multiplayerSession.RoomChanged -= HandleMultiplayerRoomChanged;
                 multiplayerSession.MatchmakingChanged -=
                     HandleMultiplayerMatchmakingChanged;
                 multiplayerSession.ErrorRaised -= HandleMultiplayerError;

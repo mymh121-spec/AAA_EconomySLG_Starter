@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using Game.Application;
 using Game.Application.AI;
@@ -647,6 +648,10 @@ namespace Game.Tests
             Assert.That(unit.Formation.TotalSoldiers, Is.EqualTo(unit.Soldiers));
             Assert.That(unit.FormationAttackModifier, Is.EqualTo(1m));
             Assert.That(unit.FormationDefenseModifier, Is.EqualTo(1m));
+            Assert.That(unit.WeightedBranchMobilityModifier,
+                Is.EqualTo(1.07750m));
+            Assert.That(unit.ArmorMobilityModifier, Is.EqualTo(0.92m));
+            Assert.That(unit.MobilityModifier, Is.EqualTo(0.99130m));
 
             Assert.That(
                 service.TrySetUnitFormationPreset(
@@ -662,6 +667,16 @@ namespace Game.Tests
             Assert.That(unit.FormationDefenseModifier, Is.EqualTo(0.955m));
             Assert.That(unit.AttackPower, Is.EqualTo(103.50m));
             Assert.That(unit.DefensePower, Is.EqualTo(116.51m));
+            Assert.That(unit.MobilityModifier, Is.EqualTo(0.943m));
+
+            Assert.That(
+                service.TrySetUnitFormationPreset(
+                    "player",
+                    unit.Id,
+                    MapUnitFormationPreset.Cavalry,
+                    out _),
+                Is.True);
+            Assert.That(unit.MobilityModifier, Is.EqualTo(1.23786m));
 
             Assert.That(
                 service.TrySetUnitFormation(
@@ -674,7 +689,7 @@ namespace Game.Tests
                 Is.False);
             Assert.That(invalidReason, Does.Contain("총병력"));
             Assert.That(unit.Formation.Preset,
-                Is.EqualTo(MapUnitFormationPreset.Ranged));
+                Is.EqualTo(MapUnitFormationPreset.Cavalry));
 
             Assert.That(
                 service.TrySetUnitFormation(
@@ -696,6 +711,149 @@ namespace Game.Tests
                     out string ownershipReason),
                 Is.False);
             Assert.That(ownershipReason, Does.Contain("다른 세력"));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_HiresCommanderAndAppliesLoyaltyEffects()
+        {
+            var terrain = new GridTerrainKind[4 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                4,
+                2,
+                36,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(fixedStepsPerMove: 1000));
+
+            Assert.That(service.Commanders.Count, Is.EqualTo(4));
+            Assert.That(
+                service.Commanders.Select(candidate => candidate.Personality),
+                Is.EquivalentTo(new[]
+                {
+                    MapCommanderPersonality.Aggressive,
+                    MapCommanderPersonality.Cautious,
+                    MapCommanderPersonality.Opportunistic,
+                    MapCommanderPersonality.Logistician
+                }));
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            decimal attackWithoutCommander = unit.AttackPower;
+            decimal defenseWithoutCommander = unit.DefensePower;
+            decimal mobilityWithoutCommander = unit.MobilityModifier;
+            int movementStepsWithoutCommander =
+                service.GetRequiredMovementStepsPerTile(unit);
+            MapCommanderState commander = service.Commanders[0];
+
+            Assert.That(commander.IsAvailable, Is.True);
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    commander.Id,
+                    unit.Id,
+                    out _),
+                Is.True);
+            Assert.That(unit.Commander, Is.SameAs(commander));
+            Assert.That(commander.EmployerFactionId, Is.EqualTo("player"));
+            Assert.That(commander.AssignedUnitId, Is.EqualTo(unit.Id));
+            Assert.That(commander.IsAvailable, Is.False);
+            Assert.That(unit.AttackPower, Is.GreaterThan(attackWithoutCommander));
+            Assert.That(unit.DefensePower, Is.GreaterThan(defenseWithoutCommander));
+            Assert.That(unit.MobilityModifier,
+                Is.LessThan(mobilityWithoutCommander));
+            Assert.That(
+                service.GetRequiredMovementStepsPerTile(unit),
+                Is.GreaterThan(movementStepsWithoutCommander));
+            Assert.That(unit.CommanderAttackModifier,
+                Is.EqualTo(1.088032m));
+            Assert.That(unit.CommanderDefenseModifier,
+                Is.EqualTo(1.017808m));
+
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    service.Commanders[1].Id,
+                    unit.Id,
+                    out string occupiedReason),
+                Is.False);
+            Assert.That(occupiedReason, Does.Contain("이미"));
+
+            var lowLoyalty = new MapCommanderState(
+                "low_loyalty",
+                "낮은 충성",
+                80,
+                80,
+                80,
+                MapCommanderPersonality.Opportunistic,
+                10,
+                1m);
+            var highLoyalty = new MapCommanderState(
+                "high_loyalty",
+                "높은 충성",
+                80,
+                80,
+                80,
+                MapCommanderPersonality.Opportunistic,
+                90,
+                1m);
+            Assert.That(highLoyalty.AttackModifier,
+                Is.GreaterThan(lowLoyalty.AttackModifier));
+            Assert.That(highLoyalty.MobilityModifier,
+                Is.GreaterThan(lowLoyalty.MobilityModifier));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_HiresCommanderOnlyAtFriendlyCastle()
+        {
+            var terrain = new GridTerrainKind[3 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                3,
+                2,
+                361,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(fixedStepsPerMove: 1));
+
+            Assert.That(
+                service.TryCreateUnit("player", out MapUnitState unit, out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    unit.Id,
+                    new GridCoordinate(1, 0),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(
+                service.GetRequiredMovementStepsPerTile(unit));
+            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(1, 0)));
+
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    service.Commanders[0].Id,
+                    unit.Id,
+                    out string reason),
+                Is.False);
+            Assert.That(reason, Does.Contain("아군 성"));
+            Assert.That(service.Commanders[0].IsAvailable, Is.True);
+            Assert.That(unit.Commander, Is.Null);
         }
 
         [Test]
@@ -1207,9 +1365,32 @@ namespace Game.Tests
                 enemyCapital.MaxWallDurability,
                 Is.EqualTo(MapCastleRules.CapitalMaxWallDurability));
 
+            MapCastleControlState playerCapital = service.FindCapital("player");
+            int soldiers = 10000;
+            playerCapital.StoreWeaponStock(
+                UnitWeaponType.Sword,
+                EquipmentQuality.Standard,
+                soldiers - playerCapital.GetWeaponStock(UnitWeaponType.Sword));
+            playerCapital.StoreArmorStock(
+                ArmorClass.Light,
+                EquipmentQuality.Standard,
+                soldiers - playerCapital.GetArmorStock(ArmorClass.Light));
+            Assert.That(
+                playerCapital.GetWeaponStock(UnitWeaponType.Sword),
+                Is.EqualTo(soldiers));
+            Assert.That(
+                playerCapital.GetArmorStock(ArmorClass.Light),
+                Is.EqualTo(soldiers));
+
             Assert.That(
                 service.TryCreateUnit("player", out MapUnitState attacker, out _),
                 Is.True);
+            Assert.That(
+                playerCapital.GetWeaponStock(UnitWeaponType.Sword),
+                Is.Zero);
+            Assert.That(
+                playerCapital.GetArmorStock(ArmorClass.Light),
+                Is.Zero);
             Assert.That(
                 service.TryIssueCastleOccupation(
                     "player",
@@ -2016,7 +2197,7 @@ namespace Game.Tests
             Assert.That(unit.ArmorClass, Is.EqualTo(ArmorClass.Heavy));
             Assert.That(unit.AttackModifier, Is.EqualTo(1.24m));
             Assert.That(unit.DefenseModifier, Is.EqualTo(1.58m));
-            Assert.That(unit.MobilityModifier, Is.EqualTo(1.1880m));
+            Assert.That(unit.MobilityModifier, Is.EqualTo(0.968760m));
 
             Assert.That(
                 service.TryChangeEquipment(

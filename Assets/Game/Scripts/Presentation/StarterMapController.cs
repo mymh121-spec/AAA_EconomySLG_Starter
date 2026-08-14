@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Game.Application.World;
 using Game.Domain.Military;
 using Game.Domain.World;
@@ -170,6 +171,9 @@ namespace Game.Presentation
             new Dictionary<string, List<Transform>>(StringComparer.Ordinal);
         private readonly Dictionary<string, Vector3> _unitVisualPositions =
             new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string>
+            _authoritativeServerUnitIdByLocalId =
+                new Dictionary<string, string>(StringComparer.Ordinal);
 
         private Transform _generatedRoot;
         private Transform _gameplayMarkerRoot;
@@ -194,9 +198,18 @@ namespace Game.Presentation
         public MapCellSelection? CurrentSelection { get; private set; }
         public RealtimeMapGameplayService GameplayService => _gameplayService;
         public string SelectedPlayerUnitId => _selectedPlayerUnitId;
+        public string SelectedAuthoritativeServerUnitId =>
+            _authoritativeServerUnitIdByLocalId.TryGetValue(
+                _selectedPlayerUnitId,
+                out string serverUnitId)
+                ? serverUnitId
+                : string.Empty;
+        public bool IsAuthoritativeMap { get; private set; }
         public bool PointerSelectionBlocked { get; set; }
         public MapUnitState SelectedPlayerUnit =>
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
+        public IReadOnlyList<MapCommanderState> Commanders =>
+            _gameplayService?.Commanders ?? Array.Empty<MapCommanderState>();
         public MapMovementPreview? CurrentMovementPreview { get; private set; }
         public event Action<MapCellSelection> CellSelected;
         public event Action<MapCellSelection, bool>
@@ -406,6 +419,40 @@ namespace Game.Presentation
                 _gameplayService.PlayerFactionId,
                 _selectedPlayerUnitId,
                 preset,
+                out reason);
+        }
+
+        public bool TryHireCommanderForSelectedPlayerUnit(
+            string commanderId,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 지휘관을 배속할 플레이어 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.TryHireCommander(
+                _gameplayService.PlayerFactionId,
+                commanderId,
+                _selectedPlayerUnitId,
+                out reason);
+        }
+
+        public bool CanHireCommanderForSelectedPlayerUnit(
+            string commanderId,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 지휘관을 배속할 플레이어 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanHireCommander(
+                _gameplayService.PlayerFactionId,
+                commanderId,
+                _selectedPlayerUnitId,
                 out reason);
         }
 
@@ -851,6 +898,7 @@ namespace Game.Presentation
 
         private void GenerateNewMap()
         {
+            IsAuthoritativeMap = false;
             int width = Mathf.Clamp(mapWidth, 40, 160);
             int height = Mathf.Clamp(mapHeight, 24, 100);
             int startX = PositiveModulo(playerStartX, width);
@@ -887,8 +935,263 @@ namespace Game.Presentation
             BuildOpponentStarts(CurrentLayout.OpponentStarts);
             BuildNeutralCastles(CurrentLayout.NeutralCastles);
             BuildMines(CurrentLayout);
+            CurrentSelection = DescribeCell(
+                CurrentLayout,
+                CurrentLayout.PlayerStart);
             RefreshGameplayMarkers();
             FocusCameraOn(CurrentLayout.PlayerStart);
+        }
+
+        public bool ApplyAuthoritativeSnapshot(
+            PvpMapWorldStateDto snapshot,
+            string ownCompanyId,
+            out string reason)
+        {
+            if (snapshot == null ||
+                snapshot.width < 2 ||
+                snapshot.height < 2 ||
+                snapshot.terrain == null ||
+                snapshot.terrain.Length != snapshot.width * snapshot.height ||
+                snapshot.units == null ||
+                snapshot.mines == null ||
+                snapshot.castles == null ||
+                string.IsNullOrWhiteSpace(ownCompanyId))
+            {
+                reason = "서버 지도 스냅샷이 올바르지 않습니다.";
+                return false;
+            }
+
+            PvpMapCastleStateDto ownCapital = null;
+            var opponentCapitals = new List<PvpMapCastleStateDto>();
+            var neutralCastles = new List<GridCoordinate>();
+            for (int i = 0; i < snapshot.castles.Length; i++)
+            {
+                PvpMapCastleStateDto castle = snapshot.castles[i];
+                if (castle.isCapital)
+                {
+                    if (string.Equals(
+                            castle.originalOwnerCompanyId,
+                            ownCompanyId,
+                            StringComparison.Ordinal))
+                    {
+                        ownCapital = castle;
+                    }
+                    else
+                    {
+                        opponentCapitals.Add(castle);
+                    }
+                }
+                else
+                {
+                    neutralCastles.Add(new GridCoordinate(
+                        castle.x,
+                        castle.y));
+                }
+            }
+            if (ownCapital == null)
+            {
+                reason = "서버 지도에서 내 수도를 찾을 수 없습니다.";
+                return false;
+            }
+
+            opponentCapitals.Sort((left, right) =>
+                string.Compare(
+                    left.originalOwnerCompanyId,
+                    right.originalOwnerCompanyId,
+                    StringComparison.Ordinal));
+            var opponentStarts = new List<GridCoordinate>(
+                opponentCapitals.Count);
+            var opponentFactionIds = new List<string>(
+                opponentCapitals.Count);
+            for (int i = 0; i < opponentCapitals.Count; i++)
+            {
+                opponentStarts.Add(new GridCoordinate(
+                    opponentCapitals[i].x,
+                    opponentCapitals[i].y));
+                opponentFactionIds.Add(
+                    opponentCapitals[i].originalOwnerCompanyId);
+            }
+
+            var terrain = new GridTerrainKind[snapshot.terrain.Length];
+            for (int i = 0; i < terrain.Length; i++)
+            {
+                terrain[i] = Enum.IsDefined(
+                    typeof(GridTerrainKind),
+                    snapshot.terrain[i])
+                    ? (GridTerrainKind)snapshot.terrain[i]
+                    : GridTerrainKind.Plains;
+            }
+            var mines = new MinePlacement[snapshot.mines.Length];
+            for (int i = 0; i < snapshot.mines.Length; i++)
+            {
+                PvpMapMineStateDto mine = snapshot.mines[i];
+                if (!Enum.TryParse(
+                        mine.kind,
+                        true,
+                        out MineKind mineKind))
+                {
+                    mineKind = MineKind.Normal;
+                }
+                mines[i] = new MinePlacement(
+                    new GridCoordinate(mine.x, mine.y),
+                    mineKind);
+            }
+
+            RemoveGeneratedMap();
+            CurrentLayout = new GridMapLayout(
+                snapshot.width,
+                snapshot.height,
+                snapshot.seed,
+                new GridCoordinate(ownCapital.x, ownCapital.y),
+                opponentStarts,
+                mines,
+                snapshot.wrapHorizontally,
+                terrain,
+                neutralCastles);
+            IsAuthoritativeMap = true;
+
+            var rootObject = new GameObject(
+                $"서버 권위 경제 월드_{snapshot.width}x{snapshot.height}");
+            rootObject.transform.SetParent(transform, false);
+            _generatedRoot = rootObject.transform;
+
+            DetachGameplayService();
+            _gameplayService = new RealtimeMapGameplayService(
+                CurrentLayout,
+                ownCompanyId,
+                opponentFactionIds,
+                enableAi: false);
+            _gameplayService.RestoreAuthoritativeEconomicDay(
+                snapshot.currentEconomicDay);
+            BindGameplayServiceEvents();
+            _authoritativeServerUnitIdByLocalId.Clear();
+
+            PvpMapUnitStateDto[] orderedUnits = snapshot.units
+                .OrderBy(unit => unit.unitId, StringComparer.Ordinal)
+                .ToArray();
+            for (int i = 0; i < orderedUnits.Length; i++)
+            {
+                PvpMapUnitStateDto serverUnit = orderedUnits[i];
+                if (!Enum.TryParse(
+                        serverUnit.archetype,
+                        true,
+                        out UnitArchetype archetype))
+                {
+                    archetype = UnitArchetype.Swordsman;
+                }
+                if (!_gameplayService.TryCreateUnit(
+                        serverUnit.ownerCompanyId,
+                        archetype,
+                        out MapUnitState localUnit,
+                        out _))
+                {
+                    continue;
+                }
+
+                var path = new List<GridCoordinate>();
+                if (serverUnit.plannedPath != null &&
+                    serverUnit.plannedPath.Length > 1)
+                {
+                    path = new List<GridCoordinate>(
+                        serverUnit.plannedPath.Length - 1);
+                    for (int pathIndex = 1;
+                         pathIndex < serverUnit.plannedPath.Length;
+                         pathIndex++)
+                    {
+                        path.Add(new GridCoordinate(
+                            serverUnit.plannedPath[pathIndex].x,
+                            serverUnit.plannedPath[pathIndex].y));
+                    }
+                }
+                if (!_gameplayService.TryRestoreAuthoritativeUnitState(
+                        localUnit.Id,
+                        new GridCoordinate(serverUnit.x, serverUnit.y),
+                        path,
+                        serverUnit.movementProgress,
+                        serverUnit.soldiers,
+                        serverUnit.stamina,
+                        (decimal)serverUnit.morale,
+                        (decimal)serverUnit.fatigue,
+                        out reason))
+                {
+                    return false;
+                }
+                _authoritativeServerUnitIdByLocalId[localUnit.Id] =
+                    serverUnit.unitId;
+                if (string.IsNullOrEmpty(_selectedPlayerUnitId) &&
+                    string.Equals(
+                        serverUnit.ownerCompanyId,
+                        ownCompanyId,
+                        StringComparison.Ordinal))
+                {
+                    _selectedPlayerUnitId = localUnit.Id;
+                }
+            }
+
+            for (int i = 0; i < snapshot.mines.Length; i++)
+            {
+                PvpMapMineStateDto source = snapshot.mines[i];
+                if (!_gameplayService.TryRestoreAuthoritativeMineState(
+                        new GridCoordinate(source.x, source.y),
+                        source.ownerCompanyId,
+                        source.capturingCompanyId,
+                        source.captureProgress,
+                        out reason))
+                {
+                    return false;
+                }
+            }
+            for (int i = 0; i < snapshot.castles.Length; i++)
+            {
+                PvpMapCastleStateDto source = snapshot.castles[i];
+                Enum.TryParse(
+                    source.role,
+                    true,
+                    out MapCastleRole role);
+                Enum.TryParse(
+                    source.conflictKind,
+                    true,
+                    out MapCastleConflictKind conflictKind);
+                Enum.TryParse(
+                    source.siegeAction,
+                    true,
+                    out MapSiegeAction siegeAction);
+                Enum.TryParse(
+                    source.occupationPolicy,
+                    true,
+                    out MapOccupationPolicy occupationPolicy);
+                if (!_gameplayService.TryRestoreAuthoritativeCastleState(
+                        new GridCoordinate(source.x, source.y),
+                        source.ownerCompanyId,
+                        source.capturingCompanyId,
+                        source.captureProgress,
+                        role,
+                        conflictKind,
+                        siegeAction,
+                        occupationPolicy,
+                        source.isDestroyed,
+                        source.wallDurability,
+                        source.foodSupply,
+                        out reason))
+                {
+                    return false;
+                }
+            }
+
+            LoadMapIcons();
+            BuildFlatMapCopies(CurrentLayout);
+            BuildPlayerStart(CurrentLayout.PlayerStart);
+            BuildOpponentStarts(CurrentLayout.OpponentStarts);
+            BuildNeutralCastles(CurrentLayout.NeutralCastles);
+            BuildMines(CurrentLayout);
+            GridCoordinate focus = SelectedPlayerUnit?.Coordinate ??
+                CurrentLayout.PlayerStart;
+            CurrentSelection = DescribeCell(CurrentLayout, focus);
+            RefreshGameplayMarkers();
+            FocusCameraOn(focus);
+            EnsureCamera();
+            reason = string.Empty;
+            return true;
         }
 
         private static IReadOnlyList<GridCoordinate> CreateOpponentStarts(
@@ -933,15 +1236,7 @@ namespace Game.Presentation
                 layout,
                 "player",
                 aiFactionIds);
-            _gameplayService.StateChanged += HandleGameplayStateChanged;
-            _gameplayService.MineCaptured += HandleMineCaptured;
-            _gameplayService.MineSpawned += HandleMineSpawned;
-            _gameplayService.CastleCaptured += HandleCastleCaptured;
-            _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
-            _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
-            _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
-            _gameplayService.SupplyInterdictionResolved +=
-                HandleSupplyInterdictionResolved;
+            BindGameplayServiceEvents();
 
             if (_gameplayService.TryCreateUnit(
                 _gameplayService.PlayerFactionId,
@@ -955,6 +1250,22 @@ namespace Game.Presentation
             {
                 _selectedPlayerUnitId = string.Empty;
             }
+        }
+
+        private void BindGameplayServiceEvents()
+        {
+            if (_gameplayService == null)
+                return;
+
+            _gameplayService.StateChanged += HandleGameplayStateChanged;
+            _gameplayService.MineCaptured += HandleMineCaptured;
+            _gameplayService.MineSpawned += HandleMineSpawned;
+            _gameplayService.CastleCaptured += HandleCastleCaptured;
+            _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
+            _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
+            _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
+            _gameplayService.SupplyInterdictionResolved +=
+                HandleSupplyInterdictionResolved;
         }
 
         private void DetachGameplayService()
@@ -974,6 +1285,7 @@ namespace Game.Presentation
 
             _gameplayService = null;
             _selectedPlayerUnitId = string.Empty;
+            _authoritativeServerUnitIdByLocalId.Clear();
             ClearMovementPreviewState();
             _unitMarkerRoots.Clear();
             _unitVisualPositions.Clear();
@@ -1310,6 +1622,19 @@ namespace Game.Presentation
                           $" · 공격 {unit.AttackModifier:F2}" +
                           $" 방어 {unit.DefenseModifier:F2}" +
                           $" 기동 {unit.MobilityModifier:F2}";
+                if (unit.Commander != null)
+                {
+                    detail += $" · 지휘관 {unit.Commander.DisplayName}" +
+                              $" ({MapCommanderPersonalityNames.GetKoreanName(unit.Commander.Personality)}, " +
+                              $"통솔 {unit.Commander.Command}, " +
+                              $"전술 {unit.Commander.Tactics}, " +
+                              $"병참 {unit.Commander.Logistics}, " +
+                              $"충성 {unit.Commander.Loyalty})";
+                }
+                detail += $" · 이동 편성 x{unit.WeightedBranchMobilityModifier:F2}" +
+                          $" 갑옷 x{unit.ArmorMobilityModifier:F2}" +
+                          $" 병참 x{unit.CommanderMobilityModifier:F2}" +
+                          $" 최종 x{unit.MobilityModifier:F2}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
                 if (unit.SupplyMissionKind != MapSupplyMissionKind.None)

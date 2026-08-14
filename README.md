@@ -30,6 +30,13 @@ Unity C# starter architecture for an economic simulation + SLG game.
 3. Open the menu `게임 > 기본 경제 에셋 생성` if you want to regenerate the sample data.
 4. Reference `Assets/Game/Scripts/Application/SimulationEngine.cs` as the entry point for the simulation.
 
+## Windows build and run
+
+- Use Unity menu `게임 > Windows EXE 빌드` to create the standalone game.
+- When a `D:` drive is available, the default output is `D:\AAA_EconomySLG\Builds\Windows\AAA_EconomySLG.exe`.
+- Set `AAA_ECONOMY_SLG_BUILD_ROOT` before launching Unity to choose another build root.
+- Run `RUN_WINDOWS_EXE.cmd`; it checks the D: build first and falls back to the project-local `Builds` folder.
+
 ## Korean-first UI
 
 Internal IDs and C# identifiers remain in English for maintainability. Player-facing names are Korean by default:
@@ -67,6 +74,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - `IPvpTransport` and `IPvpMessageCodec` keep NGO, Mirror, Photon, WebSocket, and custom server adapters outside the game rules.
 - `PvpAuthoritativeGateway` provides server-authoritative routing, bounded idempotency caching, request-conflict detection, and reconnect snapshots.
 - Open Unity Test Runner and run `Game.Tests.EditMode` to verify market, inventory, production, AI, PvP, finance, game-mode, turn, and campaign rules.
+- Run `Game.Tests.PlayMode` to verify the real menu lifecycle, initial unit selection, map movement, 360-day campaign completion, and final-result UI.
 - See `PVP_PREPARATION_KO.md` for the authoritative-server protocol and remaining network work.
 - See `HIVE_CONNECTION_KO.md` for the connection-first HIVE adapter, installation, console setup, and current limitations.
 - See `UNITY_6_3_MIGRATION_KO.md` for the editor migration status and validation procedure.

@@ -1,11 +1,15 @@
-# 경제 SLG PvP 권위 서버 0.2.0
+# 경제 SLG PvP 권위 서버 0.3.0
 
 이 서버는 Unity 클라이언트가 보낸 행동을 그대로 믿지 않고, 서버가 명령 유효성 검사·행동력 소비·시장 거래·생산·채굴지 이벤트·승패 판정을 직접 처리하는 턴제 권위 서버다. SQL은 사용하지 않는다.
 
 ## 현재 지원 범위
 
 - 한 경기당 2~4명
+- 6자리 초대 코드 기반 다중 방 생성·참가·방장 시작
+- 방별 256비트 세션 토큰과 SHA-256 해시 저장
 - 시장 구매·판매 명령과 플레이어별 행동력 검증
+- 방별 80×48 결정론 지도와 부대 이동·광산 점령·성 점령·공성 명령
+- 지도 이동 경로·점령 진행·성벽/식량·수도 멸망을 포함한 재접속 월드
 - 모든 참가자가 준비하면 한 턴 정산
 - 미준비 플레이어 자동 준비 처리(기본 120초)
 - 요청 ID 기반 재전송 멱등성
@@ -15,71 +19,72 @@
 - 5턴마다 채굴지 생성, 경과 턴에 따른 채광률 감소와 최소 생산량
 - 서버 재시작 시 JSON 저널 재생으로 경기 복구
 
-현재 구현은 설정된 단일 경기 인스턴스다. 여러 방을 동시에 운영하는 로비·매치 레지스트리는 다음 단계다.
+방마다 독립된 권위 시뮬레이션과 저널을 사용한다. 시작 전에는 2명 이상이 필요하고, 시작 후 새 참가자는 차단된다.
 
 ## 저장 방식(SQL 없음)
 
 `PVP_DATA_DIR`에 다음 파일을 쓴다.
 
-- `<match-id>.journal.jsonl`: 명령, 준비, 턴 정산을 순서대로 즉시 추가하는 원장
-- `<match-id>.snapshot.json`: 운영 확인과 백업을 위한 최신 원자적 스냅샷
+- `rooms/<room-code>.room.json`: 방 메타데이터와 세션 토큰의 SHA-256 해시
+- `matches/<match-id>.journal.jsonl`: 명령, 준비, 턴 정산을 순서대로 즉시 추가하는 원장
+- `matches/<match-id>.snapshot.json`: 운영 확인과 백업을 위한 최신 원자적 스냅샷
 
 재시작 시 JSONL 원장을 처음부터 결정론적으로 재생하고, 저장된 턴·리비전·상태 해시가 재계산 결과와 같은지 검증한다. 원장은 매 기록마다 디스크에 플러시하므로 작은 규모의 2~4인 턴제 게임에는 충분하다. 대규모 동시 경기로 확장할 때는 SQL 대신 경기별 압축 스냅샷 + 분할 저널 또는 오브젝트 스토리지로 교체할 수 있도록 저장 계층이 분리되어 있다.
 
 ## 환경 변수
 
-필수 토큰은 절대 Unity 씬, ScriptableObject, Git 저장소에 넣지 않는다.
+발급된 세션 토큰은 절대 Unity 씬, ScriptableObject, Git 저장소에 넣지 않는다. 서버는 방 생성·참가 응답에서 평문 토큰을 한 번만 반환하고 저장 파일에는 해시만 남긴다.
 
 | 변수 | 설명 | 기본값 |
 |---|---|---|
-| `PVP_PLAYER1_TOKEN` | 1번 플레이어 Bearer 토큰 | 필수 |
-| `PVP_PLAYER2_TOKEN` | 2번 플레이어 Bearer 토큰 | 필수 |
-| `PVP_PLAYER3_TOKEN` | 3번 플레이어 토큰 | 없음 |
-| `PVP_PLAYER4_TOKEN` | 4번 플레이어 토큰 | 없음 |
-| `PVP_PLAYERS_FILE` | 2~4인 구성 JSON 파일 경로 | 없음 |
-| `PVP_MATCH_ID` | 경기 ID | `dev-match-001` |
 | `PVP_DATA_DIR` | JSON 저널/스냅샷 경로 | 앱 데이터 경로 |
+| `PVP_MAX_ROOMS` | 동시에 보관할 활성·대기 방 수 | `16` |
 | `PVP_TURN_TIMEOUT_SECONDS` | 턴 제한시간, 15~3600초 | `120` |
 | `PVP_URLS` | Kestrel 수신 주소 | `http://127.0.0.1:5100` |
 
-`PVP_PLAYERS_FILE`을 쓰면 토큰 환경 변수 대신 다음처럼 2~4명을 구성할 수 있다.
-
-```json
-[
-  { "playerId": "player-1", "companyId": "company-player-1", "displayName": "청람 산업", "token": "긴-임의-토큰" },
-  { "playerId": "player-2", "companyId": "company-player-2", "displayName": "백호 물류", "token": "긴-임의-토큰" }
-]
-```
-
 ## API
 
-모든 게임 API는 `Authorization: Bearer <token>`을 요구한다.
+방 생성과 참가를 제외한 API는 해당 방에서 발급된 `Authorization: Bearer <token>`을 요구한다.
 
-- `GET /health`: 버전, 경기 상태, 턴, 리비전 확인
-- `GET /api/v1/match`: 재접속용 공개 월드와 본인 비공개 상태 조회
-- `POST /api/v1/commands`: 시장 구매/판매 행동 제출
-- `POST /api/v1/ready`: 해당 턴 행동 확정
+- `GET /health`: 서버 버전과 상태 확인
+- `POST /api/v1/rooms`: 방 생성, 방장 세션 발급
+- `POST /api/v1/rooms/{roomCode}/join`: 초대 코드로 참가, 참가자 세션 발급
+- `GET /api/v1/rooms/{roomCode}`: 대기실·방 상태 조회
+- `POST /api/v1/rooms/{roomCode}/start`: 방장이 2~4인 경기 시작
+- `GET /api/v1/rooms/{roomCode}/match`: 재접속용 월드와 본인 상태 조회
+- `POST /api/v1/rooms/{roomCode}/commands`: 시장 또는 지도 행동 제출
+- `POST /api/v1/rooms/{roomCode}/ready`: 해당 턴 행동 확정
 
 명령과 준비 요청에는 `requestId`, `protocolVersion`, `matchId`, `expectedRevision`을 보낸다. 네트워크 오류 후 같은 요청을 재전송하면 서버는 중복 실행하지 않고 기존 결과를 돌려준다. 같은 `requestId`에 다른 내용을 넣으면 충돌로 거부한다.
+
+지도 명령은 `kind`에 `MoveUnit`, `OccupyResourceSite`, `OccupyCastle`, `StartSiege`, `CancelOrder` 중 하나를 사용한다. `targetId`에는 서버가 발급한 부대 ID를, 목표가 필요한 명령에는 `targetX`와 `targetY`를 보낸다. `StartSiege`의 `action`은 현재 `Assault`를 지원한다. 서버는 부대 소유권, 목표 좌표, 경로, 행동력을 다시 검증한다.
 
 ## 로컬 빌드
 
 ```powershell
-dotnet build .\Server\Game.Server\Game.Server.csproj -c Release
-dotnet publish .\Server\Game.Server\Game.Server.csproj -c Release -r linux-x64 --self-contained true
+D:\dotnet\dotnet.exe build .\Server\Game.Server\Game.Server.csproj -c Release
+D:\dotnet\dotnet.exe publish .\Server\Game.Server\Game.Server.csproj -c Release -r linux-x64 --self-contained true
 ```
+
+Windows에서는 저장소 루트의 `RUN_PVP_SERVER.cmd`를 실행하면 `D:\dotnet`과 `D:\AAA_EconomySLG\ServerData`를 우선 사용한다.
+
+실제 API 통합 스모크 테스트:
+
+```powershell
+.\Validation\PvpRoomApiSmoke.ps1
+D:\dotnet\dotnet.exe run --project .\Validation\PvpMapAuthoritySmoke\PvpMapAuthoritySmoke.csproj
+```
+
+테스트 서버 데이터와 로그는 `D:\AAA_EconomySLG\ServerTests` 아래의 실행별 격리 폴더에 저장된다.
 
 ## VPS 배포
 
-배포 산출물:
-
-- `game-server-0.2.0-linux-x64.tar.gz`
-- SHA-256: `c9817117cebc3e0e54ea8ec634ca7d6e45ee403e1355bba58c93d6341de62322`
+기존 0.2.0 배포 묶음은 단일 매치 API이므로 0.3.0 방 API 배포 전에 새 Linux 산출물을 만들어야 한다.
 
 서버에서 다음 위치로 업로드한 뒤 배포 스크립트를 실행한다.
 
 ```bash
-/home/economyslg/apps/economy-slg/incoming/game-server-0.2.0-linux-x64.tar.gz
+/home/economyslg/apps/economy-slg/incoming/game-server-0.3.0-linux-x64.tar.gz
 bash /home/economyslg/apps/economy-slg/deploy_user.sh
 ```
 
@@ -103,9 +108,11 @@ Unity 엔드포인트는 `http://127.0.0.1:5200`으로 둔다. 출시 환경에�
 
 ## Unity 연결
 
-`PvpOnlineSessionController`를 온라인 세션 전용 GameObject에 한 번만 붙인다. 엔드포인트만 직렬화하고, 로그인이나 개발 콘솔에서 얻은 토큰은 런타임에 `ConnectAsync(token)`으로 주입한다. 씬 전환 뒤에도 유지하려면 별도 부트스트랩 객체가 소유하게 하고 중복 생성을 막는다.
+기본 멀티플레이 화면에서 표시 이름과 2~4인 정원을 입력해 방을 만들거나 6자리 초대 코드로 참가한다. Unity는 생성·참가 응답의 세션 토큰을 `PlayerPrefs`나 파일에 저장하지 않고 현재 프로세스 메모리에만 유지한다. 방장은 참가자가 2명 이상일 때 경기를 시작할 수 있고, 참가자는 `방 상태 갱신`으로 시작된 경기에 진입한다.
 
-클라이언트가 표시하는 가격·재고·현금은 `GET /api/v1/match` 또는 명령/준비 응답의 `world`를 기준으로 갱신한다. 로컬 시뮬레이션 결과를 온라인 경기의 최종값으로 사용하면 안 된다.
+`PvpOnlineSessionController`는 온라인 세션 전용 GameObject에 한 번만 둔다. 개발용 직접 연결은 방 코드와 세션 토큰을 함께 받으며, 일반 플레이에서는 방 생성·참가 UI가 세션을 자동 구성한다.
+
+클라이언트가 표시하는 가격·재고·현금과 지도·부대·광산·성 상태는 방별 `GET /api/v1/rooms/{roomCode}/match` 또는 명령/준비 응답의 `world`를 기준으로 갱신한다. Unity 지도에서 아군 부대를 선택하고 목표 칸을 고른 뒤 이동/점령, 강습, 취소 버튼으로 서버 명령을 보낼 수 있다. 로컬 시뮬레이션 결과를 온라인 경기의 최종값으로 사용하면 안 된다.
 
 ## 운영 점검
 

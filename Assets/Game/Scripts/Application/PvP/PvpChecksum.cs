@@ -42,6 +42,9 @@ namespace Game.Application.PvP
                     Append(canonical, command.Payload.TargetId);
                     Append(canonical, command.Payload.Quantity);
                     Append(canonical, command.Payload.LimitPrice);
+                    Append(canonical, command.Payload.TargetX ?? int.MinValue);
+                    Append(canonical, command.Payload.TargetY ?? int.MinValue);
+                    Append(canonical, command.Payload.Action);
                 }
             }
 
@@ -84,6 +87,9 @@ namespace Game.Application.PvP
                 Append(canonical, command.Payload.TargetId);
                 Append(canonical, command.Payload.Quantity);
                 Append(canonical, command.Payload.LimitPrice);
+                Append(canonical, command.Payload.TargetX ?? int.MinValue);
+                Append(canonical, command.Payload.TargetY ?? int.MinValue);
+                Append(canonical, command.Payload.Action);
             }
 
             return ComputeSha256(canonical);

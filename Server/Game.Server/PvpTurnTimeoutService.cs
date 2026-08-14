@@ -2,14 +2,14 @@ namespace Game.Server;
 
 public sealed class PvpTurnTimeoutService : BackgroundService
 {
-    private readonly PvpMatchRuntime _runtime;
+    private readonly PvpRoomRegistry _registry;
     private readonly ILogger<PvpTurnTimeoutService> _logger;
 
     public PvpTurnTimeoutService(
-        PvpMatchRuntime runtime,
+        PvpRoomRegistry registry,
         ILogger<PvpTurnTimeoutService> logger)
     {
-        _runtime = runtime;
+        _registry = registry;
         _logger = logger;
     }
 
@@ -20,7 +20,10 @@ public sealed class PvpTurnTimeoutService : BackgroundService
         {
             try
             {
-                _runtime.ProcessTurnTimeout(DateTimeOffset.UtcNow);
+                IReadOnlyList<PvpMatchRuntime> runtimes =
+                    _registry.GetActiveRuntimes();
+                for (int i = 0; i < runtimes.Count; i++)
+                    runtimes[i].ProcessTurnTimeout(DateTimeOffset.UtcNow);
             }
             catch (Exception exception)
             {

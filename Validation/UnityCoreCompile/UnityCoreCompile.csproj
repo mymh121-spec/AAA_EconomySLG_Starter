@@ -5,6 +5,8 @@
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <DefineConstants>ENABLE_LEGACY_INPUT_MANAGER</DefineConstants>
+    <UnityEditorRoot Condition="'$(UnityEditorRoot)' == '' and Exists('D:\Unity\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll')">D:\Unity\Editor\6000.3.21f1</UnityEditorRoot>
+    <UnityEditorRoot Condition="'$(UnityEditorRoot)' == '' and Exists('C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll')">C:\Program Files\Unity\Hub\Editor\6000.3.21f1</UnityEditorRoot>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\Assets\Game\Scripts\Domain\**\*.cs"
@@ -21,17 +23,31 @@
              Link="Shared\Presentation\CampaignResultKoreanFormatter.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\StarterMapController.cs"
              Link="Shared\Presentation\StarterMapController.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\PvpHttpClient.cs"
+             Link="Shared\Presentation\PvpHttpClient.cs" />
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.PhysicsModule.dll</HintPath>
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.PhysicsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>C:\Program Files\Unity\Hub\Editor\6000.3.21f1\Editor\Data\Managed\UnityEngine\UnityEngine.InputLegacyModule.dll</HintPath>
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.UnityWebRequestModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.JSONSerializeModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <Target Name="ValidateUnityEditorPath" BeforeTargets="ResolveReferences"
+          Condition="!Exists('$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll')">
+    <Error Text="Unity 6000.3.21f1을 찾을 수 없습니다. UnityEditorRoot MSBuild 속성으로 설치 경로를 지정하세요." />
+  </Target>
 </Project>

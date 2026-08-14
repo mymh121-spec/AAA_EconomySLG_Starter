@@ -11,9 +11,13 @@ namespace Game.Presentation
     {
         private readonly string _endpoint;
         private readonly string _accessToken;
+        private readonly string _roomCode;
         private bool _disposed;
 
-        public PvpHttpClient(string endpoint, string accessToken)
+        public PvpHttpClient(
+            string endpoint,
+            string accessToken = null,
+            string roomCode = null)
         {
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri uri))
                 throw new ArgumentException("올바른 서버 주소가 필요합니다.", nameof(endpoint));
@@ -24,11 +28,72 @@ namespace Game.Presentation
                     "공개 서버는 HTTPS만 허용합니다. HTTP는 로컬 SSH 터널에서만 사용할 수 있습니다.",
                     nameof(endpoint));
             }
-            if (string.IsNullOrWhiteSpace(accessToken) || accessToken.Length < 32)
+            if (accessToken != null && accessToken.Length < 32)
                 throw new ArgumentException("32자 이상의 접속 토큰이 필요합니다.", nameof(accessToken));
+            if (!string.IsNullOrWhiteSpace(roomCode) && roomCode.Trim().Length != 6)
+                throw new ArgumentException("6자리 방 코드가 필요합니다.", nameof(roomCode));
 
             _endpoint = endpoint.TrimEnd('/');
-            _accessToken = accessToken;
+            _accessToken = accessToken ?? string.Empty;
+            _roomCode = roomCode?.Trim().ToUpperInvariant() ?? string.Empty;
+        }
+
+        public static async Task<PvpRoomSessionDto> CreateRoomAsync(
+            string endpoint,
+            string displayName,
+            int maxPlayers,
+            CancellationToken cancellationToken = default)
+        {
+            using var client = new PvpHttpClient(endpoint);
+            return await client.SendAsync<PvpRoomSessionDto>(
+                UnityWebRequest.kHttpVerbPOST,
+                "/api/v1/rooms",
+                JsonUtility.ToJson(new PvpCreateRoomDto
+                {
+                    displayName = displayName,
+                    maxPlayers = maxPlayers
+                }),
+                cancellationToken);
+        }
+
+        public static async Task<PvpRoomSessionDto> JoinRoomAsync(
+            string endpoint,
+            string roomCode,
+            string displayName,
+            CancellationToken cancellationToken = default)
+        {
+            string normalizedCode = roomCode?.Trim().ToUpperInvariant();
+            using var client = new PvpHttpClient(endpoint);
+            return await client.SendAsync<PvpRoomSessionDto>(
+                UnityWebRequest.kHttpVerbPOST,
+                $"/api/v1/rooms/{normalizedCode}/join",
+                JsonUtility.ToJson(new PvpJoinRoomDto
+                {
+                    displayName = displayName
+                }),
+                cancellationToken);
+        }
+
+        public Task<PvpRoomStateDto> GetRoomAsync(
+            CancellationToken cancellationToken = default)
+        {
+            EnsureRoomCode();
+            return SendAsync<PvpRoomStateDto>(
+                UnityWebRequest.kHttpVerbGET,
+                $"/api/v1/rooms/{_roomCode}",
+                null,
+                cancellationToken);
+        }
+
+        public Task<PvpRoomStateDto> StartRoomAsync(
+            CancellationToken cancellationToken = default)
+        {
+            EnsureRoomCode();
+            return SendAsync<PvpRoomStateDto>(
+                UnityWebRequest.kHttpVerbPOST,
+                $"/api/v1/rooms/{_roomCode}/start",
+                null,
+                cancellationToken);
         }
 
         public Task<PvpReconnectDto> GetMatchAsync(
@@ -36,7 +101,7 @@ namespace Game.Presentation
         {
             return SendAsync<PvpReconnectDto>(
                 UnityWebRequest.kHttpVerbGET,
-                "/api/v1/match",
+                MatchPath("match"),
                 null,
                 cancellationToken);
         }
@@ -50,7 +115,7 @@ namespace Game.Presentation
 
             return SendAsync<PvpCommandResponseDto>(
                 UnityWebRequest.kHttpVerbPOST,
-                "/api/v1/commands",
+                MatchPath("commands"),
                 JsonUtility.ToJson(command),
                 cancellationToken,
                 allowConflictResponse: true);
@@ -65,7 +130,7 @@ namespace Game.Presentation
 
             return SendAsync<PvpReadyResponseDto>(
                 UnityWebRequest.kHttpVerbPOST,
-                "/api/v1/ready",
+                MatchPath("ready"),
                 JsonUtility.ToJson(ready),
                 cancellationToken,
                 allowConflictResponse: true);
@@ -94,7 +159,8 @@ namespace Game.Presentation
                 request.SetRequestHeader("Content-Type", "application/json; charset=utf-8");
             }
 
-            request.SetRequestHeader("Authorization", "Bearer " + _accessToken);
+            if (!string.IsNullOrWhiteSpace(_accessToken))
+                request.SetRequestHeader("Authorization", "Bearer " + _accessToken);
             request.SetRequestHeader("Accept", "application/json");
             UnityWebRequestAsyncOperation operation = request.SendWebRequest();
 
@@ -128,6 +194,19 @@ namespace Game.Presentation
                 throw new PvpHttpException(request.responseCode, "서버 JSON 응답을 읽지 못했습니다.");
             return response;
         }
+
+        private string MatchPath(string operation)
+        {
+            return string.IsNullOrWhiteSpace(_roomCode)
+                ? $"/api/v1/{operation}"
+                : $"/api/v1/rooms/{_roomCode}/{operation}";
+        }
+
+        private void EnsureRoomCode()
+        {
+            if (string.IsNullOrWhiteSpace(_roomCode))
+                throw new InvalidOperationException("방 코드가 설정되지 않았습니다.");
+        }
     }
 
     public sealed class PvpHttpException : Exception
@@ -141,6 +220,52 @@ namespace Game.Presentation
         {
             StatusCode = statusCode;
         }
+    }
+
+    [Serializable]
+    public sealed class PvpCreateRoomDto
+    {
+        public string displayName;
+        public int maxPlayers;
+    }
+
+    [Serializable]
+    public sealed class PvpJoinRoomDto
+    {
+        public string displayName;
+    }
+
+    [Serializable]
+    public sealed class PvpRoomSessionDto
+    {
+        public string roomCode;
+        public string playerId;
+        public string companyId;
+        public string accessToken;
+        public bool isHost;
+        public PvpRoomStateDto room;
+    }
+
+    [Serializable]
+    public sealed class PvpRoomStateDto
+    {
+        public string roomCode;
+        public string matchId;
+        public string status;
+        public int maxPlayers;
+        public string createdAtUtc;
+        public string lastActivityUtc;
+        public PvpRoomPlayerDto[] players;
+    }
+
+    [Serializable]
+    public sealed class PvpRoomPlayerDto
+    {
+        public int slot;
+        public string playerId;
+        public string displayName;
+        public bool isHost;
+        public bool connected;
     }
 
     [Serializable]
@@ -160,6 +285,9 @@ namespace Game.Presentation
         public string targetId;
         public double quantity;
         public double limitPrice;
+        public int targetX;
+        public int targetY;
+        public string action;
     }
 
     [Serializable]
@@ -253,6 +381,7 @@ namespace Game.Presentation
         public PvpPublicCompanyStateDto[] companies;
         public PvpOwnCompanyStateDto ownCompany;
         public PvpResourceSiteStateDto[] resourceSites;
+        public PvpMapWorldStateDto map;
         public bool isFinished;
         public string winnerCompanyId;
     }
@@ -306,5 +435,85 @@ namespace Game.Presentation
         public double currentOutput;
         public double minimumOutput;
         public bool isActive;
+    }
+
+    [Serializable]
+    public sealed class PvpMapWorldStateDto
+    {
+        public int width;
+        public int height;
+        public int seed;
+        public bool wrapHorizontally;
+        public int fixedStepsPerTurn;
+        public int currentEconomicDay;
+        public int[] terrain;
+        public PvpMapUnitStateDto[] units;
+        public PvpMapMineStateDto[] mines;
+        public PvpMapCastleStateDto[] castles;
+    }
+
+    [Serializable]
+    public sealed class PvpMapCoordinateDto
+    {
+        public int x;
+        public int y;
+    }
+
+    [Serializable]
+    public sealed class PvpMapUnitStateDto
+    {
+        public string unitId;
+        public string ownerCompanyId;
+        public string archetype;
+        public int x;
+        public int y;
+        public int destinationX;
+        public int destinationY;
+        public int movementProgress;
+        public int movementStepsPerTile;
+        public int remainingTiles;
+        public int stamina;
+        public int maxStamina;
+        public int soldiers;
+        public double attackPower;
+        public double defensePower;
+        public double morale;
+        public double fatigue;
+        public PvpMapCoordinateDto[] plannedPath;
+    }
+
+    [Serializable]
+    public sealed class PvpMapMineStateDto
+    {
+        public int x;
+        public int y;
+        public string kind;
+        public string ownerCompanyId;
+        public string capturingCompanyId;
+        public int captureProgress;
+        public int captureRequired;
+    }
+
+    [Serializable]
+    public sealed class PvpMapCastleStateDto
+    {
+        public int x;
+        public int y;
+        public string ownerCompanyId;
+        public string originalOwnerCompanyId;
+        public string capturingCompanyId;
+        public bool isCapital;
+        public bool isDestroyed;
+        public string role;
+        public string conflictKind;
+        public string siegeAction;
+        public string occupationPolicy;
+        public int captureProgress;
+        public int captureRequired;
+        public int wallDurability;
+        public int maxWallDurability;
+        public int foodSupply;
+        public int maxFoodSupply;
+        public int garrisonUnitCount;
     }
 }

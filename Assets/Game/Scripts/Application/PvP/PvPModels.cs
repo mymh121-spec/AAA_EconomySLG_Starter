@@ -63,7 +63,12 @@ namespace Game.Application.PvP
         StartMission,
         BuildFacility,
         Attack,
-        Defend
+        Defend,
+        MoveUnit,
+        OccupyResourceSite,
+        OccupyCastle,
+        StartSiege,
+        CancelOrder
     }
 
     public enum PvpOperationCode
@@ -176,6 +181,9 @@ namespace Game.Application.PvP
         public string TargetId { get; }
         public decimal Quantity { get; }
         public decimal LimitPrice { get; }
+        public int? TargetX { get; }
+        public int? TargetY { get; }
+        public string Action { get; }
 
         public PvpCommandPayload(
             RegionId regionId,
@@ -183,7 +191,10 @@ namespace Game.Application.PvP
             CompanyId? targetCompanyId = null,
             string targetId = null,
             decimal quantity = 0m,
-            decimal limitPrice = 0m)
+            decimal limitPrice = 0m,
+            int? targetX = null,
+            int? targetY = null,
+            string action = null)
         {
             RegionId = regionId;
             ResourceId = resourceId;
@@ -191,6 +202,9 @@ namespace Game.Application.PvP
             TargetId = targetId ?? string.Empty;
             Quantity = quantity;
             LimitPrice = limitPrice;
+            TargetX = targetX;
+            TargetY = targetY;
+            Action = action ?? string.Empty;
         }
 
         public static PvpCommandPayload MarketOrder(
@@ -262,11 +276,17 @@ namespace Game.Application.PvP
                 case PvpCommandKind.StartResearch:
                     return 1;
                 case PvpCommandKind.StartMission:
+                case PvpCommandKind.OccupyResourceSite:
+                case PvpCommandKind.OccupyCastle:
                     return 2;
                 case PvpCommandKind.BuildFacility:
                 case PvpCommandKind.Attack:
                 case PvpCommandKind.Defend:
+                case PvpCommandKind.StartSiege:
                     return 3;
+                case PvpCommandKind.MoveUnit:
+                case PvpCommandKind.CancelOrder:
+                    return 1;
                 default:
                     return int.MaxValue;
             }
@@ -291,6 +311,21 @@ namespace Game.Application.PvP
 
                 case PvpCommandKind.Attack:
                     return command.Payload.TargetCompanyId.HasValue
+                        ? PvpOperationCode.Accepted
+                        : PvpOperationCode.InvalidPayload;
+
+                case PvpCommandKind.MoveUnit:
+                case PvpCommandKind.OccupyResourceSite:
+                case PvpCommandKind.OccupyCastle:
+                case PvpCommandKind.StartSiege:
+                    return !string.IsNullOrWhiteSpace(command.Payload.TargetId) &&
+                        command.Payload.TargetX.HasValue &&
+                        command.Payload.TargetY.HasValue
+                        ? PvpOperationCode.Accepted
+                        : PvpOperationCode.InvalidPayload;
+
+                case PvpCommandKind.CancelOrder:
+                    return !string.IsNullOrWhiteSpace(command.Payload.TargetId)
                         ? PvpOperationCode.Accepted
                         : PvpOperationCode.InvalidPayload;
 

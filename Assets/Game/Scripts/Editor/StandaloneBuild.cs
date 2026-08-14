@@ -17,16 +17,18 @@ namespace Game.Editor
     {
         private const string SceneFolder = "Assets/Game/Scenes";
         private const string ScenePath = SceneFolder + "/GameStart.unity";
-        private const string OutputPath = "Builds/Windows/AAA_EconomySLG.exe";
+        private const string OutputRelativePath =
+            "Builds/Windows/AAA_EconomySLG.exe";
+        private const string PreferredBuildRoot = @"D:\AAA_EconomySLG";
+        private const string BuildRootEnvironmentVariable =
+            "AAA_ECONOMY_SLG_BUILD_ROOT";
 
         [MenuItem("게임/Windows EXE 빌드")]
         public static void BuildWindowsStandalone()
         {
             EnsureBootScene();
 
-            string absoluteOutputPath = Path.GetFullPath(
-                Path.Combine(Directory.GetParent(Application.dataPath).FullName,
-                    OutputPath));
+            string absoluteOutputPath = ResolveOutputPath();
             Directory.CreateDirectory(Path.GetDirectoryName(absoluteOutputPath));
 
             var options = new BuildPlayerOptions
@@ -48,6 +50,22 @@ namespace Game.Editor
             Debug.Log(
                 $"Windows EXE 빌드 완료: {summary.outputPath} " +
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
+        }
+
+        private static string ResolveOutputPath()
+        {
+            string buildRoot = Environment.GetEnvironmentVariable(
+                BuildRootEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(buildRoot))
+            {
+                buildRoot = Directory.Exists(@"D:\")
+                    ? PreferredBuildRoot
+                    : Directory.GetParent(Application.dataPath).FullName;
+            }
+
+            return Path.GetFullPath(Path.Combine(
+                buildRoot,
+                OutputRelativePath));
         }
 
         private static void EnsureBootScene()

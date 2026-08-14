@@ -471,6 +471,36 @@ namespace Game.Application.World
             return true;
         }
 
+        internal void RestoreAuthoritativeState(
+            string ownerFactionId,
+            string capturingFactionId,
+            int captureProgress,
+            MapCastleRole role,
+            MapCastleConflictKind conflictKind,
+            MapSiegeAction siegeAction,
+            MapOccupationPolicy occupationPolicy,
+            bool isDestroyed,
+            int wallDurability,
+            int foodSupply)
+        {
+            Role = role;
+            OwnerFactionId = isDestroyed
+                ? string.Empty
+                : ownerFactionId ?? string.Empty;
+            CapturingFactionId = capturingFactionId ?? string.Empty;
+            CaptureProgress = Math.Max(0, captureProgress);
+            ConflictKind = conflictKind;
+            SiegeAction = siegeAction;
+            OccupationPolicy = occupationPolicy;
+            IsDestroyed = isDestroyed;
+            WallDurability = isDestroyed
+                ? 0
+                : Math.Clamp(wallDurability, 0, MaxWallDurability);
+            FoodSupply = isDestroyed
+                ? 0
+                : Math.Clamp(foodSupply, 0, MaxFoodSupply);
+        }
+
         internal bool SetRole(MapCastleRole role)
         {
             if (Role == role)
