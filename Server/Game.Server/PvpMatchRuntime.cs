@@ -16,7 +16,7 @@ public sealed class PvpMatchRuntime
         string RequestHash,
         ReadyResponse Response);
 
-    public const string ServerVersion = "0.3.0";
+    public const string ServerVersion = "0.4.0";
 
     private readonly object _gate = new();
     private readonly PvpMatchId _matchId;
@@ -33,6 +33,10 @@ public sealed class PvpMatchRuntime
         _readyCache = new();
     private bool _isReplaying;
     private DateTimeOffset _turnDeadlineUtc;
+    private readonly string _streamId = Guid.NewGuid().ToString("N");
+    private long _stateVersion = 1;
+    private TaskCompletionSource<long> _stateChanged =
+        CreateStateChangedSource();
 
     private PvpMatchRuntime(
         string matchId,
@@ -148,7 +152,13 @@ public sealed class PvpMatchRuntime
     {
         lock (_gate)
         {
-            return ApplySubmit(player, request, persist: true);
+            CommandResponse response = ApplySubmit(
+                player,
+                request,
+                persist: true);
+            if (response.Accepted && !response.IsReplay)
+                NotifyStateChangedLocked();
+            return response;
         }
     }
 
@@ -158,7 +168,13 @@ public sealed class PvpMatchRuntime
     {
         lock (_gate)
         {
-            return ApplyReady(player, request, persist: true);
+            ReadyResponse response = ApplyReady(
+                player,
+                request,
+                persist: true);
+            if (response.Accepted && !response.IsReplay)
+                NotifyStateChangedLocked();
+            return response;
         }
     }
 
@@ -166,37 +182,44 @@ public sealed class PvpMatchRuntime
     {
         lock (_gate)
         {
-            PvpMatchSnapshot snapshot = _coordinator.CreateSnapshot();
-            IReadOnlyList<PvpCommandEnvelope> pending =
-                _coordinator.GetPendingCommands(new PvpPlayerId(player.PlayerId));
+            return CreateReconnectStateLocked(player);
+        }
+    }
 
-            return new ReconnectResponse(
-                snapshot.MatchId.Value,
-                player.PlayerId,
-                snapshot.Turn.Value,
-                snapshot.Phase.ToString(),
-                snapshot.Revision,
-                snapshot.LastAuthoritativeStateHash,
-                _turnDeadlineUtc.ToString("O"),
-                snapshot.Players.Select(item => new PlayerStateResponse(
-                    item.SlotIndex,
-                    item.PlayerId.Value,
-                    item.CompanyId.Value,
-                    item.IsConnected,
-                    item.IsReady,
-                    item.IsEliminated,
-                    item.SpentActionPoints,
-                    item.ExpectedSequence)).ToArray(),
-                pending.Select(item => new PendingCommandResponse(
-                    item.CommandId,
-                    item.Turn.Value,
-                    item.Sequence,
-                    item.Kind.ToString(),
-                    item.Payload.RegionId.Value,
-                    item.Payload.ResourceId?.Value,
-                    item.Payload.Quantity,
-                    item.Payload.LimitPrice)).ToArray(),
-                _simulation.CreateWorldView(new CompanyId(player.CompanyId)));
+    public PvpStreamMessageResponse GetStreamState(
+        AuthenticatedPlayer player)
+    {
+        lock (_gate)
+        {
+            return new PvpStreamMessageResponse(
+                "state",
+                _streamId,
+                _stateVersion,
+                DateTimeOffset.UtcNow,
+                CreateReconnectStateLocked(player));
+        }
+    }
+
+    public async Task WaitForStateChangeAsync(
+        long observedVersion,
+        TimeSpan heartbeatInterval,
+        CancellationToken cancellationToken)
+    {
+        Task signal;
+        lock (_gate)
+        {
+            if (_stateVersion != observedVersion)
+                return;
+            signal = _stateChanged.Task;
+        }
+
+        try
+        {
+            await signal.WaitAsync(heartbeatInterval, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            // Heartbeats resend the current state so dead peers are detected.
         }
     }
 
@@ -210,6 +233,7 @@ public sealed class PvpMatchRuntime
                 return;
             }
 
+            bool changed = false;
             PvpMatchSnapshot snapshot = _coordinator.CreateSnapshot();
             for (int i = 0; i < snapshot.Players.Count; i++)
             {
@@ -226,7 +250,11 @@ public sealed class PvpMatchRuntime
                     snapshot.Turn.Value,
                     snapshot.Revision,
                     playerState.ExpectedSequence);
-                ApplyReady(player, timeoutReady, persist: true);
+                ReadyResponse response = ApplyReady(
+                    player,
+                    timeoutReady,
+                    persist: true);
+                changed |= response.Accepted;
 
                 if (_coordinator.Phase != PvpMatchPhase.Planning)
                     break;
@@ -234,8 +262,59 @@ public sealed class PvpMatchRuntime
 
             if (_coordinator.Phase == PvpMatchPhase.Planning)
                 _turnDeadlineUtc = utcNow + _turnTimeout;
+            if (changed)
+                NotifyStateChangedLocked();
         }
     }
+
+    private ReconnectResponse CreateReconnectStateLocked(
+        AuthenticatedPlayer player)
+    {
+        PvpMatchSnapshot snapshot = _coordinator.CreateSnapshot();
+        IReadOnlyList<PvpCommandEnvelope> pending =
+            _coordinator.GetPendingCommands(new PvpPlayerId(player.PlayerId));
+
+        return new ReconnectResponse(
+            snapshot.MatchId.Value,
+            player.PlayerId,
+            snapshot.Turn.Value,
+            snapshot.Phase.ToString(),
+            snapshot.Revision,
+            snapshot.LastAuthoritativeStateHash,
+            _streamId,
+            _stateVersion,
+            _turnDeadlineUtc.ToString("O"),
+            snapshot.Players.Select(item => new PlayerStateResponse(
+                item.SlotIndex,
+                item.PlayerId.Value,
+                item.CompanyId.Value,
+                item.IsConnected,
+                item.IsReady,
+                item.IsEliminated,
+                item.SpentActionPoints,
+                item.ExpectedSequence)).ToArray(),
+            pending.Select(item => new PendingCommandResponse(
+                item.CommandId,
+                item.Turn.Value,
+                item.Sequence,
+                item.Kind.ToString(),
+                item.Payload.RegionId.Value,
+                item.Payload.ResourceId?.Value,
+                item.Payload.Quantity,
+                item.Payload.LimitPrice)).ToArray(),
+            _simulation.CreateWorldView(new CompanyId(player.CompanyId)));
+    }
+
+    private void NotifyStateChangedLocked()
+    {
+        _stateVersion++;
+        TaskCompletionSource<long> completed = _stateChanged;
+        _stateChanged = CreateStateChangedSource();
+        completed.TrySetResult(_stateVersion);
+    }
+
+    private static TaskCompletionSource<long> CreateStateChangedSource() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private CommandResponse ApplySubmit(
         AuthenticatedPlayer player,

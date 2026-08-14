@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Net.WebSockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Game.Application.PvP;
@@ -6,10 +10,25 @@ using UnityEngine;
 
 namespace Game.Presentation
 {
+    public enum PvpRealtimeConnectionState
+    {
+        Stopped,
+        Connecting,
+        Connected,
+        Reconnecting
+    }
+
     public sealed class PvpOnlineSessionController : MonoBehaviour
     {
+        private sealed class RealtimeNotification
+        {
+            public PvpRealtimeConnectionState State;
+            public string Error;
+        }
+
         private const string HiveProviderTypeName =
             "Game.HiveIntegration.HiveSdkMatchmakingProvider, Assembly-CSharp";
+        private const int MaximumStreamMessageBytes = 2 * 1024 * 1024;
 
         [Header("PvP 서버")]
         [SerializeField] private string serverEndpoint =
@@ -24,6 +43,17 @@ namespace Game.Presentation
         private IPvpMatchmakingProvider _matchmakingProvider;
         private CancellationTokenSource _matchmakingLifetime;
         private int _activeHiveMatchId;
+        private readonly ConcurrentQueue<string> _streamMessages =
+            new ConcurrentQueue<string>();
+        private readonly ConcurrentQueue<RealtimeNotification>
+            _streamNotifications =
+                new ConcurrentQueue<RealtimeNotification>();
+        private CancellationTokenSource _streamLifetime;
+        private Task _streamTask;
+        private string _sessionAccessToken = string.Empty;
+        private string _sessionRoomCode = string.Empty;
+        private string _lastStreamId = string.Empty;
+        private long _lastStreamVersion = -1;
 
         public bool IsConnected { get; private set; }
         public bool IsRequestRunning { get; private set; }
@@ -33,6 +63,10 @@ namespace Game.Presentation
         public PvpRoomSessionDto CurrentRoomSession { get; private set; }
         public PvpRoomStateDto CurrentRoom { get; private set; }
         public PvpMatchmakingSnapshot CurrentMatchmaking { get; private set; }
+        public PvpRealtimeConnectionState RealtimeConnectionState
+            { get; private set; } = PvpRealtimeConnectionState.Stopped;
+        public string LastRealtimeError { get; private set; } = string.Empty;
+        public DateTimeOffset? LastRealtimeMessageUtc { get; private set; }
         public string ServerEndpoint => serverEndpoint;
         public string RoomCode => CurrentRoom?.roomCode ?? string.Empty;
         public bool IsRoomHost => CurrentRoomSession?.isHost == true;
@@ -42,7 +76,32 @@ namespace Game.Presentation
         public event Action<PvpReconnectDto> StateChanged;
         public event Action<PvpRoomStateDto> RoomChanged;
         public event Action<PvpMatchmakingSnapshot> MatchmakingChanged;
+        public event Action<PvpRealtimeConnectionState>
+            RealtimeConnectionChanged;
         public event Action<string> ErrorRaised;
+
+        private void Update()
+        {
+            RealtimeNotification latestNotification = null;
+            while (_streamNotifications.TryDequeue(
+                       out RealtimeNotification notification))
+            {
+                latestNotification = notification;
+            }
+            if (latestNotification != null)
+            {
+                RealtimeConnectionState = latestNotification.State;
+                LastRealtimeError = latestNotification.Error ?? string.Empty;
+                RealtimeConnectionChanged?.Invoke(
+                    RealtimeConnectionState);
+            }
+
+            string latestMessage = null;
+            while (_streamMessages.TryDequeue(out string message))
+                latestMessage = message;
+            if (!string.IsNullOrWhiteSpace(latestMessage))
+                ApplyRealtimeMessage(latestMessage);
+        }
 
         public bool ConfigureServerEndpoint(string endpoint)
         {
@@ -81,6 +140,9 @@ namespace Game.Presentation
             try
             {
                 _client = new PvpHttpClient(serverEndpoint, accessToken, roomCode);
+                _sessionAccessToken = accessToken;
+                _sessionRoomCode = roomCode?.Trim().ToUpperInvariant() ??
+                    string.Empty;
                 await RefreshAsync(_lifetime.Token);
                 IsConnected = true;
                 if (!string.IsNullOrWhiteSpace(roomCode))
@@ -94,6 +156,7 @@ namespace Game.Presentation
                     CurrentRoom = await _client.GetRoomAsync(_lifetime.Token);
                     RoomChanged?.Invoke(CurrentRoom);
                 }
+                StartRealtimeStream();
                 LastError = string.Empty;
                 return true;
             }
@@ -189,6 +252,7 @@ namespace Game.Presentation
                 {
                     await RefreshAsync(_lifetime.Token);
                     IsConnected = true;
+                    StartRealtimeStream();
                 }
                 LastError = string.Empty;
                 return true;
@@ -222,6 +286,7 @@ namespace Game.Presentation
 
                 await RefreshAsync(_lifetime.Token);
                 IsConnected = true;
+                StartRealtimeStream();
                 LastError = string.Empty;
                 return true;
             }
@@ -358,8 +423,12 @@ namespace Game.Presentation
                     "PvP 서버에 먼저 연결해야 합니다.");
             }
 
-            CurrentState = await _client.GetMatchAsync(cancellationToken);
-            StateChanged?.Invoke(CurrentState);
+            PvpReconnectDto state = await _client.GetMatchAsync(
+                cancellationToken);
+            TryApplyAuthoritativeState(
+                state,
+                state.streamId,
+                state.stateVersion);
         }
 
         public async Task<PvpMatchmakingSnapshot> FindHiveMatchAsync(
@@ -621,6 +690,8 @@ namespace Game.Presentation
             }
 
             string accessToken = session.accessToken;
+            _sessionAccessToken = accessToken;
+            _sessionRoomCode = session.roomCode.Trim().ToUpperInvariant();
             _client = new PvpHttpClient(serverEndpoint, accessToken, session.roomCode);
             session.accessToken = string.Empty;
             CurrentRoomSession = session;
@@ -671,6 +742,7 @@ namespace Game.Presentation
 
         private void DisposeClient()
         {
+            StopRealtimeStream();
             _lifetime?.Cancel();
             _lifetime?.Dispose();
             _lifetime = null;
@@ -680,6 +752,286 @@ namespace Game.Presentation
             CurrentState = null;
             CurrentRoomSession = null;
             CurrentRoom = null;
+            _sessionAccessToken = string.Empty;
+            _sessionRoomCode = string.Empty;
+            _lastStreamId = string.Empty;
+            _lastStreamVersion = -1;
+        }
+
+        private void StartRealtimeStream()
+        {
+            if (!IsConnected ||
+                _lifetime == null ||
+                string.IsNullOrWhiteSpace(_sessionAccessToken) ||
+                string.IsNullOrWhiteSpace(_sessionRoomCode))
+            {
+                return;
+            }
+
+            StopRealtimeStream();
+            LastRealtimeMessageUtc = null;
+            _streamLifetime = CancellationTokenSource.CreateLinkedTokenSource(
+                _lifetime.Token);
+            _streamTask = RunRealtimeStreamAsync(
+                CreateStreamUri(_sessionRoomCode),
+                _sessionAccessToken,
+                _streamLifetime.Token);
+        }
+
+        private void StopRealtimeStream()
+        {
+            CancellationTokenSource lifetime = _streamLifetime;
+            Task streamTask = _streamTask;
+            lifetime?.Cancel();
+            _streamLifetime = null;
+            _streamTask = null;
+            if (lifetime != null)
+            {
+                if (streamTask == null)
+                {
+                    lifetime.Dispose();
+                }
+                else
+                {
+                    _ = streamTask.ContinueWith(
+                        _ => lifetime.Dispose(),
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+            }
+            while (_streamMessages.TryDequeue(out _))
+            {
+            }
+            while (_streamNotifications.TryDequeue(out _))
+            {
+            }
+            RealtimeConnectionState = PvpRealtimeConnectionState.Stopped;
+            LastRealtimeError = string.Empty;
+            LastRealtimeMessageUtc = null;
+        }
+
+        private async Task RunRealtimeStreamAsync(
+            Uri streamUri,
+            string accessToken,
+            CancellationToken cancellationToken)
+        {
+            int reconnectAttempt = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                QueueRealtimeNotification(
+                    reconnectAttempt == 0
+                        ? PvpRealtimeConnectionState.Connecting
+                        : PvpRealtimeConnectionState.Reconnecting,
+                    string.Empty);
+                try
+                {
+                    using var socket = new ClientWebSocket();
+                    socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+                    socket.Options.SetRequestHeader(
+                        "Authorization",
+                        "Bearer " + accessToken);
+                    await socket.ConnectAsync(streamUri, cancellationToken)
+                        .ConfigureAwait(false);
+                    reconnectAttempt = 0;
+                    QueueRealtimeNotification(
+                        PvpRealtimeConnectionState.Connected,
+                        string.Empty);
+
+                    while (!cancellationToken.IsCancellationRequested &&
+                           socket.State == WebSocketState.Open)
+                    {
+                        string json = await ReceiveStreamMessageAsync(
+                                socket,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                        if (json == null)
+                        {
+                            throw new WebSocketException(
+                                "서버가 실시간 상태 스트림을 종료했습니다.");
+                        }
+                        _streamMessages.Enqueue(json);
+                    }
+                }
+                catch (OperationCanceledException) when (
+                    cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    reconnectAttempt++;
+                    QueueRealtimeNotification(
+                        PvpRealtimeConnectionState.Reconnecting,
+                        exception.Message);
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+
+                int delaySeconds = Math.Min(
+                    10,
+                    1 << Math.Min(3, Math.Max(0, reconnectAttempt - 1)));
+                try
+                {
+                    await Task.Delay(
+                            TimeSpan.FromSeconds(delaySeconds),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+        }
+
+        private static async Task<string> ReceiveStreamMessageAsync(
+            ClientWebSocket socket,
+            CancellationToken cancellationToken)
+        {
+            byte[] buffer = new byte[16 * 1024];
+            using var content = new MemoryStream();
+            while (true)
+            {
+                WebSocketReceiveResult result = await socket.ReceiveAsync(
+                        new ArraySegment<byte>(buffer),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    return null;
+                if (result.MessageType != WebSocketMessageType.Text)
+                {
+                    throw new InvalidDataException(
+                        "PvP 상태 스트림은 텍스트 JSON만 허용합니다.");
+                }
+
+                content.Write(buffer, 0, result.Count);
+                if (content.Length > MaximumStreamMessageBytes)
+                {
+                    throw new InvalidDataException(
+                        "PvP 상태 스트림 메시지가 허용 크기를 초과했습니다.");
+                }
+                if (result.EndOfMessage)
+                {
+                    return Encoding.UTF8.GetString(
+                        content.GetBuffer(),
+                        0,
+                        checked((int)content.Length));
+                }
+            }
+        }
+
+        private void ApplyRealtimeMessage(string json)
+        {
+            PvpStreamMessageDto message;
+            try
+            {
+                message = JsonUtility.FromJson<PvpStreamMessageDto>(json);
+            }
+            catch (Exception exception)
+            {
+                LastRealtimeError = exception.Message;
+                return;
+            }
+
+            if (message?.state == null ||
+                !string.Equals(message.type, "state", StringComparison.Ordinal) ||
+                (CurrentState != null &&
+                 !string.Equals(
+                     CurrentState.matchId,
+                     message.state.matchId,
+                     StringComparison.Ordinal)))
+            {
+                LastRealtimeError =
+                    "서버 실시간 상태 메시지가 올바르지 않습니다.";
+                return;
+            }
+
+            LastRealtimeError = string.Empty;
+            LastRealtimeMessageUtc = DateTimeOffset.UtcNow;
+            TryApplyAuthoritativeState(
+                message.state,
+                message.streamId,
+                message.version);
+        }
+
+        private bool TryApplyAuthoritativeState(
+            PvpReconnectDto state,
+            string streamId,
+            long stateVersion)
+        {
+            if (state == null)
+                return false;
+
+            string normalizedStreamId = streamId ?? string.Empty;
+            if (!string.IsNullOrEmpty(normalizedStreamId))
+            {
+                if (!string.Equals(
+                        _lastStreamId,
+                        normalizedStreamId,
+                        StringComparison.Ordinal))
+                {
+                    _lastStreamId = normalizedStreamId;
+                    _lastStreamVersion = -1;
+                }
+                if (stateVersion <= _lastStreamVersion)
+                    return false;
+
+                _lastStreamVersion = stateVersion;
+                state.streamId = normalizedStreamId;
+                state.stateVersion = stateVersion;
+            }
+            else if (CurrentState != null &&
+                     string.Equals(
+                         CurrentState.matchId,
+                         state.matchId,
+                         StringComparison.Ordinal) &&
+                     (state.turn < CurrentState.turn ||
+                      (state.turn == CurrentState.turn &&
+                       state.revision < CurrentState.revision)))
+            {
+                return false;
+            }
+
+            CurrentState = state;
+            StateChanged?.Invoke(CurrentState);
+            return true;
+        }
+
+        private void QueueRealtimeNotification(
+            PvpRealtimeConnectionState state,
+            string error)
+        {
+            _streamNotifications.Enqueue(new RealtimeNotification
+            {
+                State = state,
+                Error = error ?? string.Empty
+            });
+        }
+
+        private Uri CreateStreamUri(string roomCode)
+        {
+            var builder = new UriBuilder(serverEndpoint)
+            {
+                Scheme = serverEndpoint.StartsWith(
+                    "https://",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "wss"
+                    : "ws"
+            };
+            if ((builder.Scheme == "ws" && builder.Port == 80) ||
+                (builder.Scheme == "wss" && builder.Port == 443))
+            {
+                builder.Port = -1;
+            }
+            string prefix = builder.Path.TrimEnd('/');
+            builder.Path = prefix + "/api/v1/rooms/" +
+                roomCode + "/stream";
+            builder.Query = string.Empty;
+            builder.Fragment = string.Empty;
+            return builder.Uri;
         }
     }
 }

@@ -340,10 +340,22 @@ namespace Game.Presentation
         public string phase;
         public int revision;
         public string stateHash;
+        public string streamId;
+        public long stateVersion;
         public string turnDeadlineUtc;
         public PvpPlayerStateDto[] players;
         public PvpPendingCommandDto[] ownPendingCommands;
         public PvpWorldStateDto world;
+    }
+
+    [Serializable]
+    public sealed class PvpStreamMessageDto
+    {
+        public string type;
+        public string streamId;
+        public long version;
+        public string serverUtc;
+        public PvpReconnectDto state;
     }
 
     [Serializable]

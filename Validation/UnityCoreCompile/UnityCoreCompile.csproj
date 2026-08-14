@@ -25,6 +25,8 @@
              Link="Shared\Presentation\StarterMapController.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\PvpHttpClient.cs"
              Link="Shared\Presentation\PvpHttpClient.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\PvpOnlineSessionController.cs"
+             Link="Shared\Presentation\PvpOnlineSessionController.cs" />
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>

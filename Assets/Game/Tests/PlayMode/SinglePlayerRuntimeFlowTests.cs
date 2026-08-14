@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using System.Threading.Tasks;
 using Game.Application.Session;
 using Game.Application.World;
 using Game.Domain.Campaign;
@@ -16,6 +17,112 @@ namespace Game.Tests.PlayMode
 {
     public sealed class SinglePlayerRuntimeFlowTests
     {
+        [UnityTest]
+        public IEnumerator OnlineSession_ConnectsAuthenticatedRealtimeStream_WhenConfigured()
+        {
+            string endpoint = Environment.GetEnvironmentVariable(
+                "PVP_UNITY_INTEGRATION_ENDPOINT");
+            string roomCode = Environment.GetEnvironmentVariable(
+                "PVP_UNITY_INTEGRATION_ROOM");
+            string accessToken = Environment.GetEnvironmentVariable(
+                "PVP_UNITY_INTEGRATION_TOKEN");
+            if (string.IsNullOrWhiteSpace(endpoint) ||
+                string.IsNullOrWhiteSpace(roomCode) ||
+                string.IsNullOrWhiteSpace(accessToken))
+            {
+                Assert.Pass("전용 서버 환경 변수가 없으므로 외부 통합 연결은 생략합니다.");
+                yield break;
+            }
+
+            var root = new GameObject("pvp-unity-websocket-integration");
+            PvpOnlineSessionController session =
+                root.AddComponent<PvpOnlineSessionController>();
+            Assert.That(session.ConfigureServerEndpoint(endpoint), Is.True);
+            Task<bool> connecting = session.ConnectAsync(
+                roomCode,
+                accessToken);
+            float deadline = Time.realtimeSinceStartup + 15f;
+            while (!connecting.IsCompleted &&
+                   Time.realtimeSinceStartup < deadline)
+            {
+                yield return null;
+            }
+
+            Assert.That(connecting.IsCompleted, Is.True,
+                "Unity HTTP 초기 연결이 제한시간 안에 끝나야 합니다.");
+            Assert.That(connecting.IsFaulted, Is.False,
+                connecting.Exception?.ToString());
+            Assert.That(connecting.Result, Is.True, session.LastError);
+
+            while ((session.RealtimeConnectionState !=
+                        PvpRealtimeConnectionState.Connected ||
+                    !session.LastRealtimeMessageUtc.HasValue) &&
+                   Time.realtimeSinceStartup < deadline)
+            {
+                yield return null;
+            }
+
+            Assert.That(session.RealtimeConnectionState,
+                Is.EqualTo(PvpRealtimeConnectionState.Connected),
+                session.LastRealtimeError);
+            Assert.That(session.LastRealtimeMessageUtc.HasValue, Is.True,
+                "Unity ClientWebSocket이 초기 전체 상태를 자동 수신해야 합니다.");
+            Assert.That(session.CurrentState, Is.Not.Null);
+            Assert.That(session.CurrentState.world?.map, Is.Not.Null);
+            Assert.That(session.CurrentState.world.map.width, Is.EqualTo(80));
+            Assert.That(session.CurrentState.world.map.height, Is.EqualTo(48));
+
+            session.Disconnect();
+            UnityEngine.Object.Destroy(root);
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator RealtimeStream_AppliesMonotonicVersionsAndNewEpoch()
+        {
+            var root = new GameObject("pvp-realtime-stream-test");
+            PvpOnlineSessionController session =
+                root.AddComponent<PvpOnlineSessionController>();
+            int stateChangedCount = 0;
+            session.StateChanged += _ => stateChangedCount++;
+
+            InvokePrivate(
+                session,
+                "ApplyRealtimeMessage",
+                CreateStreamJson("epoch-a", 5, "match-stream", 5));
+            Assert.That(session.CurrentState, Is.Not.Null);
+            Assert.That(session.CurrentState.revision, Is.EqualTo(5));
+            Assert.That(stateChangedCount, Is.EqualTo(1));
+
+            InvokePrivate(
+                session,
+                "ApplyRealtimeMessage",
+                CreateStreamJson("epoch-a", 4, "match-stream", 4));
+            Assert.That(session.CurrentState.revision, Is.EqualTo(5),
+                "같은 스트림의 과거 버전은 현재 상태를 덮어쓰면 안 됩니다.");
+            Assert.That(stateChangedCount, Is.EqualTo(1));
+
+            InvokePrivate(
+                session,
+                "ApplyRealtimeMessage",
+                CreateStreamJson("epoch-a", 6, "match-stream", 5, true));
+            Assert.That(session.CurrentState.revision, Is.EqualTo(5));
+            Assert.That(session.CurrentState.players[0].ready, Is.True,
+                "A newer state version must apply even when the match revision is unchanged.");
+            Assert.That(stateChangedCount, Is.EqualTo(2));
+
+            InvokePrivate(
+                session,
+                "ApplyRealtimeMessage",
+                CreateStreamJson("epoch-b", 1, "match-stream", 6));
+            Assert.That(session.CurrentState.revision, Is.EqualTo(6),
+                "서버 재시작으로 streamId가 바뀌면 낮은 스트림 버전도 받아야 합니다.");
+            Assert.That(stateChangedCount, Is.EqualTo(3));
+
+            UnityEngine.Object.Destroy(root);
+            yield return null;
+        }
+
         [UnityTest]
         public IEnumerator AuthoritativeMapSnapshot_RestoresServerState()
         {
@@ -274,14 +381,59 @@ namespace Game.Tests.PlayMode
             return unit.Coordinate;
         }
 
-        private static void InvokePrivate(object target, string methodName)
+        private static string CreateStreamJson(
+            string streamId,
+            long version,
+            string matchId,
+            int revision,
+            bool ready = false)
+        {
+            return JsonUtility.ToJson(new PvpStreamMessageDto
+            {
+                type = "state",
+                streamId = streamId,
+                version = version,
+                serverUtc = DateTimeOffset.UtcNow.ToString("O"),
+                state = new PvpReconnectDto
+                {
+                    matchId = matchId,
+                    playerId = "player_1",
+                    turn = 1,
+                    phase = "Planning",
+                    revision = revision,
+                    stateHash = "hash",
+                    streamId = streamId,
+                    stateVersion = version,
+                    turnDeadlineUtc = DateTimeOffset.UtcNow
+                        .AddMinutes(2)
+                        .ToString("O"),
+                    players = new[]
+                    {
+                        new PvpPlayerStateDto
+                        {
+                            slot = 0,
+                            playerId = "player_1",
+                            companyId = "company_1",
+                            connected = true,
+                            ready = ready
+                        }
+                    },
+                    ownPendingCommands = Array.Empty<PvpPendingCommandDto>()
+                }
+            });
+        }
+
+        private static void InvokePrivate(
+            object target,
+            string methodName,
+            params object[] arguments)
         {
             MethodInfo method = target.GetType().GetMethod(
                 methodName,
                 BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(method, Is.Not.Null,
                 $"{methodName} 동작을 찾을 수 있어야 합니다.");
-            method.Invoke(target, null);
+            method.Invoke(target, arguments);
         }
     }
 }

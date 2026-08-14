@@ -39,6 +39,11 @@ builder.Services.AddHostedService<PvpTurnTimeoutService>();
 
 WebApplication app = builder.Build();
 
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(15)
+});
+
 app.Use(async (context, next) =>
 {
     context.Response.Headers.XContentTypeOptions = "nosniff";
@@ -110,6 +115,38 @@ app.MapGet("/api/v1/rooms/{roomCode}/match", (
     }
 
     return Results.Ok(runtime.GetReconnectState(player));
+}).RequireRateLimiting("pvp");
+
+app.MapGet("/api/v1/rooms/{roomCode}/stream", async Task<IResult> (
+    string roomCode,
+    HttpContext context,
+    PvpRoomRegistry registry) =>
+{
+    if (!context.WebSockets.IsWebSocketRequest)
+    {
+        return Results.Json(
+            new ApiError("웹소켓필요", "이 경로는 WebSocket 연결이 필요합니다."),
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+    if (!registry.TryGetMatch(
+            roomCode,
+            context.Request,
+            out AuthenticatedPlayer player,
+            out PvpMatchRuntime runtime,
+            out ApiError error,
+            out int statusCode))
+    {
+        return Results.Json(error, statusCode: statusCode);
+    }
+
+    using System.Net.WebSockets.WebSocket socket =
+        await context.WebSockets.AcceptWebSocketAsync();
+    await PvpWebSocketStream.RunAsync(
+        socket,
+        player,
+        runtime,
+        context.RequestAborted);
+    return Results.Empty;
 }).RequireRateLimiting("pvp");
 
 app.MapPost("/api/v1/rooms/{roomCode}/commands", (

@@ -230,10 +230,19 @@ public sealed record ReconnectResponse(
     string Phase,
     int Revision,
     string StateHash,
+    string StreamId,
+    long StateVersion,
     string TurnDeadlineUtc,
     IReadOnlyList<PlayerStateResponse> Players,
     IReadOnlyList<PendingCommandResponse> OwnPendingCommands,
     WorldStateResponse World);
+
+public sealed record PvpStreamMessageResponse(
+    string Type,
+    string StreamId,
+    long Version,
+    DateTimeOffset ServerUtc,
+    ReconnectResponse State);
 
 public sealed record ServerPlayerConfiguration(
     string PlayerId,

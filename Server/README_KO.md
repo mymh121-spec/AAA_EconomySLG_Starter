@@ -1,4 +1,4 @@
-# 경제 SLG PvP 권위 서버 0.3.0
+# 경제 SLG PvP 권위 서버 0.4.0
 
 이 서버는 Unity 클라이언트가 보낸 행동을 그대로 믿지 않고, 서버가 명령 유효성 검사·행동력 소비·시장 거래·생산·채굴지 이벤트·승패 판정을 직접 처리하는 턴제 권위 서버다. SQL은 사용하지 않는다.
 
@@ -18,6 +18,7 @@
 - 12월 30일(360일차) 종료 시 경제력 순위로 승패 판정
 - 5턴마다 채굴지 생성, 경과 턴에 따른 채광률 감소와 최소 생산량
 - 서버 재시작 시 JSON 저널 재생으로 경기 복구
+- 방별 Bearer 인증 WebSocket 상태 푸시, 15초 heartbeat와 전체 스냅샷 재접속
 
 방마다 독립된 권위 시뮬레이션과 저널을 사용한다. 시작 전에는 2명 이상이 필요하고, 시작 후 새 참가자는 차단된다.
 
@@ -52,12 +53,15 @@
 - `GET /api/v1/rooms/{roomCode}`: 대기실·방 상태 조회
 - `POST /api/v1/rooms/{roomCode}/start`: 방장이 2~4인 경기 시작
 - `GET /api/v1/rooms/{roomCode}/match`: 재접속용 월드와 본인 상태 조회
+- `GET /api/v1/rooms/{roomCode}/stream`: 개인별 상태를 자동 전송하는 WebSocket
 - `POST /api/v1/rooms/{roomCode}/commands`: 시장 또는 지도 행동 제출
 - `POST /api/v1/rooms/{roomCode}/ready`: 해당 턴 행동 확정
 
 명령과 준비 요청에는 `requestId`, `protocolVersion`, `matchId`, `expectedRevision`을 보낸다. 네트워크 오류 후 같은 요청을 재전송하면 서버는 중복 실행하지 않고 기존 결과를 돌려준다. 같은 `requestId`에 다른 내용을 넣으면 충돌로 거부한다.
 
 지도 명령은 `kind`에 `MoveUnit`, `OccupyResourceSite`, `OccupyCastle`, `StartSiege`, `CancelOrder` 중 하나를 사용한다. `targetId`에는 서버가 발급한 부대 ID를, 목표가 필요한 명령에는 `targetX`와 `targetY`를 보낸다. `StartSiege`의 `action`은 현재 `Assault`를 지원한다. 서버는 부대 소유권, 목표 좌표, 경로, 행동력을 다시 검증한다.
+
+WebSocket도 HTTP API와 같은 `Authorization: Bearer <token>` 헤더로 인증한다. 토큰을 URL query에 넣지 않는다. 서버는 연결 직후와 명령·준비·턴 정산·제한시간 자동 정산 후 `state` 메시지를 전송한다. 각 메시지는 서버 재시작을 구분하는 `streamId`, 단조 증가하는 `version`, 개인별 `state`를 포함한다. 15초 동안 변경이 없으면 같은 버전의 heartbeat 스냅샷을 보내며 클라이언트는 중복 버전을 무시한다.
 
 ## 로컬 빌드
 
@@ -72,6 +76,8 @@ Windows에서는 저장소 루트의 `RUN_PVP_SERVER.cmd`를 실행하면 `D:\do
 
 ```powershell
 .\Validation\PvpRoomApiSmoke.ps1
+.\Validation\PvpRealtimeStreamSmoke.ps1
+.\Validation\PvpUnityRealtimeIntegration.ps1
 D:\dotnet\dotnet.exe run --project .\Validation\PvpMapAuthoritySmoke\PvpMapAuthoritySmoke.csproj
 ```
 
@@ -79,12 +85,12 @@ D:\dotnet\dotnet.exe run --project .\Validation\PvpMapAuthoritySmoke\PvpMapAutho
 
 ## VPS 배포
 
-기존 0.2.0 배포 묶음은 단일 매치 API이므로 0.3.0 방 API 배포 전에 새 Linux 산출물을 만들어야 한다.
+기존 0.2.0 배포 묶음은 단일 매치 API이므로 0.4.0 방·WebSocket API 배포 전에 새 Linux 산출물을 만들어야 한다.
 
 서버에서 다음 위치로 업로드한 뒤 배포 스크립트를 실행한다.
 
 ```bash
-/home/economyslg/apps/economy-slg/incoming/game-server-0.3.0-linux-x64.tar.gz
+/home/economyslg/apps/economy-slg/incoming/game-server-0.4.0-linux-x64.tar.gz
 bash /home/economyslg/apps/economy-slg/deploy_user.sh
 ```
 
@@ -112,7 +118,7 @@ Unity 엔드포인트는 `http://127.0.0.1:5200`으로 둔다. 출시 환경에�
 
 `PvpOnlineSessionController`는 온라인 세션 전용 GameObject에 한 번만 둔다. 개발용 직접 연결은 방 코드와 세션 토큰을 함께 받으며, 일반 플레이에서는 방 생성·참가 UI가 세션을 자동 구성한다.
 
-클라이언트가 표시하는 가격·재고·현금과 지도·부대·광산·성 상태는 방별 `GET /api/v1/rooms/{roomCode}/match` 또는 명령/준비 응답의 `world`를 기준으로 갱신한다. Unity 지도에서 아군 부대를 선택하고 목표 칸을 고른 뒤 이동/점령, 강습, 취소 버튼으로 서버 명령을 보낼 수 있다. 로컬 시뮬레이션 결과를 온라인 경기의 최종값으로 사용하면 안 된다.
+클라이언트가 표시하는 가격·재고·현금과 지도·부대·광산·성 상태는 최초 `GET /api/v1/rooms/{roomCode}/match`와 이후 WebSocket `state`를 기준으로 갱신한다. 스트림이 끊기면 Unity가 1·2·4·8초 간격으로 자동 재접속하고, HUD에 연결 상태와 턴 남은 시간을 표시한다. Unity 지도에서 아군 부대를 선택하고 목표 칸을 고른 뒤 이동/점령, 강습, 취소 버튼으로 서버 명령을 보낼 수 있다. 로컬 시뮬레이션 결과를 온라인 경기의 최종값으로 사용하면 안 된다.
 
 ## 운영 점검
 

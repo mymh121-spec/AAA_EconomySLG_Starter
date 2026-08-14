@@ -119,6 +119,7 @@ namespace Game.Presentation
         private int _selectedOperationIndex;
         private int _selectedOperationApproachIndex;
         private string _queuedOperationId = string.Empty;
+        private float _nextMultiplayerStatusRefreshAt;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -167,6 +168,13 @@ namespace Game.Presentation
                 ToggleSinglePlayerPause();
             }
 #endif
+            if (_selection.IsMultiplayer &&
+                multiplayerSession?.CurrentState != null &&
+                Time.unscaledTime >= _nextMultiplayerStatusRefreshAt)
+            {
+                _nextMultiplayerStatusRefreshAt = Time.unscaledTime + 0.25f;
+                RefreshMultiplayerStatus(multiplayerSession.CurrentState);
+            }
         }
 
         private void CaptureExistingModeServices()
@@ -2821,10 +2829,62 @@ namespace Game.Presentation
             string cash = state.world?.ownCompany != null
                 ? $"\n보유 현금 {state.world.ownCompany.cash:N0}"
                 : string.Empty;
+            string remaining = FormatMultiplayerTurnRemaining(state);
+            string realtime = GetRealtimeConnectionName(
+                multiplayerSession?.RealtimeConnectionState ??
+                PvpRealtimeConnectionState.Stopped);
+            string realtimeError =
+                multiplayerSession?.RealtimeConnectionState ==
+                    PvpRealtimeConnectionState.Reconnecting &&
+                !string.IsNullOrWhiteSpace(
+                    multiplayerSession.LastRealtimeError)
+                    ? " · 자동 재접속 중"
+                    : string.Empty;
             _multiplayerStatus.text =
                 $"{state.turn}턴 · {phase}\n" +
-                $"준비 {readyCount}/{playerCount} · 상태 버전 {state.revision}" +
+                $"준비 {readyCount}/{playerCount} · 남은 시간 {remaining}\n" +
+                $"실시간 {realtime}{realtimeError} · 상태 버전 {state.revision}" +
                 cash;
+        }
+
+        private static string FormatMultiplayerTurnRemaining(
+            PvpReconnectDto state)
+        {
+            if (string.Equals(
+                    state.phase,
+                    "Finished",
+                    StringComparison.Ordinal))
+            {
+                return "종료";
+            }
+            if (!DateTimeOffset.TryParse(
+                    state.turnDeadlineUtc,
+                    out DateTimeOffset deadline))
+            {
+                return "확인 중";
+            }
+
+            int seconds = Math.Max(
+                0,
+                (int)Math.Ceiling(
+                    (deadline - DateTimeOffset.UtcNow).TotalSeconds));
+            return $"{seconds / 60:D2}:{seconds % 60:D2}";
+        }
+
+        private static string GetRealtimeConnectionName(
+            PvpRealtimeConnectionState state)
+        {
+            switch (state)
+            {
+                case PvpRealtimeConnectionState.Connected:
+                    return "연결됨";
+                case PvpRealtimeConnectionState.Connecting:
+                    return "연결 중";
+                case PvpRealtimeConnectionState.Reconnecting:
+                    return "재접속 중";
+                default:
+                    return "꺼짐";
+            }
         }
 
         private static string GetMultiplayerPhaseName(string phase)
