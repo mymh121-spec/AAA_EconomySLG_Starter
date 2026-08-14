@@ -10,12 +10,76 @@ namespace Game.Domain.Military
         Lance
     }
 
+    public enum EquipmentQuality
+    {
+        Worn,
+        Standard,
+        Fine,
+        Masterwork
+    }
+
     /// <summary>
     /// Prototype recruitment and equipment rules shared by the map UI and
     /// the authoritative gameplay service. Values can later move to assets.
     /// </summary>
     public static class UnitEquipmentCatalog
     {
+        public static string GetQualityDisplayName(EquipmentQuality quality)
+        {
+            switch (quality)
+            {
+                case EquipmentQuality.Worn: return "낡음";
+                case EquipmentQuality.Fine: return "고급";
+                case EquipmentQuality.Masterwork: return "명품";
+                default: return "표준";
+            }
+        }
+
+        public static decimal GetQualityCombatModifier(
+            EquipmentQuality quality)
+        {
+            switch (quality)
+            {
+                case EquipmentQuality.Worn: return 0.85m;
+                case EquipmentQuality.Fine: return 1.10m;
+                case EquipmentQuality.Masterwork: return 1.20m;
+                default: return 1m;
+            }
+        }
+
+        public static decimal GetMaximumDurability(
+            EquipmentQuality quality)
+        {
+            switch (quality)
+            {
+                case EquipmentQuality.Worn: return 70m;
+                case EquipmentQuality.Fine: return 120m;
+                case EquipmentQuality.Masterwork: return 150m;
+                default: return 100m;
+            }
+        }
+
+        public static decimal GetDurabilityCombatModifier(
+            decimal durability,
+            EquipmentQuality quality)
+        {
+            decimal maximum = GetMaximumDurability(quality);
+            decimal ratio = maximum <= 0m
+                ? 0m
+                : System.Math.Clamp(durability / maximum, 0m, 1m);
+            return 0.40m + ratio * 0.60m;
+        }
+
+        public static int GetWeaponRequirement(int soldiers) =>
+            System.Math.Max(0, soldiers);
+
+        public static int GetArmorRequirement(
+            ArmorClass armor,
+            int soldiers) =>
+            armor == ArmorClass.Unarmored
+                ? 0
+                : System.Math.Max(0, soldiers);
+
         public static UnitWeaponType GetDefaultWeapon(UnitArchetype archetype)
         {
             switch (archetype)

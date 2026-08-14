@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Game.Domain.Military;
 using Game.Domain.World;
 
 namespace Game.Application.World
@@ -366,6 +367,12 @@ namespace Game.Application.World
     public sealed class MapCastleControlState
     {
         private readonly List<string> _garrisonUnitIds = new List<string>();
+        private readonly Dictionary<(UnitWeaponType, EquipmentQuality), int>
+            _weaponStocks =
+                new Dictionary<(UnitWeaponType, EquipmentQuality), int>();
+        private readonly Dictionary<(ArmorClass, EquipmentQuality), int>
+            _armorStocks =
+                new Dictionary<(ArmorClass, EquipmentQuality), int>();
 
         public GridCoordinate Coordinate { get; }
         public bool IsCapital { get; }
@@ -447,6 +454,7 @@ namespace Game.Application.World
             WarehouseFoodAmount = 0m;
             WarehouseEquipmentAmount = 0m;
             WarehouseMedicineAmount = 0m;
+            SeedPrototypeArmory(isCapital ? 600 : 100);
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
         }
@@ -518,6 +526,125 @@ namespace Game.Application.World
         internal void StoreMineIron(decimal amount)
         {
             WarehouseIronAmount += Math.Max(0m, amount);
+        }
+
+        public int GetWeaponStock(
+            UnitWeaponType weapon,
+            EquipmentQuality quality = EquipmentQuality.Standard) =>
+            _weaponStocks.TryGetValue((weapon, quality), out int amount)
+                ? amount
+                : 0;
+
+        public int GetArmorStock(
+            ArmorClass armor,
+            EquipmentQuality quality = EquipmentQuality.Standard) =>
+            armor == ArmorClass.Unarmored
+                ? int.MaxValue
+                : _armorStocks.TryGetValue((armor, quality), out int amount)
+                    ? amount
+                    : 0;
+
+        public int StoreWeaponStock(
+            UnitWeaponType weapon,
+            EquipmentQuality quality,
+            int amount)
+        {
+            int stored = Math.Max(0, amount);
+            if (stored > 0)
+                _weaponStocks[(weapon, quality)] =
+                    GetWeaponStock(weapon, quality) + stored;
+            return stored;
+        }
+
+        public int StoreArmorStock(
+            ArmorClass armor,
+            EquipmentQuality quality,
+            int amount)
+        {
+            if (armor == ArmorClass.Unarmored)
+                return 0;
+
+            int stored = Math.Max(0, amount);
+            if (stored > 0)
+                _armorStocks[(armor, quality)] =
+                    GetArmorStock(armor, quality) + stored;
+            return stored;
+        }
+
+        internal bool TryConsumeLoadout(
+            UnitWeaponType weapon,
+            EquipmentQuality weaponQuality,
+            ArmorClass armor,
+            EquipmentQuality armorQuality,
+            int soldiers,
+            out string reason)
+        {
+            int weaponsNeeded = UnitEquipmentCatalog.GetWeaponRequirement(
+                soldiers);
+            int armorNeeded = UnitEquipmentCatalog.GetArmorRequirement(
+                armor,
+                soldiers);
+            int weapons = GetWeaponStock(weapon, weaponQuality);
+            int armors = GetArmorStock(armor, armorQuality);
+            if (weapons < weaponsNeeded || armors < armorNeeded)
+            {
+                reason = "성 무기고 재고가 부족합니다. " +
+                    $"{UnitEquipmentCatalog.GetQualityDisplayName(weaponQuality)} " +
+                    $"{UnitEquipmentCatalog.GetWeaponDisplayName(weapon)} " +
+                    $"{weapons}/{weaponsNeeded}, " +
+                    $"{UnitEquipmentCatalog.GetQualityDisplayName(armorQuality)} " +
+                    $"{UnitEquipmentCatalog.GetArmorDisplayName(armor)} " +
+                    $"{(armor == ArmorClass.Unarmored ? 0 : armors)}/{armorNeeded}";
+                return false;
+            }
+
+            _weaponStocks[(weapon, weaponQuality)] = weapons - weaponsNeeded;
+            if (armorNeeded > 0)
+                _armorStocks[(armor, armorQuality)] = armors - armorNeeded;
+            reason = string.Empty;
+            return true;
+        }
+
+        internal void ReturnLoadout(
+            UnitWeaponType weapon,
+            EquipmentQuality weaponQuality,
+            ArmorClass armor,
+            EquipmentQuality armorQuality,
+            int soldiers,
+            decimal weaponDurabilityRatio,
+            decimal armorDurabilityRatio)
+        {
+            StoreWeaponStock(
+                weapon,
+                weaponQuality,
+                (int)Math.Floor(Math.Max(0, soldiers) *
+                    Math.Clamp(weaponDurabilityRatio, 0m, 1m)));
+            StoreArmorStock(
+                armor,
+                armorQuality,
+                (int)Math.Floor(Math.Max(0, soldiers) *
+                    Math.Clamp(armorDurabilityRatio, 0m, 1m)));
+        }
+
+        private void SeedPrototypeArmory(int amountPerType)
+        {
+            foreach (UnitWeaponType weapon in
+                     (UnitWeaponType[])Enum.GetValues(typeof(UnitWeaponType)))
+            {
+                StoreWeaponStock(
+                    weapon,
+                    EquipmentQuality.Standard,
+                    amountPerType);
+            }
+
+            StoreArmorStock(
+                ArmorClass.Light,
+                EquipmentQuality.Standard,
+                amountPerType);
+            StoreArmorStock(
+                ArmorClass.Heavy,
+                EquipmentQuality.Standard,
+                amountPerType);
         }
 
         public decimal GetWarehouseSupply(MapSupplyKind kind)

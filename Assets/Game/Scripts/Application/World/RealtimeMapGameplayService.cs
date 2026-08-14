@@ -246,14 +246,46 @@ namespace Game.Application.World
         public string ArchetypeDisplayName => GetArchetypeDisplayName(Archetype);
         public UnitWeaponType WeaponType { get; private set; }
         public ArmorClass ArmorClass { get; private set; }
+        public EquipmentQuality WeaponQuality { get; private set; }
+        public EquipmentQuality ArmorQuality { get; private set; }
+        public decimal WeaponDurability { get; private set; }
+        public decimal ArmorDurability { get; private set; }
+        public decimal MaximumWeaponDurability =>
+            UnitEquipmentCatalog.GetMaximumDurability(WeaponQuality);
+        public decimal MaximumArmorDurability =>
+            UnitEquipmentCatalog.GetMaximumDurability(ArmorQuality);
+        public decimal WeaponDurabilityRatio => MaximumWeaponDurability <= 0m
+            ? 0m
+            : Math.Clamp(
+                WeaponDurability / MaximumWeaponDurability,
+                0m,
+                1m);
+        public decimal ArmorDurabilityRatio => ArmorClass == ArmorClass.Unarmored
+            ? 1m
+            : MaximumArmorDurability <= 0m
+                ? 0m
+                : Math.Clamp(
+                    ArmorDurability / MaximumArmorDurability,
+                    0m,
+                    1m);
         public string WeaponDisplayName =>
             UnitEquipmentCatalog.GetWeaponDisplayName(WeaponType);
         public string ArmorDisplayName =>
             UnitEquipmentCatalog.GetArmorDisplayName(ArmorClass);
         public decimal AttackModifier =>
-            UnitEquipmentCatalog.GetAttackModifier(WeaponType);
+            UnitEquipmentCatalog.GetAttackModifier(WeaponType) *
+            UnitEquipmentCatalog.GetQualityCombatModifier(WeaponQuality) *
+            UnitEquipmentCatalog.GetDurabilityCombatModifier(
+                WeaponDurability,
+                WeaponQuality);
         public decimal DefenseModifier =>
-            UnitEquipmentCatalog.GetDefenseModifier(ArmorClass);
+            UnitEquipmentCatalog.GetDefenseModifier(ArmorClass) *
+            UnitEquipmentCatalog.GetQualityCombatModifier(ArmorQuality) *
+            (ArmorClass == ArmorClass.Unarmored
+                ? 1m
+                : UnitEquipmentCatalog.GetDurabilityCombatModifier(
+                    ArmorDurability,
+                    ArmorQuality));
         public decimal MobilityModifier =>
             UnitEquipmentCatalog.GetMobilityModifier(Archetype, ArmorClass);
         public GridCoordinate Coordinate { get; internal set; }
@@ -333,6 +365,10 @@ namespace Game.Application.World
             Archetype = archetype;
             WeaponType = weaponType;
             ArmorClass = armorClass;
+            WeaponQuality = EquipmentQuality.Standard;
+            ArmorQuality = EquipmentQuality.Standard;
+            WeaponDurability = MaximumWeaponDurability;
+            ArmorDurability = MaximumArmorDurability;
             MaxStamina = Math.Max(1, maxStamina);
             Stamina = MaxStamina;
             Formation = MapUnitFormation.CreateDefault(
@@ -382,6 +418,9 @@ namespace Game.Application.World
             Formation = Formation.ScaleTo(Soldiers - applied);
             if (applied > 0)
             {
+                decimal casualtyRatio = applied /
+                    (decimal)Math.Max(1, previousSoldiers);
+                DamageEquipment(2m + casualtyRatio * 15m);
                 Morale = Math.Max(
                     0m,
                     Morale - applied * 100m /
@@ -523,10 +562,34 @@ namespace Game.Application.World
 
         internal void ChangeEquipment(
             UnitWeaponType weaponType,
-            ArmorClass armorClass)
+            ArmorClass armorClass,
+            EquipmentQuality weaponQuality = EquipmentQuality.Standard,
+            EquipmentQuality armorQuality = EquipmentQuality.Standard)
         {
             WeaponType = weaponType;
             ArmorClass = armorClass;
+            WeaponQuality = weaponQuality;
+            ArmorQuality = armorQuality;
+            WeaponDurability = MaximumWeaponDurability;
+            ArmorDurability = MaximumArmorDurability;
+        }
+
+        internal bool RepairEquipment()
+        {
+            bool changed = WeaponDurability < MaximumWeaponDurability ||
+                (ArmorClass != ArmorClass.Unarmored &&
+                 ArmorDurability < MaximumArmorDurability);
+            WeaponDurability = MaximumWeaponDurability;
+            ArmorDurability = MaximumArmorDurability;
+            return changed;
+        }
+
+        internal void DamageEquipment(decimal amount)
+        {
+            decimal damage = Math.Max(0m, amount);
+            WeaponDurability = Math.Max(0m, WeaponDurability - damage);
+            if (ArmorClass != ArmorClass.Unarmored)
+                ArmorDurability = Math.Max(0m, ArmorDurability - damage);
         }
 
         public static string GetArchetypeDisplayName(UnitArchetype archetype)
@@ -1265,14 +1328,65 @@ namespace Game.Application.World
             out MapUnitState unit,
             out string reason)
         {
+            return TryCreateUnitAt(
+                ownerFactionId,
+                origin,
+                archetype,
+                weaponType,
+                armorClass,
+                EquipmentQuality.Standard,
+                EquipmentQuality.Standard,
+                out unit,
+                out reason);
+        }
+
+        public bool TryCreateUnitAt(
+            string ownerFactionId,
+            GridCoordinate origin,
+            UnitArchetype archetype,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            EquipmentQuality weaponQuality,
+            EquipmentQuality armorQuality,
+            out MapUnitState unit,
+            out string reason)
+        {
             unit = null;
             if (!CanCreateUnitAt(ownerFactionId, origin, out reason))
                 return false;
+
+            MapCastleControlState castle = FindCastle(origin);
+            if (castle == null || !string.Equals(
+                    castle.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "아군 성의 무기고에서만 부대를 편성할 수 있습니다.";
+                return false;
+            }
+            if (!castle.TryConsumeLoadout(
+                    weaponType,
+                    weaponQuality,
+                    armorClass,
+                    armorQuality,
+                    _tuning.InitialSoldiersPerUnit,
+                    out reason))
+            {
+                return false;
+            }
 
             MapRecruitmentSiteState recruitmentSite =
                 _recruitmentSites[origin];
             if (!recruitmentSite.TryConsumeRecruit())
             {
+                castle.ReturnLoadout(
+                    weaponType,
+                    weaponQuality,
+                    armorClass,
+                    armorQuality,
+                    _tuning.InitialSoldiersPerUnit,
+                    1m,
+                    1m);
                 reason = "지역 징집 인력이 부족합니다.";
                 return false;
             }
@@ -1287,12 +1401,15 @@ namespace Game.Application.World
                 armorClass,
                 _tuning.InitialSoldiersPerUnit,
                 _tuning.MovementFatiguePerTile);
+            unit.ChangeEquipment(
+                weaponType,
+                armorClass,
+                weaponQuality,
+                armorQuality);
             if (_supplyEnabledFactionIds.Contains(ownerFactionId))
                 unit.EnableSupplySystem();
             _units.Add(unit);
-            MapCastleControlState castle = FindCastle(origin);
-            if (castle != null)
-                RefreshCastleGarrison(castle);
+            RefreshCastleGarrison(castle);
             StateChanged?.Invoke();
             return true;
         }
@@ -1302,6 +1419,25 @@ namespace Game.Application.World
             string unitId,
             UnitWeaponType weaponType,
             ArmorClass armorClass,
+            out string reason)
+        {
+            return TryChangeEquipment(
+                ownerFactionId,
+                unitId,
+                weaponType,
+                armorClass,
+                EquipmentQuality.Standard,
+                EquipmentQuality.Standard,
+                out reason);
+        }
+
+        public bool TryChangeEquipment(
+            string ownerFactionId,
+            string unitId,
+            UnitWeaponType weaponType,
+            ArmorClass armorClass,
+            EquipmentQuality weaponQuality,
+            EquipmentQuality armorQuality,
             out string reason)
         {
             MapUnitState unit = FindUnit(unitId);
@@ -1320,7 +1456,101 @@ namespace Game.Application.World
                 return false;
             }
 
-            unit.ChangeEquipment(weaponType, armorClass);
+            if (unit.WeaponType == weaponType &&
+                unit.ArmorClass == armorClass &&
+                unit.WeaponQuality == weaponQuality &&
+                unit.ArmorQuality == armorQuality)
+            {
+                reason = "현재 사용 중인 장비와 같습니다.";
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(unit.Coordinate);
+            if (castle == null || !string.Equals(
+                    castle.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "장비 변경은 부대가 주둔한 아군 성에서만 가능합니다.";
+                return false;
+            }
+            if (!castle.TryConsumeLoadout(
+                    weaponType,
+                    weaponQuality,
+                    armorClass,
+                    armorQuality,
+                    unit.Soldiers,
+                    out reason))
+            {
+                return false;
+            }
+
+            castle.ReturnLoadout(
+                unit.WeaponType,
+                unit.WeaponQuality,
+                unit.ArmorClass,
+                unit.ArmorQuality,
+                unit.Soldiers,
+                unit.WeaponDurabilityRatio,
+                unit.ArmorDurabilityRatio);
+            unit.ChangeEquipment(
+                weaponType,
+                armorClass,
+                weaponQuality,
+                armorQuality);
+            reason = string.Empty;
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        public bool TryRepairEquipment(
+            string ownerFactionId,
+            string unitId,
+            out decimal consumedEquipment,
+            out string reason)
+        {
+            consumedEquipment = 0m;
+            MapUnitState unit = FindUnit(unitId);
+            if (unit == null || !string.Equals(
+                    unit.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "수리할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+
+            MapCastleControlState castle = FindCastle(unit.Coordinate);
+            if (castle == null || !string.Equals(
+                    castle.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "장비 수리는 부대가 주둔한 아군 성에서만 가능합니다.";
+                return false;
+            }
+
+            decimal missingRatio = 1m - unit.WeaponDurabilityRatio;
+            if (unit.ArmorClass != ArmorClass.Unarmored)
+                missingRatio += 1m - unit.ArmorDurabilityRatio;
+            decimal required = Math.Ceiling(
+                Math.Max(0m, missingRatio) * unit.Soldiers * 0.02m);
+            if (required <= 0m)
+            {
+                reason = "장비 내구도가 이미 최대입니다.";
+                return false;
+            }
+            if (castle.GetWarehouseSupply(MapSupplyKind.Equipment) < required)
+            {
+                reason = $"수리용 장비 보급이 부족합니다. 필요 {required:N1}, " +
+                    $"보유 {castle.WarehouseEquipmentAmount:N1}";
+                return false;
+            }
+
+            consumedEquipment = castle.TakeWarehouseSupply(
+                MapSupplyKind.Equipment,
+                required);
+            unit.RepairEquipment();
             reason = string.Empty;
             StateChanged?.Invoke();
             return true;
