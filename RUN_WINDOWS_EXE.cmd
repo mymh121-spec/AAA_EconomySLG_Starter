@@ -1,8 +1,8 @@
 @echo off
 setlocal
 
-set "GAME_EXE=D:\AAA_EconomySLG\Builds\Windows\AAA_EconomySLG.exe"
-if not exist "%GAME_EXE%" set "GAME_EXE=%~dp0Builds\Windows\AAA_EconomySLG.exe"
+set "GAME_EXE=%~dp0Builds\Windows\AAA_EconomySLG.exe"
+if not exist "%GAME_EXE%" set "GAME_EXE=D:\AAA_EconomySLG\Builds\Windows\AAA_EconomySLG.exe"
 if not exist "%GAME_EXE%" (
     echo 실행 파일이 아직 없습니다.
     echo D:\AAA_EconomySLG 또는 프로젝트 폴더에서 Windows EXE를 찾지 못했습니다.

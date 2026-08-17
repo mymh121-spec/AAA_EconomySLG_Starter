@@ -17,6 +17,32 @@ namespace Game.Tests.PlayMode
 {
     public sealed class SinglePlayerRuntimeFlowTests
     {
+        [Test]
+        public void MultiplayerStatus_UsesP1ThroughPNInsteadOfPlayerCount()
+        {
+            MethodInfo formatter = typeof(GameModeSelectionController).GetMethod(
+                "FormatMultiplayerPlayerSlots",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(formatter, Is.Not.Null);
+
+            string text = formatter.Invoke(
+                null,
+                new object[]
+                {
+                    new[]
+                    {
+                        new PvpPlayerStateDto { slot = 2, ready = false },
+                        new PvpPlayerStateDto { slot = 0, ready = true },
+                        new PvpPlayerStateDto { slot = 1, eliminated = true }
+                    }
+                }) as string;
+
+            Assert.That(text, Is.EqualTo("P1 · P2 · P3"));
+            Assert.That(text, Does.Not.Contain("준비"));
+            Assert.That(text, Does.Not.Contain("대기"));
+            Assert.That(text, Does.Not.Contain("/"));
+        }
+
         [UnityTest]
         public IEnumerator OnlineSession_ConnectsAuthenticatedRealtimeStream_WhenConfigured()
         {
@@ -261,6 +287,8 @@ namespace Game.Tests.PlayMode
             Button singlePlayerButton = null;
             Button createRoomButton = null;
             Button joinRoomButton = null;
+            Button keySettingsButton = null;
+            bool hasReadyButton = false;
             document.rootVisualElement.Query<Button>().ForEach(button =>
             {
                 if (button.text == "1인이서 하기")
@@ -269,6 +297,10 @@ namespace Game.Tests.PlayMode
                     createRoomButton = button;
                 else if (button.text == "초대 코드로 참가")
                     joinRoomButton = button;
+                else if (button.text == "키 설정")
+                    keySettingsButton = button;
+                else if (button.text == "이번 턴 준비 완료")
+                    hasReadyButton = true;
             });
             Assert.That(singlePlayerButton, Is.Not.Null,
                 "1인 플레이 버튼이 실제 UI 트리에 있어야 합니다.");
@@ -276,6 +308,18 @@ namespace Game.Tests.PlayMode
                 "멀티플레이 새 방 만들기 버튼이 있어야 합니다.");
             Assert.That(joinRoomButton, Is.Not.Null,
                 "멀티플레이 초대 코드 참가 버튼이 있어야 합니다.");
+            Assert.That(keySettingsButton, Is.Not.Null,
+                "Esc 일시정지 메뉴에 키 설정 버튼이 있어야 합니다.");
+            Assert.That(hasReadyButton, Is.False,
+                "실시간 플레이 화면에는 준비 완료 버튼을 표시하지 않아야 합니다.");
+            bool hasRoomCapacityInput = false;
+            document.rootVisualElement.Query<TextField>().ForEach(field =>
+            {
+                if (field.label == "방 정원 (2~4)")
+                    hasRoomCapacityInput = true;
+            });
+            Assert.That(hasRoomCapacityInput, Is.False,
+                "플레이 인원수 입력은 연결 화면에 표시하지 않아야 합니다.");
 
             InvokePrivate(controller, "SelectSinglePlayer");
             yield return null;
@@ -297,8 +341,51 @@ namespace Game.Tests.PlayMode
                 "campaign-status-label");
             Assert.That(campaignStatus, Is.Not.Null,
                 "싱글플레이 HUD에 캠페인 상태 패널이 있어야 합니다.");
-            Assert.That(campaignStatus.text, Does.Contain("현재"));
-            Assert.That(campaignStatus.text, Does.Contain("남은"));
+            Assert.That(campaignStatus.text, Does.Contain("경제력 집계 대기"));
+            Assert.That(campaignStatus.text, Does.Not.Contain("남은"),
+                "좌측 캠페인 패널은 날짜나 시간을 표시하지 않아야 합니다.");
+            VisualElement timeHud = document.rootVisualElement.Q<VisualElement>(
+                "time-hud");
+            Assert.That(timeHud, Is.Not.Null,
+                "게임 시간 HUD가 있어야 합니다.");
+            Assert.That(timeHud.style.position.value,
+                Is.EqualTo(Position.Absolute));
+            Assert.That(timeHud.style.top.value.value, Is.EqualTo(16f));
+            Assert.That(timeHud.style.right.value.value, Is.EqualTo(24f));
+            Label timeLabel = document.rootVisualElement.Q<Label>("time-label");
+            Assert.That(timeLabel, Is.Not.Null);
+            Assert.That(timeLabel.text, Does.Not.Contain("\n"),
+                "우측 상단 시간 표시는 한 줄로 간결해야 합니다.");
+
+            InvokePrivate(controller, "OpenPauseMenu");
+            yield return null;
+            VisualElement pauseMenu = document.rootVisualElement.Q<VisualElement>(
+                "pause-menu");
+            VisualElement keySettingsMenu =
+                document.rootVisualElement.Q<VisualElement>(
+                    "key-settings-menu");
+            Assert.That(pauseMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex));
+            Assert.That(keySettingsMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.None));
+
+            InvokePrivate(controller, "OpenKeySettings");
+            yield return null;
+            Assert.That(pauseMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.None));
+            Assert.That(keySettingsMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex),
+                "키 설정은 Esc 메뉴에서 별도 화면으로 전환되어야 합니다.");
+
+            InvokePrivate(controller, "HandleEscapePressed");
+            yield return null;
+            Assert.That(pauseMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex));
+            Assert.That(keySettingsMenu.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.None),
+                "키 설정 화면에서 Esc를 누르면 일시정지 메뉴로 돌아와야 합니다.");
+            InvokePrivate(controller, "HandleEscapePressed");
+            yield return null;
             Button operationAgent = document.rootVisualElement.Q<Button>(
                 "operation-agent-button");
             Assert.That(operationAgent, Is.Not.Null,

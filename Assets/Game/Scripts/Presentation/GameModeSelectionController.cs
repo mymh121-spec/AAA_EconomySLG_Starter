@@ -39,7 +39,6 @@ namespace Game.Presentation
         private VisualElement _multiplayerView;
         private TextField _endpointField;
         private TextField _displayNameField;
-        private TextField _maxPlayersField;
         private TextField _roomCodeField;
         private TextField _tokenField;
         private TextField _hiveMatchIdField;
@@ -111,7 +110,8 @@ namespace Game.Presentation
         private Label _timeHudLabel;
         private Label _campaignHudLabel;
         private VisualElement _pauseMenuOverlay;
-        private VisualElement _keyGuideView;
+        private VisualElement _pauseMenuView;
+        private VisualElement _keySettingsView;
         private bool _resumeRealtimeAfterPauseMenu;
         private Label _singlePlayerResultText;
         private Label _multiplayerStatus;
@@ -138,6 +138,9 @@ namespace Game.Presentation
         private int _lastCampaignResultTurn = -1;
         private int _lastDominanceStreak;
         private string _campaignTransitionAlert = string.Empty;
+        private int _lastEscapeHandledFrame = -1;
+
+        private const int AutomaticRoomCapacity = 4;
 
         public GamePlayMode CurrentMode => _selection.CurrentMode;
 
@@ -173,10 +176,10 @@ namespace Game.Presentation
         private void Update()
         {
 #if ENABLE_LEGACY_INPUT_MANAGER
-            if (_selection.IsSinglePlayer &&
+            if (_selection.HasSelection &&
                 UnityEngine.Input.GetKeyDown(KeyCode.Escape))
             {
-                HandleEscapePressed();
+                HandleEscapeInput();
             }
             else if (_selection.IsSinglePlayer &&
                 !IsPauseMenuOpen() &&
@@ -193,6 +196,30 @@ namespace Game.Presentation
                 _nextMultiplayerStatusRefreshAt = Time.unscaledTime + 0.25f;
                 RefreshMultiplayerStatus(multiplayerSession.CurrentState);
             }
+        }
+
+        private void OnGUI()
+        {
+            Event currentEvent = Event.current;
+            if (!_selection.HasSelection ||
+                currentEvent == null ||
+                currentEvent.type != EventType.KeyDown ||
+                currentEvent.keyCode != KeyCode.Escape)
+            {
+                return;
+            }
+
+            HandleEscapeInput();
+            currentEvent.Use();
+        }
+
+        private void HandleEscapeInput()
+        {
+            if (_lastEscapeHandledFrame == Time.frameCount)
+                return;
+
+            _lastEscapeHandledFrame = Time.frameCount;
+            HandleEscapePressed();
         }
 
         private void CaptureExistingModeServices()
@@ -358,14 +385,14 @@ namespace Game.Presentation
             _modeView = CreateCard(
                 _uiRoot,
                 "기업의 시대",
-                "플레이할 방식을 선택하세요.");
+                string.Empty);
             AddButton(_modeView, "1인이서 하기", ShowSinglePlayerSetup);
             AddButton(_modeView, "여러 명이서 하기", SelectMultiplayer);
 
             _singlePlayerSetupView = CreateCard(
                 _uiRoot,
                 "새 세계 설정",
-                "문명식 프리셋으로 지도 크기·자원·바다·시드를 정합니다.");
+                string.Empty);
             _mapSizeField = new EnumField("지도 크기", MapSizePreset.Standard);
             _mapResourceField = new EnumField(
                 "자원량",
@@ -391,7 +418,7 @@ namespace Game.Presentation
             _connectionView = CreateCard(
                 _uiRoot,
                 "여러 명 플레이 연결",
-                "방을 만들거나 6자리 초대 코드로 참가하세요.");
+                string.Empty);
             _endpointField = new TextField("서버 주소")
             {
                 value = multiplayerSession != null
@@ -408,12 +435,6 @@ namespace Game.Presentation
             StyleInput(_displayNameField);
             _connectionView.Add(_displayNameField);
 
-            _maxPlayersField = new TextField("방 정원 (2~4)")
-            {
-                value = "2"
-            };
-            StyleInput(_maxPlayersField);
-            _connectionView.Add(_maxPlayersField);
             AddButton(_connectionView, "새 방 만들기", CreateMultiplayerRoom);
 
             _roomCodeField = new TextField("6자리 초대 코드");
@@ -487,8 +508,20 @@ namespace Game.Presentation
             _singlePlayerView = CreateCard(
                 _uiRoot,
                 "1인 플레이",
-                "로컬 경제와 AI 기업의 행동을 이 PC에서 정산합니다.");
+                string.Empty);
             _singlePlayerStatus = AddStatus(_singlePlayerView);
+            _campaignHudLabel = new Label
+            {
+                name = "campaign-status-label"
+            };
+            _campaignHudLabel.style.fontSize = 13;
+            _campaignHudLabel.style.color = new Color(
+                0.84f,
+                0.90f,
+                0.98f);
+            _campaignHudLabel.style.whiteSpace = WhiteSpace.Normal;
+            _campaignHudLabel.style.marginBottom = 9;
+            _singlePlayerView.Add(_campaignHudLabel);
             _singleMapSelectionStatus = AddStatus(_singlePlayerView);
             _singleMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
@@ -502,7 +535,7 @@ namespace Game.Presentation
             _singlePlayerResultView = CreateCard(
                 _uiRoot,
                 "1인 플레이 최종 결과",
-                "승자와 패자를 확인한 뒤 새 게임을 시작할 수 있습니다.");
+                string.Empty);
             _singlePlayerResultText = AddStatus(_singlePlayerResultView);
             _singlePlayerResultText.style.minHeight = 220;
             AddButton(
@@ -513,7 +546,7 @@ namespace Game.Presentation
             _multiplayerView = CreateCard(
                 _uiRoot,
                 "여러 명 플레이",
-                "모든 참가자가 준비하면 서버에서 다음 턴을 정산합니다.");
+                string.Empty);
             _multiplayerStatus = AddStatus(_multiplayerView);
             _multiplayerMapSelectionStatus = AddStatus(_multiplayerView);
             _multiplayerMapSelectionStatus.text =
@@ -533,7 +566,6 @@ namespace Game.Presentation
             _multiplayerMapActionFeedback = AddStatus(_multiplayerView);
             _multiplayerMapActionFeedback.text =
                 "서버 지도에서 아군 부대를 선택한 뒤 목표 칸을 선택하세요.";
-            AddButton(_multiplayerView, "이번 턴 준비 완료", MarkMultiplayerReady);
             AddButton(_multiplayerView, "서버 상태 새로고침", RefreshMultiplayer);
             AddButton(_multiplayerView, "연결 종료 후 모드 선택", ShowModeSelection);
             StyleGameplayHud(_multiplayerView);
@@ -613,17 +645,11 @@ namespace Game.Presentation
         {
             if (!PrepareRoomRequest(out string displayName))
                 return;
-            if (!int.TryParse(_maxPlayersField.value, out int maxPlayers) ||
-                maxPlayers < 2 || maxPlayers > 4)
-            {
-                _roomStatus.text = "방 정원은 2~4명으로 입력하세요.";
-                return;
-            }
 
             _roomStatus.text = "새 방을 만드는 중입니다...";
             bool created = await multiplayerSession.CreateRoomAsync(
                 displayName,
-                maxPlayers);
+                AutomaticRoomCapacity);
             if (!created)
             {
                 _roomStatus.text = multiplayerSession.LastError;
@@ -710,18 +736,15 @@ namespace Game.Presentation
             if (room == null)
                 return "방 상태를 받지 못했습니다.";
 
-            int playerCount = room.players?.Length ?? 0;
             var builder = new StringBuilder(160)
                 .Append("초대 코드: ")
                 .Append(room.roomCode)
                 .Append("\n상태: ")
-                .Append(room.status)
-                .Append(" · 참가자 ")
-                .Append(playerCount)
-                .Append('/')
-                .Append(room.maxPlayers);
+                .Append(room.status);
             if (room.players != null)
             {
+                if (room.players.Length > 0)
+                    builder.Append("\n참가자");
                 for (int i = 0; i < room.players.Length; i++)
                 {
                     PvpRoomPlayerDto player = room.players[i];
@@ -1088,7 +1111,7 @@ namespace Game.Presentation
             SetVisible(_operationBoardTopButton, _selection.IsSinglePlayer);
             SetVisible(_timeHudView, _selection.IsSinglePlayer);
             SetVisible(_pauseMenuOverlay, false);
-            SetVisible(_keyGuideView, false);
+            SetVisible(_keySettingsView, false);
             _resumeRealtimeAfterPauseMenu = false;
         }
 
@@ -1099,13 +1122,10 @@ namespace Game.Presentation
 
             GameCalendarDate currentDate = GameCalendarDate.FromDayNumber(
                 singlePlayerSimulation.RealtimeDayNumber);
-            GameCalendarDate settlementDate = GameCalendarDate.FromDayNumber(
-                singlePlayerSimulation.CurrentTurn.Value);
 
             if (_timeHudLabel != null)
             {
-                _timeHudLabel.text = new StringBuilder(96)
-                    .Append("현재 ")
+                _timeHudLabel.text = new StringBuilder(64)
                     .Append(currentDate)
                     .Append(' ')
                     .Append(singlePlayerSimulation.RealtimeHour.ToString("D2"))
@@ -1115,9 +1135,6 @@ namespace Game.Presentation
                     .Append(singlePlayerSimulation.IsRealtimePaused
                         ? "일시정지"
                         : singlePlayerSimulation.RealtimeSpeedMultiplier + "배속")
-                    .Append("\n다음 경제 정산 ")
-                    .Append(settlementDate)
-                    .Append(" / 전체 12개월")
                     .ToString();
             }
 
@@ -1138,8 +1155,7 @@ namespace Game.Presentation
                     .Append(" · ")
                     .Append(selectedUnit.WeaponDisplayName)
                     .Append(" / ")
-                    .Append(selectedUnit.ArmorDisplayName)
-                    .Append(" · 게임 시간 6시간마다 1 회복");
+                    .Append(selectedUnit.ArmorDisplayName);
                 builder.Append("\n병력 ")
                     .Append(selectedUnit.Soldiers.ToString("N0"))
                     .Append("명 · 공격 ")
@@ -3142,14 +3158,6 @@ namespace Game.Presentation
             if (_multiplayerStatus == null || state == null)
                 return;
 
-            int readyCount = 0;
-            int playerCount = state.players?.Length ?? 0;
-            for (int i = 0; i < playerCount; i++)
-            {
-                if (state.players[i].ready)
-                    readyCount++;
-            }
-
             string phase = GetMultiplayerPhaseName(state.phase);
             string cash = state.world?.ownCompany != null
                 ? $"\n보유 현금 {state.world.ownCompany.cash:N0}"
@@ -3167,9 +3175,31 @@ namespace Game.Presentation
                     : string.Empty;
             _multiplayerStatus.text =
                 $"{state.turn}턴 · {phase}\n" +
-                $"준비 {readyCount}/{playerCount} · 남은 시간 {remaining}\n" +
+                $"{FormatMultiplayerPlayerSlots(state.players)} · " +
+                $"남은 시간 {remaining}\n" +
                 $"실시간 {realtime}{realtimeError} · 상태 버전 {state.revision}" +
                 cash;
+        }
+
+        private static string FormatMultiplayerPlayerSlots(
+            PvpPlayerStateDto[] players)
+        {
+            if (players == null || players.Length == 0)
+                return "P-";
+
+            var orderedPlayers = new List<PvpPlayerStateDto>(players);
+            orderedPlayers.Sort((left, right) => left.slot.CompareTo(right.slot));
+            var builder = new StringBuilder(players.Length * 10);
+            for (int i = 0; i < orderedPlayers.Count; i++)
+            {
+                if (i > 0)
+                    builder.Append(" · ");
+
+                PvpPlayerStateDto player = orderedPlayers[i];
+                builder.Append('P')
+                    .Append(player.slot + 1);
+            }
+            return builder.ToString();
         }
 
         private static string FormatMultiplayerTurnRemaining(
@@ -3252,12 +3282,19 @@ namespace Game.Presentation
             titleLabel.style.marginBottom = 8;
             card.Add(titleLabel);
 
-            var subtitleLabel = new Label(subtitle);
-            subtitleLabel.style.fontSize = 17;
-            subtitleLabel.style.color = new Color(0.68f, 0.74f, 0.83f);
-            subtitleLabel.style.whiteSpace = WhiteSpace.Normal;
-            subtitleLabel.style.marginBottom = 24;
-            card.Add(subtitleLabel);
+            if (!string.IsNullOrWhiteSpace(subtitle))
+            {
+                var subtitleLabel = new Label(subtitle);
+                subtitleLabel.style.fontSize = 17;
+                subtitleLabel.style.color = new Color(0.68f, 0.74f, 0.83f);
+                subtitleLabel.style.whiteSpace = WhiteSpace.Normal;
+                subtitleLabel.style.marginBottom = 24;
+                card.Add(subtitleLabel);
+            }
+            else
+            {
+                titleLabel.style.marginBottom = 24;
+            }
             root.Add(card);
             return card;
         }
@@ -4356,7 +4393,10 @@ namespace Game.Presentation
 
         private void BuildTimeHudAndPauseMenu(VisualElement root)
         {
-            _timeHudView = new VisualElement();
+            _timeHudView = new VisualElement
+            {
+                name = "time-hud"
+            };
             _timeHudView.style.position = Position.Absolute;
             _timeHudView.style.top = 16;
             _timeHudView.style.right = 24;
@@ -4372,84 +4412,81 @@ namespace Game.Presentation
             _timeHudView.style.borderBottomLeftRadius = 10;
             _timeHudView.style.borderBottomRightRadius = 10;
 
-            _timeHudLabel = new Label();
+            _timeHudLabel = new Label
+            {
+                name = "time-label"
+            };
             _timeHudLabel.style.fontSize = 16;
             _timeHudLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             _timeHudLabel.style.color = Color.white;
             _timeHudLabel.style.whiteSpace = WhiteSpace.Normal;
             _timeHudLabel.style.marginBottom = 7;
             _timeHudView.Add(_timeHudLabel);
-
-            _campaignHudLabel = new Label
-            {
-                name = "campaign-status-label"
-            };
-            _campaignHudLabel.style.fontSize = 13;
-            _campaignHudLabel.style.color = new Color(
-                0.84f,
-                0.90f,
-                0.98f);
-            _campaignHudLabel.style.whiteSpace = WhiteSpace.Normal;
-            _campaignHudLabel.style.marginBottom = 9;
-            _timeHudView.Add(_campaignHudLabel);
             AddRealtimeSpeedControls(_timeHudView);
             root.Add(_timeHudView);
 
-            _pauseMenuOverlay = new VisualElement();
+            _pauseMenuOverlay = new VisualElement
+            {
+                name = "pause-menu-overlay"
+            };
             _pauseMenuOverlay.style.position = Position.Absolute;
             _pauseMenuOverlay.style.left = 0;
             _pauseMenuOverlay.style.right = 0;
             _pauseMenuOverlay.style.top = 0;
             _pauseMenuOverlay.style.bottom = 0;
-            _pauseMenuOverlay.style.flexDirection = FlexDirection.Row;
+            _pauseMenuOverlay.style.flexDirection = FlexDirection.Column;
             _pauseMenuOverlay.style.alignItems = Align.Center;
             _pauseMenuOverlay.style.justifyContent = Justify.Center;
             _pauseMenuOverlay.style.backgroundColor =
                 new Color(0.015f, 0.022f, 0.035f, 0.82f);
 
-            VisualElement pauseCard = CreateCard(
+            _pauseMenuView = CreateCard(
                 _pauseMenuOverlay,
                 "일시정지",
-                "게임을 계속하거나 조작법을 확인할 수 있습니다.");
-            pauseCard.style.width = 460;
-            pauseCard.style.marginRight = 12;
-            AddButton(pauseCard, "계속하기", ClosePauseMenu);
-            AddButton(pauseCard, "키 설명", ToggleKeyGuide);
+                string.Empty);
+            _pauseMenuView.name = "pause-menu";
+            _pauseMenuView.style.width = 460;
+            AddButton(_pauseMenuView, "계속하기", ClosePauseMenu);
+            AddButton(_pauseMenuView, "키 설정", OpenKeySettings);
             AddButton(
-                pauseCard,
+                _pauseMenuView,
                 "모드 선택으로 돌아가기",
                 ReturnToModeSelectionFromPause);
 
-            _keyGuideView = CreateCard(
+            _keySettingsView = CreateCard(
                 _pauseMenuOverlay,
-                "키 설명",
-                "지도와 시간 조작");
-            _keyGuideView.style.width = 560;
-            _keyGuideView.style.marginLeft = 12;
+                "키 설정",
+                string.Empty);
+            _keySettingsView.name = "key-settings-menu";
+            _keySettingsView.style.width = 560;
             AddDescription(
-                _keyGuideView,
-                "ESC: 일시정지 메뉴 열기/닫기\n" +
-                "Space: 시간 일시정지/재개\n" +
-                "WASD / 방향키: 지도 이동\n" +
-                "마우스 가운데 버튼 드래그: 지도 이동\n" +
-                "마우스 휠: 확대/축소\n" +
-                "L: 플레이어 본사로 이동\n" +
-                "좌클릭: 지도 칸 선택\n" +
-                "Shift+클릭: 이동 중인 부대의 경유지 예약\n" +
-                "우클릭: 이동·점령·미션 메뉴\n" +
-                "경제와 광산 생산: 매일 자정 정산");
-            AddButton(_keyGuideView, "키 설명 닫기", ToggleKeyGuide);
+                _keySettingsView,
+                "일시정지  Esc\n" +
+                "시간 정지  Space\n" +
+                "지도 이동  WASD / 방향키\n" +
+                "확대·축소  마우스 휠\n" +
+                "본사 이동  L\n" +
+                "선택  좌클릭\n" +
+                "행동 메뉴  우클릭\n" +
+                "경유지 추가  Shift + 좌클릭");
+            AddButton(_keySettingsView, "뒤로", CloseKeySettings);
 
             root.Add(_pauseMenuOverlay);
             RegisterMapInputGuard(_timeHudView);
             RegisterMapInputGuard(_pauseMenuOverlay);
             SetVisible(_timeHudView, false);
-            SetVisible(_keyGuideView, false);
+            SetVisible(_keySettingsView, false);
             SetVisible(_pauseMenuOverlay, false);
         }
 
         private void HandleEscapePressed()
         {
+            if (IsKeySettingsOpen())
+            {
+                CloseKeySettings();
+                return;
+            }
+
             if (IsOperationBoardOpen())
             {
                 CloseOperationBoard();
@@ -4477,7 +4514,7 @@ namespace Game.Presentation
 
         private void OpenPauseMenu()
         {
-            if (_pauseMenuOverlay == null || !_selection.IsSinglePlayer)
+            if (_pauseMenuOverlay == null || !_selection.HasSelection)
                 return;
 
             HideMapContextMenu();
@@ -4488,7 +4525,8 @@ namespace Game.Presentation
             if (_resumeRealtimeAfterPauseMenu)
                 singlePlayerSimulation.ToggleRealtimePause();
 
-            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuView, true);
+            SetVisible(_keySettingsView, false);
             SetVisible(_pauseMenuOverlay, true);
             _pauseMenuOverlay.BringToFront();
             if (gameplayMap != null)
@@ -4498,7 +4536,8 @@ namespace Game.Presentation
         private void ClosePauseMenu()
         {
             SetVisible(_pauseMenuOverlay, false);
-            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuView, true);
+            SetVisible(_keySettingsView, false);
             if (gameplayMap != null)
                 gameplayMap.PointerSelectionBlocked = false;
 
@@ -4515,7 +4554,8 @@ namespace Game.Presentation
         private void HidePauseMenuWithoutResuming()
         {
             SetVisible(_pauseMenuOverlay, false);
-            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuView, true);
+            SetVisible(_keySettingsView, false);
             _resumeRealtimeAfterPauseMenu = false;
         }
 
@@ -4523,24 +4563,37 @@ namespace Game.Presentation
         {
             _resumeRealtimeAfterPauseMenu = false;
             SetVisible(_pauseMenuOverlay, false);
-            SetVisible(_keyGuideView, false);
+            SetVisible(_pauseMenuView, true);
+            SetVisible(_keySettingsView, false);
             ShowModeSelection();
         }
 
-        private void ToggleKeyGuide()
+        private void OpenKeySettings()
         {
-            if (_keyGuideView == null)
+            if (_keySettingsView == null)
                 return;
 
-            bool visible =
-                _keyGuideView.resolvedStyle.display == DisplayStyle.Flex;
-            SetVisible(_keyGuideView, !visible);
+            SetVisible(_pauseMenuView, false);
+            SetVisible(_keySettingsView, true);
+        }
+
+        private void CloseKeySettings()
+        {
+            SetVisible(_keySettingsView, false);
+            SetVisible(_pauseMenuView, true);
         }
 
         private bool IsPauseMenuOpen()
         {
             return _pauseMenuOverlay != null &&
                 _pauseMenuOverlay.resolvedStyle.display == DisplayStyle.Flex;
+        }
+
+        private bool IsKeySettingsOpen()
+        {
+            return IsPauseMenuOpen() &&
+                _keySettingsView != null &&
+                _keySettingsView.resolvedStyle.display == DisplayStyle.Flex;
         }
 
         private bool IsOperationBoardOpen()

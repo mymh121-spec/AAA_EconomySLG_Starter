@@ -59,8 +59,8 @@ namespace Game.Tests.Playability
                     controller,
                     "_campaignHudLabel");
                 Assert.That(campaignHud, Is.Not.Null);
-                Assert.That(campaignHud.text, Does.Contain("현재"));
-                Assert.That(campaignHud.text, Does.Contain("남은"));
+                Assert.That(campaignHud.text, Does.Contain("경제력 집계 대기"));
+                Assert.That(campaignHud.text, Does.Not.Contain("남은"));
 
                 simulation.ResolveCurrentTurn(false);
                 InvokePrivate(controller, "RefreshSinglePlayerStatus");

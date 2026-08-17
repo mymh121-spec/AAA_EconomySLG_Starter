@@ -21,6 +21,8 @@
              Link="Shared\Presentation\TurnReportKoreanFormatter.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\CampaignResultKoreanFormatter.cs"
              Link="Shared\Presentation\CampaignResultKoreanFormatter.cs" />
+    <Compile Include="..\..\Assets\Game\Scripts\Presentation\GameModeSelectionController.cs"
+             Link="Shared\Presentation\GameModeSelectionController.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\StarterMapController.cs"
              Link="Shared\Presentation\StarterMapController.cs" />
     <Compile Include="..\..\Assets\Game\Scripts\Presentation\PvpHttpClient.cs"
@@ -45,6 +47,18 @@
     </Reference>
     <Reference Include="UnityEngine.JSONSerializeModule">
       <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIElementsModule">
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.UIElementsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(UnityEditorRoot)\Editor\Data\Managed\UnityEngine\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

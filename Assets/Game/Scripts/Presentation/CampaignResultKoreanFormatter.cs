@@ -21,19 +21,13 @@ namespace Game.Presentation
         {
             int safeMaxTurns = Math.Max(1, maxTurns);
             int safeCurrentDay = Math.Clamp(currentDay, 1, safeMaxTurns);
-            int remainingDays = Math.Max(0, safeMaxTurns - safeCurrentDay);
-            var builder = new StringBuilder(480)
-                .Append("현재 ")
-                .Append(GameCalendarDate.FromDayNumber(safeCurrentDay))
-                .Append(" · 남은 ")
-                .Append(remainingDays)
-                .Append("일");
+            var builder = new StringBuilder(420);
 
             if (result == null)
             {
                 return builder
-                    .Append("\n경제력 집계 대기 · 첫 일일 정산 후 표시")
-                    .Append("\n위험 알림: 현재 즉시 패배 위험 없음")
+                    .Append("경제력 집계 대기")
+                    .Append("\n위험 알림: 없음")
                     .ToString();
             }
 
@@ -41,7 +35,7 @@ namespace Game.Presentation
                 ? 0m
                 : result.PlayerEconomicPower /
                   result.OpponentCombinedEconomicPower;
-            builder.Append("\n경제력: 플레이어 ")
+            builder.Append("경제력: 플레이어 ")
                 .Append(KoreanFormat.Money(result.PlayerEconomicPower))
                 .Append(" · 상대 합계 ")
                 .Append(KoreanFormat.Money(
