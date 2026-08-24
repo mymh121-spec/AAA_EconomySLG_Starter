@@ -391,6 +391,22 @@ namespace Game.Presentation
             _uiRoot.style.alignItems = Align.Center;
             _uiRoot.style.justifyContent = Justify.Center;
 
+            Font koreanFont = UnityEngine.Resources.Load<Font>(
+                "Fonts/NotoSansKR");
+            if (koreanFont != null)
+            {
+                // UI Toolkit font settings inherit from the root. Embedding an
+                // OFL Korean font is required because WebGL cannot rely on a
+                // Windows system font being available in the browser player.
+                _uiRoot.style.unityFontDefinition =
+                    FontDefinition.FromFont(koreanFont);
+            }
+            else
+            {
+                Debug.LogWarning(
+                    "내장 한글 폰트 Fonts/NotoSansKR를 찾지 못했습니다.");
+            }
+
             _modeView = CreateCard(
                 _uiRoot,
                 "기업의 시대",

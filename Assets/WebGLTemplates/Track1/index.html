@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta
+      name="viewport"
+      content="width=device-width, height=device-height, initial-scale=1, user-scalable=no"
+    >
+    <meta name="theme-color" content="#17130d">
+    <meta
+      name="description"
+      content="경제와 전쟁이 연결되는 360일 실시간 전략 시뮬레이션"
+    >
+    <title>{{{ PRODUCT_NAME }}}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Malgun Gothic", "Noto Sans KR", sans-serif;
+        background: #17130d;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #17130d;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      #game-shell {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        background: #17130d;
+      }
+
+      #unity-canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: {{{ BACKGROUND_COLOR }}};
+        outline: none;
+      }
+
+      #loading {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 14px;
+        padding: 24px;
+        text-align: center;
+        color: #f2e5c4;
+        background:
+          radial-gradient(circle at 50% 38%, #3a2c18 0, #17130d 62%);
+        transition: opacity 240ms ease;
+      }
+
+      #loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #loading strong {
+        font-size: clamp(24px, 4vw, 44px);
+        letter-spacing: -0.04em;
+      }
+
+      #loading p {
+        margin: 0;
+        color: #cdbf9f;
+        font-size: 14px;
+      }
+
+      #progress-track {
+        width: min(420px, 72vw);
+        height: 8px;
+        margin: 4px auto 0;
+        overflow: hidden;
+        border: 1px solid #80683e;
+        border-radius: 99px;
+        background: #0e0c09;
+      }
+
+      #progress-bar {
+        width: 0;
+        height: 100%;
+        background: linear-gradient(90deg, #9f7a35, #e3c574);
+        transition: width 120ms linear;
+      }
+
+      #message {
+        position: absolute;
+        z-index: 2;
+        top: 14px;
+        left: 50%;
+        display: none;
+        max-width: min(760px, calc(100vw - 28px));
+        padding: 10px 14px;
+        transform: translateX(-50%);
+        border: 1px solid #9c6a43;
+        border-radius: 6px;
+        color: #fff4df;
+        background: rgba(76, 36, 22, 0.96);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="game-shell">
+      <canvas
+        id="unity-canvas"
+        width={{{ WIDTH }}}
+        height={{{ HEIGHT }}}
+        tabindex="-1"
+        aria-label="AAA Economy SLG 게임 화면"
+      ></canvas>
+      <div id="message" role="alert"></div>
+      <section id="loading" aria-live="polite">
+        <strong>AAA Economy SLG</strong>
+        <p>경제와 전쟁이 연결된 세계를 준비하고 있습니다.</p>
+        <div id="progress-track" aria-hidden="true">
+          <div id="progress-bar"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+    <script>
+      const canvas = document.querySelector("#unity-canvas");
+      const loading = document.querySelector("#loading");
+      const progressBar = document.querySelector("#progress-bar");
+      const messageBox = document.querySelector("#message");
+
+      function showMessage(message, type) {
+        messageBox.textContent = message;
+        messageBox.style.display = "block";
+        if (type !== "error") {
+          window.setTimeout(() => {
+            messageBox.style.display = "none";
+          }, 5000);
+        }
+      }
+
+      createUnityInstance(canvas, {
+        arguments: [],
+        dataUrl: "Build/{{{ DATA_FILENAME }}}",
+        frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_THREADS
+        workerUrl: "Build/{{{ WORKER_FILENAME }}}",
+#endif
+#if USE_WASM
+        codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+        symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+        productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+        productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+        matchWebGLToCanvasSize: true,
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+        showBanner: showMessage
+      }, (progress) => {
+        progressBar.style.width = `${Math.round(progress * 100)}%`;
+      }).then(() => {
+        loading.classList.add("hidden");
+        canvas.focus();
+      }).catch((error) => {
+        loading.querySelector("p").textContent =
+          "게임을 불러오지 못했습니다. 페이지를 새로고침해 주세요.";
+        showMessage(String(error), "error");
+      });
+    </script>
+  </body>
+</html>

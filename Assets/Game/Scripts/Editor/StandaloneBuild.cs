@@ -19,6 +19,9 @@ namespace Game.Editor
         private const string ScenePath = SceneFolder + "/GameStart.unity";
         private const string OutputRelativePath =
             "Builds/Windows/AAA_EconomySLG.exe";
+        private const string WebGlOutputFolder = "docs";
+        private const string WebGlStagingFolder = "Temp/Track1WebGl";
+        private const string WebGlTemplate = "PROJECT:Track1";
         private const string PreferredBuildRoot = @"D:\AAA_EconomySLG";
         private const string BuildRootEnvironmentVariable =
             "AAA_ECONOMY_SLG_BUILD_ROOT";
@@ -49,6 +52,76 @@ namespace Game.Editor
 
             Debug.Log(
                 $"Windows EXE 빌드 완료: {summary.outputPath} " +
+                $"({summary.totalSize / (1024f * 1024f):F1} MB)");
+        }
+
+        [MenuItem("게임/Track 1 WebGL 제출 빌드")]
+        public static void BuildWebGlSubmission()
+        {
+            EnsureBootScene();
+
+            if (!BuildPipeline.IsBuildTargetSupported(
+                    BuildTargetGroup.WebGL,
+                    BuildTarget.WebGL))
+            {
+                throw new InvalidOperationException(
+                    "WebGL Build Support가 설치되어 있지 않습니다.");
+            }
+
+            EditorUserBuildSettings.SwitchActiveBuildTarget(
+                BuildTargetGroup.WebGL,
+                BuildTarget.WebGL);
+
+            // GitHub Pages does not provide Unity-specific Content-Encoding
+            // headers. Uncompressed output works on any static host without
+            // server configuration or a JavaScript decompression fallback.
+            PlayerSettings.WebGL.compressionFormat =
+                WebGLCompressionFormat.Disabled;
+            PlayerSettings.WebGL.decompressionFallback = false;
+            PlayerSettings.WebGL.template = WebGlTemplate;
+            PlayerSettings.defaultWebScreenWidth = 1280;
+            PlayerSettings.defaultWebScreenHeight = 720;
+
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string stagingPath = Path.GetFullPath(Path.Combine(
+                projectRoot,
+                WebGlStagingFolder));
+            string outputPath = Path.GetFullPath(Path.Combine(
+                projectRoot,
+                WebGlOutputFolder));
+
+            if (Directory.Exists(stagingPath))
+            {
+                Directory.Delete(stagingPath, true);
+            }
+
+            Directory.CreateDirectory(stagingPath);
+            var options = new BuildPlayerOptions
+            {
+                scenes = new[] { ScenePath },
+                locationPathName = stagingPath,
+                target = BuildTarget.WebGL,
+                options = BuildOptions.None
+            };
+
+            BuildReport report = BuildPipeline.BuildPlayer(options);
+            BuildSummary summary = report.summary;
+            if (summary.result != BuildResult.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    $"Track 1 WebGL 빌드 실패: {summary.result}, " +
+                    $"오류 {summary.totalErrors}개");
+            }
+
+            File.WriteAllText(Path.Combine(stagingPath, ".nojekyll"), string.Empty);
+            if (Directory.Exists(outputPath))
+            {
+                Directory.Delete(outputPath, true);
+            }
+
+            Directory.Move(stagingPath, outputPath);
+            Debug.Log(
+                $"Track 1 WebGL 빌드 완료: {outputPath} " +
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
         }
 

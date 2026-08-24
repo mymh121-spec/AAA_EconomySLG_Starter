@@ -2,6 +2,11 @@
 
 Unity C# starter architecture for an economic simulation + SLG game.
 
+## Play in browser
+
+- Submission build: <https://mymh121-spec.github.io/AAA_EconomySLG_Starter/>
+- No installation or login is required. A desktop Chrome, Edge, Firefox, or Safari browser is recommended.
+
 ## Included
 
 - Pure C# domain layer for resources, companies, factories, warehouses, markets, missions, and AI.
@@ -39,6 +44,13 @@ Unity C# starter architecture for an economic simulation + SLG game.
 - Set `AAA_ECONOMY_SLG_BUILD_ROOT` before launching Unity to choose another build root.
 - Run `RUN_WINDOWS_EXE.cmd`; it checks the D: build first and falls back to the project-local `Builds` folder.
 
+## Track 1 WebGL build
+
+- Install Unity's Web Build Support module for `6000.3.21f1`.
+- Use Unity menu `게임 > Track 1 WebGL 제출 빌드`, or run Unity in batch mode with `-buildTarget WebGL -executeMethod Game.Editor.StandaloneBuild.BuildWebGlSubmission`.
+- The command writes a GitHub Pages-ready build to `docs/`, including `.nojekyll` and a responsive Korean loading page.
+- See `SUBMISSION_TRACK1_KO.md` for the final title, short description, controls, and Codex collaboration notes.
+
 ## Korean-first UI
 
 Internal IDs and C# identifiers remain in English for maintainability. Player-facing names are Korean by default:
@@ -57,7 +69,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - A new single-player game starts with 500,000 won and one player unit already selected at headquarters.
 - Map play is real-time: a unit has 10 stamina, movement costs 1 stamina, and 1 stamina regenerates every six in-game hours. Speed buttons affect the clock, movement, capture, AI, and stamina recovery together.
 - Units use the existing six military archetypes: swordsman, spearman, maceman, archer, slinger, and cavalry. The headquarters panel lets the player cycle the unit type before recruitment.
-- Left-clicking selects a tile. Right-clicking opens context actions for troop inspection, missions, movement, mining, and capture. Speed is selected with the on-screen 1–5× buttons, while pause/resume also supports `Space`.
+- Left-clicking selects a tile. Right-clicking opens context actions for troop inspection, missions, movement, mining, and capture. Speed is selected with the on-screen 1–4× buttons, while pause/resume also supports `Space`.
 - Multiplayer supports direct authoritative-server connection plus an optional HIVE individual-matchmaking path. HIVE finds players; the C# server still resolves the game.
 - Returning to mode selection disconnects multiplayer and prevents both simulation paths from running together.
 - See `GAME_MODE_SELECTION_KO.md` for the player flow and setup details.
@@ -86,7 +98,7 @@ Internal IDs and C# identifiers remain in English for maintainability. Player-fa
 - See `GARRISON_RECRUITMENT_RULES_KO.md` for headquarters/castle capacities, local recruitment pools, and mine-guard rules.
 - See `LAND_SEA_MOVEMENT_KO.md` for port-based embarkation, sea transport, landing, and authoritative-server rules.
 - See `GAME_SCOPE_REVIEW_KO.md` for what to add next, what to defer, and the recommended mine-density reduction.
-- See `REALTIME_GAME_CONTINUATION_README_KO.md` for the pause/1–5× realtime handoff state and the copy-ready continuation prompt.
+- See `REALTIME_GAME_CONTINUATION_README_KO.md` for the realtime handoff state and the copy-ready continuation prompt. The current release supports pause and 1–4× speed.
 - See `ECONOMIC_OPERATION_SYSTEM_KO.md` for the 12-month calendar and multi-approach economic operation rules.
 
 ## Architecture

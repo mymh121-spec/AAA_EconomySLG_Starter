@@ -64,13 +64,12 @@ namespace Game.Tests.Playability
 
                 simulation.ResolveCurrentTurn(false);
                 InvokePrivate(controller, "RefreshSinglePlayerStatus");
-                Assert.That(campaignHud.text, Does.Contain("경제력: 플레이어"));
-                Assert.That(campaignHud.text, Does.Contain("상대 경제력:"));
-                Assert.That(campaignHud.text, Does.Contain("경제 패권:"));
+                Assert.That(campaignHud.text, Does.StartWith("경제력 "));
+                Assert.That(campaignHud.text, Does.Contain(" · 상대 "));
                 Assert.That(campaignHud.text,
-                    Does.Contain("12월 30일 예상 순위:"));
-                Assert.That(campaignHud.text, Does.Contain("승리 전망:"));
-                Assert.That(campaignHud.text, Does.Contain("위험 알림:"));
+                    Does.Not.Contain("12월 30일 예상 순위:"));
+                Assert.That(campaignHud.text,
+                    Does.Not.Contain("승리 전망:"));
 
                 int resolvedDays = 1;
                 while (!simulation.IsCampaignFinished &&
