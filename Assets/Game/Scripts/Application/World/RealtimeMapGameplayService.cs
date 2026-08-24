@@ -134,6 +134,150 @@ namespace Game.Application.World
         }
     }
 
+    public static class MapCommanderBattleRules
+    {
+        public const int RollScale = 10000;
+        public const int VictoryGenerationThreshold = 300;
+        public const int DefeatDeathThreshold = 500;
+        public const decimal VictoryGenerationChance = 0.03m;
+        public const decimal DefeatDeathChance = 0.05m;
+
+        public static bool ShouldGenerateCommanderAfterVictory(int roll) =>
+            NormalizeRoll(roll) < VictoryGenerationThreshold;
+
+        public static bool ShouldCommanderDieAfterDefeat(
+            MapCommanderState commander,
+            int roll) =>
+            commander != null &&
+            commander.IsAlive &&
+            !commander.IsProtagonist &&
+            NormalizeRoll(roll) < DefeatDeathThreshold;
+
+        private static int NormalizeRoll(int roll)
+        {
+            int normalized = roll % RollScale;
+            return normalized < 0 ? normalized + RollScale : normalized;
+        }
+    }
+
+    public static class MapCommanderUpkeepRules
+    {
+        public const decimal BaseDailyCostPerSoldier = 2m;
+        public const int BaseCommandCapacity = 100;
+        public const int CommandCapacityPerSkill = 2;
+        public const decimal OverloadCurveCoefficient = 0.15m;
+
+        public static int GetCommandCapacity(MapCommanderState commander) =>
+            commander == null
+                ? 0
+                : BaseCommandCapacity +
+                  commander.Command * CommandCapacityPerSkill;
+
+        public static decimal CalculateBaseUpkeep(int soldiers) =>
+            Math.Max(0, soldiers) * BaseDailyCostPerSoldier;
+
+        public static decimal CalculateConcentrationSurcharge(
+            MapCommanderState commander,
+            int soldiers)
+        {
+            if (commander == null || !commander.IsAlive)
+                return 0m;
+
+            int capacity = GetCommandCapacity(commander);
+            decimal overloadRatio = capacity <= 0
+                ? 0m
+                : Math.Max(0, soldiers - capacity) /
+                  (decimal)capacity;
+            decimal surchargeRate = OverloadCurveCoefficient *
+                overloadRatio * overloadRatio;
+            return CalculateBaseUpkeep(soldiers) * surchargeRate;
+        }
+
+        public static MapMilitaryUpkeepRecord Calculate(
+            MapUnitState unit)
+        {
+            if (unit == null)
+                throw new ArgumentNullException(nameof(unit));
+
+            decimal baseUpkeep = CalculateBaseUpkeep(unit.Soldiers);
+            decimal concentrationSurcharge =
+                CalculateConcentrationSurcharge(
+                    unit.Commander,
+                    unit.Soldiers);
+            return new MapMilitaryUpkeepRecord(
+                unit.OwnerFactionId,
+                unit.Id,
+                unit.Commander?.Id ?? string.Empty,
+                unit.Commander?.DisplayName ?? string.Empty,
+                unit.Soldiers,
+                GetCommandCapacity(unit.Commander),
+                baseUpkeep,
+                concentrationSurcharge);
+        }
+    }
+
+    public readonly struct MapMilitaryUpkeepRecord
+    {
+        public string OwnerFactionId { get; }
+        public string UnitId { get; }
+        public string CommanderId { get; }
+        public string CommanderDisplayName { get; }
+        public int Soldiers { get; }
+        public int CommandCapacity { get; }
+        public decimal BaseUpkeep { get; }
+        public decimal ConcentrationSurcharge { get; }
+        public decimal TotalUpkeep => BaseUpkeep + ConcentrationSurcharge;
+        public bool HasConcentrationSurcharge =>
+            ConcentrationSurcharge > 0m;
+
+        public MapMilitaryUpkeepRecord(
+            string ownerFactionId,
+            string unitId,
+            string commanderId,
+            string commanderDisplayName,
+            int soldiers,
+            int commandCapacity,
+            decimal baseUpkeep,
+            decimal concentrationSurcharge)
+        {
+            OwnerFactionId = ownerFactionId ?? string.Empty;
+            UnitId = unitId ?? string.Empty;
+            CommanderId = commanderId ?? string.Empty;
+            CommanderDisplayName = commanderDisplayName ?? string.Empty;
+            Soldiers = Math.Max(0, soldiers);
+            CommandCapacity = Math.Max(0, commandCapacity);
+            BaseUpkeep = Math.Max(0m, baseUpkeep);
+            ConcentrationSurcharge = Math.Max(
+                0m,
+                concentrationSurcharge);
+        }
+    }
+
+    public readonly struct MapMilitaryUpkeepSettlementReport
+    {
+        public decimal TotalAssessed { get; }
+        public decimal TotalPaid { get; }
+        public decimal TotalNewDebt { get; }
+        public decimal PlayerAssessed { get; }
+        public decimal PlayerConcentrationSurcharge { get; }
+
+        public MapMilitaryUpkeepSettlementReport(
+            decimal totalAssessed,
+            decimal totalPaid,
+            decimal totalNewDebt,
+            decimal playerAssessed,
+            decimal playerConcentrationSurcharge)
+        {
+            TotalAssessed = Math.Max(0m, totalAssessed);
+            TotalPaid = Math.Max(0m, totalPaid);
+            TotalNewDebt = Math.Max(0m, totalNewDebt);
+            PlayerAssessed = Math.Max(0m, playerAssessed);
+            PlayerConcentrationSurcharge = Math.Max(
+                0m,
+                playerConcentrationSurcharge);
+        }
+    }
+
     public sealed class MapCommanderState
     {
         public string Id { get; }
@@ -146,7 +290,10 @@ namespace Game.Application.World
         public decimal HiringCost { get; }
         public string EmployerFactionId { get; private set; }
         public string AssignedUnitId { get; private set; }
-        public bool IsAvailable => string.IsNullOrEmpty(EmployerFactionId);
+        public bool IsProtagonist { get; }
+        public bool IsAlive { get; private set; }
+        public bool IsAvailable =>
+            IsAlive && string.IsNullOrEmpty(EmployerFactionId);
         public decimal AttackModifier => GetModifier(
             Command * 0.55m + Tactics * 0.45m,
             Personality == MapCommanderPersonality.Aggressive ? 0.05m :
@@ -170,7 +317,8 @@ namespace Game.Application.World
             int logistics,
             MapCommanderPersonality personality,
             int loyalty,
-            decimal hiringCost)
+            decimal hiringCost,
+            bool isProtagonist = false)
         {
             Id = string.IsNullOrWhiteSpace(id)
                 ? throw new ArgumentException("지휘관 ID가 필요합니다.", nameof(id))
@@ -184,6 +332,8 @@ namespace Game.Application.World
             Personality = personality;
             Loyalty = Math.Clamp(loyalty, 0, 100);
             HiringCost = Math.Max(0m, hiringCost);
+            IsProtagonist = isProtagonist;
+            IsAlive = true;
             EmployerFactionId = string.Empty;
             AssignedUnitId = string.Empty;
         }
@@ -199,6 +349,17 @@ namespace Game.Application.World
             Loyalty = Math.Clamp(Loyalty + amount, 0, 100);
         }
 
+        internal bool MarkKilled()
+        {
+            if (!IsAlive || IsProtagonist)
+                return false;
+
+            IsAlive = false;
+            EmployerFactionId = string.Empty;
+            AssignedUnitId = string.Empty;
+            return true;
+        }
+
         private decimal GetModifier(decimal skill, decimal personalityBonus)
         {
             decimal loyaltyScale = 0.50m + Loyalty / 200m;
@@ -207,6 +368,52 @@ namespace Game.Application.World
                 1m + (skillBonus + personalityBonus) * loyaltyScale,
                 0.80m,
                 1.20m);
+        }
+    }
+
+    public readonly struct MapCommanderGeneratedRecord
+    {
+        public MapCommanderState Commander { get; }
+        public string WinningFactionId { get; }
+        public GridCoordinate Coordinate { get; }
+        public int EconomicDay { get; }
+
+        public MapCommanderGeneratedRecord(
+            MapCommanderState commander,
+            string winningFactionId,
+            GridCoordinate coordinate,
+            int economicDay)
+        {
+            Commander = commander;
+            WinningFactionId = winningFactionId ?? string.Empty;
+            Coordinate = coordinate;
+            EconomicDay = Math.Max(1, economicDay);
+        }
+    }
+
+    public readonly struct MapCommanderDeathRecord
+    {
+        public string CommanderId { get; }
+        public string CommanderDisplayName { get; }
+        public string DefeatedFactionId { get; }
+        public string UnitId { get; }
+        public GridCoordinate Coordinate { get; }
+        public int EconomicDay { get; }
+
+        public MapCommanderDeathRecord(
+            string commanderId,
+            string commanderDisplayName,
+            string defeatedFactionId,
+            string unitId,
+            GridCoordinate coordinate,
+            int economicDay)
+        {
+            CommanderId = commanderId ?? string.Empty;
+            CommanderDisplayName = commanderDisplayName ?? string.Empty;
+            DefeatedFactionId = defeatedFactionId ?? string.Empty;
+            UnitId = unitId ?? string.Empty;
+            Coordinate = coordinate;
+            EconomicDay = Math.Max(1, economicDay);
         }
     }
 
@@ -1066,6 +1273,17 @@ namespace Game.Application.World
 
     public sealed class RealtimeMapGameplayService
     {
+        public const string ProtagonistCommanderId =
+            "commander_protagonist";
+
+        private static readonly string[] GeneratedCommanderFamilyNames =
+        {
+            "김", "이", "박", "최", "정", "조", "임", "백"
+        };
+        private static readonly string[] GeneratedCommanderGivenNames =
+        {
+            "서준", "하늘", "지안", "도현", "수아", "현우", "은채", "태윤"
+        };
         private sealed class PendingSupplyTransport
         {
             public MapSupplyTransportRecord Record;
@@ -1148,6 +1366,7 @@ namespace Game.Application.World
             _lastSupplyInterdictionResults =
                 new List<MapSupplyInterdictionResult>();
         private int _unitSequence;
+        private int _generatedCommanderSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
         private readonly bool _enableAi;
@@ -1191,6 +1410,8 @@ namespace Game.Application.World
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapCommanderGeneratedRecord> CommanderGenerated;
+        public event Action<MapCommanderDeathRecord> CommanderDied;
         public event Action<MapSupplyInterdictionResult>
             SupplyInterdictionResolved;
         public event Action<MapWorldMissionState> WorldMissionReady;
@@ -1301,19 +1522,32 @@ namespace Game.Application.World
         {
             if (string.IsNullOrWhiteSpace(ownerFactionId))
             {
-                reason = "지휘관을 고용할 세력이 필요합니다.";
+                reason = "장수를 소환할 세력이 필요합니다.";
                 return false;
             }
 
             MapCommanderState commander = FindCommander(commanderId);
             if (commander == null)
             {
-                reason = "고용할 중립 지휘관을 찾을 수 없습니다.";
+                reason = "소환할 장수를 찾을 수 없습니다.";
+                return false;
+            }
+            if (!commander.IsAlive)
+            {
+                reason = "전사한 장수는 소환할 수 없습니다.";
+                return false;
+            }
+            if (commander.IsProtagonist && !string.Equals(
+                    ownerFactionId,
+                    PlayerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "주인공 장수는 플레이어 세력만 지휘할 수 있습니다.";
                 return false;
             }
             if (!commander.IsAvailable)
             {
-                reason = "이미 다른 부대에 고용된 지휘관입니다.";
+                reason = "이미 다른 부대에 배속된 장수입니다.";
                 return false;
             }
 
@@ -1323,12 +1557,12 @@ namespace Game.Application.World
                     ownerFactionId,
                     StringComparison.Ordinal))
             {
-                reason = "지휘관을 배속할 아군 부대를 찾을 수 없습니다.";
+                reason = "장수를 배속할 아군 부대를 찾을 수 없습니다.";
                 return false;
             }
             if (unit.Commander != null)
             {
-                reason = $"{unit.Id}에는 이미 {unit.Commander.DisplayName} 지휘관이 있습니다.";
+                reason = $"{unit.Id}에는 이미 {unit.Commander.DisplayName} 장수가 있습니다.";
                 return false;
             }
             MapCastleControlState castle = FindCastle(unit.Coordinate);
@@ -1337,7 +1571,7 @@ namespace Game.Application.World
                     ownerFactionId,
                     StringComparison.Ordinal))
             {
-                reason = "지휘관 고용과 배속은 부대가 주둔한 아군 성에서만 가능합니다.";
+                reason = "장수 소환과 배속은 부대가 주둔한 아군 성에서만 가능합니다.";
                 return false;
             }
 
@@ -1407,6 +1641,149 @@ namespace Game.Application.World
                 MapCommanderPersonality.Logistician,
                 76,
                 42000m));
+            _commanders.Add(new MapCommanderState(
+                ProtagonistCommanderId,
+                "주인공",
+                82,
+                78,
+                74,
+                MapCommanderPersonality.Cautious,
+                100,
+                0m,
+                isProtagonist: true));
+        }
+
+        private bool AssignAvailableCommandersToAiFaction(string factionId)
+        {
+            bool changed = false;
+            for (int unitIndex = 0; unitIndex < _units.Count; unitIndex++)
+            {
+                MapUnitState unit = _units[unitIndex];
+                if (unit.Commander != null || !string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                MapCastleControlState castle = FindCastle(unit.Coordinate);
+                if (castle == null || !string.Equals(
+                        castle.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                MapCommanderState best = null;
+                int bestScore = int.MinValue;
+                for (int commanderIndex = 0;
+                     commanderIndex < _commanders.Count;
+                     commanderIndex++)
+                {
+                    MapCommanderState candidate = _commanders[commanderIndex];
+                    if (!candidate.IsAvailable || candidate.IsProtagonist)
+                        continue;
+
+                    int score = candidate.Command + candidate.Tactics +
+                        candidate.Logistics + candidate.Loyalty / 2;
+                    if (score > bestScore)
+                    {
+                        best = candidate;
+                        bestScore = score;
+                    }
+                }
+
+                if (best == null)
+                    break;
+
+                best.Hire(factionId, unit.Id);
+                unit.AssignCommander(best);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private MapCommanderState GenerateVictoryCommander(
+            string winningFactionId,
+            GridCoordinate coordinate)
+        {
+            _generatedCommanderSequence++;
+            int profileSeed = CreateBattleOutcomeRoll(
+                "profile_" + _generatedCommanderSequence,
+                winningFactionId,
+                coordinate,
+                string.Empty);
+            string displayName =
+                GeneratedCommanderFamilyNames[
+                    profileSeed % GeneratedCommanderFamilyNames.Length] +
+                GeneratedCommanderGivenNames[
+                    (profileSeed / GeneratedCommanderFamilyNames.Length) %
+                    GeneratedCommanderGivenNames.Length];
+            int command = 55 + profileSeed % 36;
+            int tactics = 55 + (profileSeed * 7 + 11) % 36;
+            int logistics = 55 + (profileSeed * 13 + 19) % 36;
+            int loyalty = 55 + (profileSeed * 17 + 23) % 41;
+            decimal hiringCost = 18000m +
+                (command + tactics + logistics) * 100m;
+
+            return new MapCommanderState(
+                $"commander_generated_{_economicDaySequence}_" +
+                $"{coordinate.X}_{coordinate.Y}_" +
+                _generatedCommanderSequence,
+                displayName,
+                command,
+                tactics,
+                logistics,
+                (MapCommanderPersonality)(profileSeed % 4),
+                loyalty,
+                hiringCost);
+        }
+
+        private int CreateBattleOutcomeRoll(
+            string category,
+            string factionId,
+            GridCoordinate coordinate,
+            string commanderId)
+        {
+            uint hash = 2166136261u;
+            hash = MixStableHash(hash, _layout.Seed);
+            hash = MixStableHash(hash, _economicDaySequence);
+            hash = MixStableHash(hash, coordinate.X);
+            hash = MixStableHash(hash, coordinate.Y);
+            hash = MixStableHash(hash, category);
+            hash = MixStableHash(hash, factionId);
+            hash = MixStableHash(hash, commanderId);
+            return (int)(hash % MapCommanderBattleRules.RollScale);
+        }
+
+        private static uint MixStableHash(uint hash, int value)
+        {
+            unchecked
+            {
+                for (int shift = 0; shift < 32; shift += 8)
+                {
+                    hash ^= (byte)(value >> shift);
+                    hash *= 16777619u;
+                }
+                return hash;
+            }
+        }
+
+        private static uint MixStableHash(uint hash, string value)
+        {
+            unchecked
+            {
+                string safeValue = value ?? string.Empty;
+                for (int i = 0; i < safeValue.Length; i++)
+                {
+                    hash ^= safeValue[i];
+                    hash *= 16777619u;
+                }
+                return hash;
+            }
         }
 
         public MapUnitState FindOwnedUnitAt(
@@ -3478,6 +3855,7 @@ namespace Game.Application.World
                 }
 
                 string attackerFaction = castle.CapturingFactionId;
+                string defenderFaction = castle.OwnerFactionId;
                 MapSiegeAction resolvedAction = castle.SiegeAction;
                 decimal attackerPower = SumCombatPowerAt(
                     castle.Coordinate,
@@ -3485,11 +3863,29 @@ namespace Game.Application.World
                     true);
                 decimal defenderPower = SumCombatPowerAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId,
+                    defenderFaction,
                     false);
                 int defenderSoldiers = SumSoldiersAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId);
+                    defenderFaction);
+                var defeatedCommanderUnits =
+                    new List<MapUnitState>();
+                for (int unitIndex = 0;
+                     unitIndex < _units.Count;
+                     unitIndex++)
+                {
+                    MapUnitState unit = _units[unitIndex];
+                    if (unit.Commander != null &&
+                        unit.Soldiers > 0 &&
+                        unit.Coordinate.Equals(castle.Coordinate) &&
+                        string.Equals(
+                            unit.OwnerFactionId,
+                            defenderFaction,
+                            StringComparison.Ordinal))
+                    {
+                        defeatedCommanderUnits.Add(unit);
+                    }
+                }
                 if (attackerPower <= 0m)
                     continue;
 
@@ -3559,7 +3955,7 @@ namespace Game.Application.World
                     foodNeed * foodMultiplier);
                 int appliedDefenderCasualties = ApplyCasualtiesAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId,
+                    defenderFaction,
                     defenderCasualties);
                 int appliedAttackerCasualties = ApplyCasualtiesAt(
                     castle.Coordinate,
@@ -3567,7 +3963,7 @@ namespace Game.Application.World
                     attackerCasualties);
                 AdjustFactionMoraleAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId,
+                    defenderFaction,
                     -defenderMoraleLoss);
                 AdjustFactionFatigueAt(
                     castle.Coordinate,
@@ -3581,10 +3977,10 @@ namespace Game.Application.World
                 int pursuitCasualties = 0;
                 int remainingDefenders = SumSoldiersAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId);
+                    defenderFaction);
                 decimal defenderMorale = AverageMoraleAt(
                     castle.Coordinate,
-                    castle.OwnerFactionId);
+                    defenderFaction);
                 bool sufferedDecisiveLoss = remainingDefenders > 0 &&
                     (appliedDefenderCasualties * 4 >=
                          Math.Max(1, defenderSoldiers) ||
@@ -3593,7 +3989,7 @@ namespace Game.Application.World
                 {
                     if (TryFindRetreatDestination(
                             castle.Coordinate,
-                            castle.OwnerFactionId,
+                            defenderFaction,
                             out GridCoordinate retreatDestination))
                     {
                         decimal pursuitRate = resolvedAction ==
@@ -3606,16 +4002,16 @@ namespace Game.Application.World
                                         : 0m;
                         pursuitCasualties = ApplyCasualtiesAt(
                             castle.Coordinate,
-                            castle.OwnerFactionId,
+                            defenderFaction,
                             RoundToInt(remainingDefenders * pursuitRate));
                         defenderRetreated = RetreatFactionUnitsAt(
                             castle.Coordinate,
-                            castle.OwnerFactionId,
+                            defenderFaction,
                             retreatDestination);
                         RefreshCastleGarrison(castle);
                         remainingDefenders = SumSoldiersAt(
                             castle.Coordinate,
-                            castle.OwnerFactionId);
+                            defenderFaction);
                     }
                 }
                 if ((castle.SiegeAction == MapSiegeAction.Negotiation &&
@@ -3648,6 +4044,16 @@ namespace Game.Application.World
                     capitalDestroyed);
                 _lastSiegeDayResults.Add(result);
                 SiegeDayResolved?.Invoke(result);
+                bool battleDecided = defenderSoldiers > 0 &&
+                    (defenderRetreated || remainingDefenders == 0);
+                if (battleDecided)
+                {
+                    ResolveDecisiveBattleCommanderOutcome(
+                        attackerFaction,
+                        defenderFaction,
+                        castle.Coordinate,
+                        defeatedCommanderUnits);
+                }
                 changed = true;
             }
 
@@ -3902,6 +4308,19 @@ namespace Game.Application.World
 
         private decimal GetMovementSupplyModifier(MapUnitState unit) =>
             IsSupplyEnabled(unit) ? unit.MovementSupplyModifier : 1m;
+
+        public IReadOnlyList<MapMilitaryUpkeepRecord>
+            CreateDailyMilitaryUpkeep()
+        {
+            var records = new List<MapMilitaryUpkeepRecord>(_units.Count);
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Soldiers > 0)
+                    records.Add(MapCommanderUpkeepRules.Calculate(unit));
+            }
+            return records;
+        }
 
         public IReadOnlyList<MapMineProductionRecord> CreateDailyProduction()
         {
@@ -4702,6 +5121,7 @@ namespace Game.Application.World
                         continue;
                     changed = true;
                 }
+                changed |= AssignAvailableCommandersToAiFaction(factionId);
                 for (int unitIndex = 0; unitIndex < _units.Count; unitIndex++)
                 {
                     MapUnitState unit = _units[unitIndex];
@@ -4866,6 +5286,70 @@ namespace Game.Application.World
             }
 
             return changed;
+        }
+
+        private void ResolveDecisiveBattleCommanderOutcome(
+            string winningFactionId,
+            string defeatedFactionId,
+            GridCoordinate coordinate,
+            IReadOnlyList<MapUnitState> defeatedCommanderUnits)
+        {
+            int generationRoll = CreateBattleOutcomeRoll(
+                "victory_generation",
+                winningFactionId,
+                coordinate,
+                string.Empty);
+            if (MapCommanderBattleRules.ShouldGenerateCommanderAfterVictory(
+                    generationRoll))
+            {
+                MapCommanderState generated = GenerateVictoryCommander(
+                    winningFactionId,
+                    coordinate);
+                _commanders.Add(generated);
+                CommanderGenerated?.Invoke(new MapCommanderGeneratedRecord(
+                    generated,
+                    winningFactionId,
+                    coordinate,
+                    _economicDaySequence));
+            }
+
+            if (defeatedCommanderUnits == null)
+                return;
+
+            for (int i = 0; i < defeatedCommanderUnits.Count; i++)
+            {
+                MapUnitState unit = defeatedCommanderUnits[i];
+                MapCommanderState commander = unit?.Commander;
+                if (commander == null)
+                    continue;
+
+                int deathRoll = CreateBattleOutcomeRoll(
+                    "defeat_death",
+                    defeatedFactionId,
+                    coordinate,
+                    commander.Id);
+                if (!MapCommanderBattleRules.ShouldCommanderDieAfterDefeat(
+                        commander,
+                        deathRoll))
+                {
+                    continue;
+                }
+
+                string commanderId = commander.Id;
+                string commanderName = commander.DisplayName;
+                string unitId = unit.Id;
+                if (!commander.MarkKilled())
+                    continue;
+
+                unit.AssignCommander(null);
+                CommanderDied?.Invoke(new MapCommanderDeathRecord(
+                    commanderId,
+                    commanderName,
+                    defeatedFactionId,
+                    unitId,
+                    coordinate,
+                    _economicDaySequence));
+            }
         }
 
         private bool AdvanceWorldMissions()

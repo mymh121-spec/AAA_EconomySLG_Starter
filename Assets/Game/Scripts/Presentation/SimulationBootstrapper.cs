@@ -360,6 +360,61 @@ namespace Game.Presentation
                 _worldEconomy).SettleTransportCosts(transports);
         }
 
+        public MapMilitaryUpkeepSettlementReport SettleMapMilitaryUpkeep(
+            IReadOnlyList<MapMilitaryUpkeepRecord> upkeepRecords)
+        {
+            if (_simulation == null || _worldEconomy == null)
+                BuildSimulation();
+
+            decimal totalAssessed = 0m;
+            decimal totalPaid = 0m;
+            decimal totalNewDebt = 0m;
+            decimal playerAssessed = 0m;
+            decimal playerSurcharge = 0m;
+            if (upkeepRecords != null)
+            {
+                for (int i = 0; i < upkeepRecords.Count; i++)
+                {
+                    MapMilitaryUpkeepRecord record = upkeepRecords[i];
+                    decimal assessed = record.TotalUpkeep;
+                    if (assessed <= 0m || !_worldEconomy.TryGetCompany(
+                            new CompanyId(record.OwnerFactionId),
+                            out CompanyEconomyRuntime company))
+                    {
+                        continue;
+                    }
+
+                    decimal paid = Math.Min(
+                        company.Company.Cash,
+                        assessed);
+                    if (paid > 0m)
+                        company.Company.TrySpend(paid);
+                    decimal newDebt = assessed - paid;
+                    if (newDebt > 0m)
+                        company.Company.AddDebt(newDebt);
+
+                    totalAssessed += assessed;
+                    totalPaid += paid;
+                    totalNewDebt += newDebt;
+                    if (company.CampaignState.IsPlayer)
+                    {
+                        playerAssessed += assessed;
+                        playerSurcharge +=
+                            record.ConcentrationSurcharge;
+                    }
+                }
+            }
+
+            if (totalAssessed > 0m)
+                RealtimeStateChanged?.Invoke();
+            return new MapMilitaryUpkeepSettlementReport(
+                totalAssessed,
+                totalPaid,
+                totalNewDebt,
+                playerAssessed,
+                playerSurcharge);
+        }
+
         public bool ApplyMapMineOwnership(
             GridMapLayout layout,
             RealtimeMapGameplayService gameplay,

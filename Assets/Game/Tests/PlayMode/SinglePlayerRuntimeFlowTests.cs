@@ -289,6 +289,7 @@ namespace Game.Tests.PlayMode
             Button joinRoomButton = null;
             Button keySettingsButton = null;
             bool hasReadyButton = false;
+            bool hasFormationChangeButton = false;
             document.rootVisualElement.Query<Button>().ForEach(button =>
             {
                 if (button.text == "1인이서 하기")
@@ -301,6 +302,11 @@ namespace Game.Tests.PlayMode
                     keySettingsButton = button;
                 else if (button.text == "이번 턴 준비 완료")
                     hasReadyButton = true;
+                if (button.text != null &&
+                    button.text.StartsWith("편성:", StringComparison.Ordinal))
+                {
+                    hasFormationChangeButton = true;
+                }
             });
             Assert.That(singlePlayerButton, Is.Not.Null,
                 "1인 플레이 버튼이 실제 UI 트리에 있어야 합니다.");
@@ -312,6 +318,8 @@ namespace Game.Tests.PlayMode
                 "Esc 일시정지 메뉴에 키 설정 버튼이 있어야 합니다.");
             Assert.That(hasReadyButton, Is.False,
                 "실시간 플레이 화면에는 준비 완료 버튼을 표시하지 않아야 합니다.");
+            Assert.That(hasFormationChangeButton, Is.False,
+                "편성 비율 변경 버튼은 표시하지 않아야 합니다.");
             bool hasRoomCapacityInput = false;
             document.rootVisualElement.Query<TextField>().ForEach(field =>
             {
@@ -320,6 +328,21 @@ namespace Game.Tests.PlayMode
             });
             Assert.That(hasRoomCapacityInput, Is.False,
                 "플레이 인원수 입력은 연결 화면에 표시하지 않아야 합니다.");
+
+            InvokePrivate(controller, "ShowSinglePlayerSetup");
+            yield return null;
+            VisualElement setupView = document.rootVisualElement.Q<VisualElement>(
+                "single-player-setup-view");
+            Label setupTitle = document.rootVisualElement.Q<Label>(
+                "single-player-setup-title");
+            Assert.That(setupView, Is.Not.Null);
+            Assert.That(setupTitle, Is.Not.Null);
+            Assert.That(setupView.resolvedStyle.backgroundColor,
+                Is.EqualTo(new Color(0.90f, 0.84f, 0.72f, 1f)));
+            Assert.That(document.rootVisualElement.resolvedStyle.backgroundColor,
+                Is.EqualTo(new Color(0.90f, 0.84f, 0.72f, 1f)));
+            Assert.That(setupTitle.resolvedStyle.color,
+                Is.EqualTo(new Color(0.07f, 0.06f, 0.05f, 1f)));
 
             InvokePrivate(controller, "SelectSinglePlayer");
             yield return null;
@@ -333,6 +356,10 @@ namespace Game.Tests.PlayMode
             Assert.That(map, Is.Not.Null);
             Assert.That(simulation.gameObject.activeInHierarchy, Is.True);
             Assert.That(map.gameObject.activeInHierarchy, Is.True);
+            Assert.That(map.SelectedPlayerUnit, Is.Not.Null);
+            Assert.That(map.SelectedPlayerUnit.Commander, Is.Not.Null);
+            Assert.That(map.SelectedPlayerUnit.Commander.IsProtagonist, Is.True);
+            Assert.That(map.SelectedPlayerUnit.Commander.IsAlive, Is.True);
             Assert.That(simulation.CurrentCampaignState.Participants.Count,
                 Is.EqualTo(4));
             Assert.That(simulation.CurrentWorldEconomy.Markets.Count,

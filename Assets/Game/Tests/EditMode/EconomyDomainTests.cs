@@ -764,9 +764,11 @@ namespace Game.Tests
                 "player",
                 tuning: new MapGameplayTuning(fixedStepsPerMove: 1000));
 
-            Assert.That(service.Commanders.Count, Is.EqualTo(4));
+            Assert.That(service.Commanders.Count, Is.EqualTo(5));
             Assert.That(
-                service.Commanders.Select(candidate => candidate.Personality),
+                service.Commanders
+                    .Where(candidate => !candidate.IsProtagonist)
+                    .Select(candidate => candidate.Personality),
                 Is.EquivalentTo(new[]
                 {
                     MapCommanderPersonality.Aggressive,
@@ -839,6 +841,187 @@ namespace Game.Tests
                 Is.GreaterThan(lowLoyalty.AttackModifier));
             Assert.That(highLoyalty.MobilityModifier,
                 Is.GreaterThan(lowLoyalty.MobilityModifier));
+        }
+
+        [Test]
+        public void CommanderBattleRules_UseThreeAndFivePercentAndProtectProtagonist()
+        {
+            Assert.That(
+                MapCommanderBattleRules.ShouldGenerateCommanderAfterVictory(
+                    299),
+                Is.True);
+            Assert.That(
+                MapCommanderBattleRules.ShouldGenerateCommanderAfterVictory(
+                    300),
+                Is.False);
+
+            var regular = new MapCommanderState(
+                "regular",
+                "일반 장수",
+                70,
+                70,
+                70,
+                MapCommanderPersonality.Cautious,
+                70,
+                1000m);
+            var protagonist = new MapCommanderState(
+                "protagonist",
+                "주인공",
+                80,
+                80,
+                80,
+                MapCommanderPersonality.Cautious,
+                100,
+                0m,
+                isProtagonist: true);
+
+            Assert.That(
+                MapCommanderBattleRules.ShouldCommanderDieAfterDefeat(
+                    regular,
+                    499),
+                Is.True);
+            Assert.That(
+                MapCommanderBattleRules.ShouldCommanderDieAfterDefeat(
+                    regular,
+                    500),
+                Is.False);
+            Assert.That(
+                MapCommanderBattleRules.ShouldCommanderDieAfterDefeat(
+                    protagonist,
+                    0),
+                Is.False);
+        }
+
+        [Test]
+        public void CommanderUpkeepRules_ContinuouslySurchargeExcessTroops()
+        {
+            var commander = new MapCommanderState(
+                "upkeep_commander",
+                "유지비 장수",
+                50,
+                70,
+                70,
+                MapCommanderPersonality.Cautious,
+                70,
+                1000m);
+
+            Assert.That(
+                MapCommanderUpkeepRules.GetCommandCapacity(commander),
+                Is.EqualTo(200));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateBaseUpkeep(300),
+                Is.EqualTo(600m));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateConcentrationSurcharge(
+                    commander,
+                    200),
+                Is.EqualTo(0m));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateConcentrationSurcharge(
+                    commander,
+                    300),
+                Is.EqualTo(22.50m));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateConcentrationSurcharge(
+                    commander,
+                    500),
+                Is.EqualTo(337.50m));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateConcentrationSurcharge(
+                    commander,
+                    800),
+                Is.EqualTo(2160m));
+            Assert.That(
+                MapCommanderUpkeepRules.CalculateConcentrationSurcharge(
+                    null,
+                    1000),
+                Is.EqualTo(0m));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_CreatesDailyCommanderUpkeepRecords()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                4 * 2).ToArray();
+            var layout = new GridMapLayout(
+                4,
+                2,
+                364,
+                new GridCoordinate(0, 0),
+                Array.Empty<GridCoordinate>(),
+                Array.Empty<MinePlacement>(),
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1000,
+                    initialSoldiersPerUnit: 500),
+                enableAi: false);
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    out MapUnitState unit,
+                    out _),
+                Is.True);
+            MapCommanderState commander = service.Commanders[0];
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    commander.Id,
+                    unit.Id,
+                    out _),
+                Is.True);
+
+            MapMilitaryUpkeepRecord upkeep =
+                service.CreateDailyMilitaryUpkeep().Single();
+
+            Assert.That(upkeep.UnitId, Is.EqualTo(unit.Id));
+            Assert.That(upkeep.CommanderId, Is.EqualTo(commander.Id));
+            Assert.That(upkeep.Soldiers, Is.EqualTo(500));
+            Assert.That(upkeep.CommandCapacity, Is.EqualTo(244));
+            Assert.That(upkeep.BaseUpkeep, Is.EqualTo(1000m));
+            Assert.That(
+                upkeep.ConcentrationSurcharge,
+                Is.EqualTo(165.1169m).Within(0.0001m));
+            Assert.That(
+                upkeep.TotalUpkeep,
+                Is.EqualTo(1165.1169m).Within(0.0001m));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_AiSummonsSharedCommanderAtFriendlyCastle()
+        {
+            var terrain = Enumerable.Repeat(
+                GridTerrainKind.Plains,
+                6 * 3).ToArray();
+            var layout = new GridMapLayout(
+                6,
+                3,
+                363,
+                new GridCoordinate(0, 1),
+                new[] { new GridCoordinate(5, 1) },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1000,
+                    aiDecisionIntervalSteps: 1));
+
+            service.AdvanceFixedSteps(1);
+
+            MapUnitState aiUnit = service.Units.Single(unit =>
+                unit.OwnerFactionId == "ai_1");
+            Assert.That(aiUnit.Commander, Is.Not.Null);
+            Assert.That(aiUnit.Commander.IsProtagonist, Is.False);
+            Assert.That(aiUnit.Commander.EmployerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(aiUnit.Commander.AssignedUnitId, Is.EqualTo(aiUnit.Id));
         }
 
         [Test]

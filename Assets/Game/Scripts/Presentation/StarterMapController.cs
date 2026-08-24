@@ -226,6 +226,8 @@ namespace Game.Presentation
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapCommanderGeneratedRecord> CommanderGenerated;
+        public event Action<MapCommanderDeathRecord> CommanderDied;
         public event Action<MapSupplyInterdictionResult>
             SupplyInterdictionResolved;
         public event Action<MapWorldMissionState> WorldMissionReady;
@@ -864,6 +866,13 @@ namespace Game.Presentation
                 Array.Empty<MapMineProductionRecord>();
         }
 
+        public IReadOnlyList<MapMilitaryUpkeepRecord>
+            CreateDailyMilitaryUpkeep()
+        {
+            return _gameplayService?.CreateDailyMilitaryUpkeep() ??
+                Array.Empty<MapMilitaryUpkeepRecord>();
+        }
+
         public bool AdvanceEconomicDay(out MapMineSpawnRecord spawnedMine)
         {
             if (_gameplayService == null)
@@ -1379,6 +1388,11 @@ namespace Game.Presentation
                 out _))
             {
                 _selectedPlayerUnitId = startingUnit.Id;
+                _gameplayService.TryHireCommander(
+                    _gameplayService.PlayerFactionId,
+                    RealtimeMapGameplayService.ProtagonistCommanderId,
+                    startingUnit.Id,
+                    out _);
             }
             else
             {
@@ -1400,6 +1414,8 @@ namespace Game.Presentation
             _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
             _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
+            _gameplayService.CommanderGenerated += HandleCommanderGenerated;
+            _gameplayService.CommanderDied += HandleCommanderDied;
             _gameplayService.SupplyInterdictionResolved +=
                 HandleSupplyInterdictionResolved;
             _gameplayService.WorldMissionReady += HandleWorldMissionReady;
@@ -1418,6 +1434,8 @@ namespace Game.Presentation
                 _gameplayService.CapitalDestroyed -= HandleCapitalDestroyed;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
                 _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
+                _gameplayService.CommanderGenerated -= HandleCommanderGenerated;
+                _gameplayService.CommanderDied -= HandleCommanderDied;
                 _gameplayService.SupplyInterdictionResolved -=
                     HandleSupplyInterdictionResolved;
                 _gameplayService.WorldMissionReady -= HandleWorldMissionReady;
@@ -2776,6 +2794,17 @@ namespace Game.Presentation
         {
             RefreshCurrentSelection();
             SiegeDayResolved?.Invoke(result);
+        }
+
+        private void HandleCommanderGenerated(
+            MapCommanderGeneratedRecord record)
+        {
+            CommanderGenerated?.Invoke(record);
+        }
+
+        private void HandleCommanderDied(MapCommanderDeathRecord record)
+        {
+            CommanderDied?.Invoke(record);
         }
 
         private void HandleSupplyInterdictionResolved(

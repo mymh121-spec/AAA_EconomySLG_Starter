@@ -24,6 +24,10 @@ namespace Game.Presentation
         [SerializeField] private bool keepAcrossScenes = false;
 
         private const string DefaultServerEndpoint = "http://127.0.0.1:5200";
+        private static readonly Color SinglePlayerSetupBackgroundColor =
+            new Color(0.90f, 0.84f, 0.72f, 1f);
+        private static readonly Color SinglePlayerSetupTextColor =
+            new Color(0.07f, 0.06f, 0.05f, 1f);
 
         private readonly GameModeSelection _selection =
             new GameModeSelection();
@@ -61,7 +65,6 @@ namespace Game.Presentation
         private Button _unitTypeButton;
         private Button _selectUnitButton;
         private Button _inspectUnitButton;
-        private Button _formationButton;
         private Button _moveUnitButton;
         private Button _cancelMoveButton;
         private VisualElement _mapContextMenu;
@@ -71,7 +74,6 @@ namespace Game.Presentation
         private Button _contextUnitTypeButton;
         private Button _contextSelectUnitButton;
         private Button _contextInspectUnitButton;
-        private Button _contextFormationButton;
         private Button _contextMoveUnitButton;
         private Button _contextCancelMoveButton;
         private Button _contextCaptureMineButton;
@@ -353,6 +355,8 @@ namespace Game.Presentation
             gameplayMap.CapitalDestroyed += HandleCapitalDestroyed;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
+            gameplayMap.CommanderGenerated += HandleCommanderGenerated;
+            gameplayMap.CommanderDied += HandleCommanderDied;
             gameplayMap.SupplyInterdictionResolved +=
                 HandleSupplyInterdictionResolved;
             gameplayMap.WorldMissionReady += HandleWorldMissionReady;
@@ -393,6 +397,12 @@ namespace Game.Presentation
                 _uiRoot,
                 "새 세계 설정",
                 string.Empty);
+            _singlePlayerSetupView.name = "single-player-setup-view";
+            if (_singlePlayerSetupView.childCount > 0 &&
+                _singlePlayerSetupView[0] is Label setupTitle)
+            {
+                setupTitle.name = "single-player-setup-title";
+            }
             _mapSizeField = new EnumField("지도 크기", MapSizePreset.Standard);
             _mapResourceField = new EnumField(
                 "자원량",
@@ -401,6 +411,12 @@ namespace Game.Presentation
             _mapSeedField = new IntegerField("지도 시드") { value = 42 };
             _neutralCastleField = new IntegerField("중립 성 수") { value = 8 };
             _mapWrapField = new Toggle("가로 세계 순환") { value = true };
+            StyleSetupField(_mapSizeField);
+            StyleSetupField(_mapResourceField);
+            StyleSetupField(_mapWaterField);
+            StyleSetupField(_mapSeedField);
+            StyleSetupField(_neutralCastleField);
+            StyleSetupField(_mapWrapField);
             _singlePlayerSetupView.Add(_mapSizeField);
             _singlePlayerSetupView.Add(_mapResourceField);
             _singlePlayerSetupView.Add(_mapWaterField);
@@ -414,6 +430,7 @@ namespace Game.Presentation
                     Environment.TickCount ^ DateTime.UtcNow.Millisecond));
             AddButton(_singlePlayerSetupView, "이 설정으로 시작", SelectSinglePlayer);
             AddButton(_singlePlayerSetupView, "뒤로", ShowModeSelection);
+            ApplySinglePlayerSetupTheme();
 
             _connectionView = CreateCard(
                 _uiRoot,
@@ -524,7 +541,7 @@ namespace Game.Presentation
             _singlePlayerView.Add(_campaignHudLabel);
             _singleMapSelectionStatus = AddStatus(_singlePlayerView);
             _singleMapSelectionStatus.text =
-                "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
+                "지도 칸을 선택하세요.";
             BuildSinglePlayerMapActionPanel(_singlePlayerView);
             MakeCardVerticallyScrollable(
                 _singlePlayerView,
@@ -1043,7 +1060,30 @@ namespace Game.Presentation
             SetVisible(_singlePlayerResultView, false);
             SetVisible(_multiplayerView, false);
             ShowMenuOverlay();
+            ApplySinglePlayerSetupTheme();
             SetVisible(_singlePlayerSetupView, true);
+        }
+
+        private void ApplySinglePlayerSetupTheme()
+        {
+            if (_uiRoot != null)
+                _uiRoot.style.backgroundColor = SinglePlayerSetupBackgroundColor;
+            if (_singlePlayerSetupView == null)
+                return;
+
+            _singlePlayerSetupView.style.backgroundColor =
+                SinglePlayerSetupBackgroundColor;
+            Label title = _singlePlayerSetupView.Q<Label>(
+                "single-player-setup-title");
+            if (title != null)
+                title.style.color = SinglePlayerSetupTextColor;
+
+            StyleSetupField(_mapSizeField);
+            StyleSetupField(_mapResourceField);
+            StyleSetupField(_mapWaterField);
+            StyleSetupField(_mapSeedField);
+            StyleSetupField(_neutralCastleField);
+            StyleSetupField(_mapWrapField);
         }
 
         private void ShowMenuOverlay()
@@ -1140,61 +1180,45 @@ namespace Game.Presentation
 
             RefreshCampaignHud();
 
-            var builder = new StringBuilder(180);
-            builder.Append("보유 자금 ")
+            var builder = new StringBuilder(128);
+            builder.Append("자금 ")
                 .Append(singlePlayerSimulation.PlayerCash.ToString("N0"))
                 .Append("원");
 
             MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
             if (selectedUnit != null)
             {
-                builder.Append("\n선택 유닛 체력 ")
+                builder.Append("\n")
+                    .Append(selectedUnit.ArchetypeDisplayName)
+                    .Append(" · 병력 ")
+                    .Append(selectedUnit.Soldiers.ToString("N0"))
+                    .Append(" · 체력 ")
                     .Append(selectedUnit.Stamina)
                     .Append('/')
                     .Append(selectedUnit.MaxStamina)
-                    .Append(" · ")
-                    .Append(selectedUnit.WeaponDisplayName)
-                    .Append(" / ")
-                    .Append(selectedUnit.ArmorDisplayName);
-                builder.Append("\n병력 ")
-                    .Append(selectedUnit.Soldiers.ToString("N0"))
-                    .Append("명 · 공격 ")
-                    .Append(selectedUnit.AttackPower.ToString("N2"))
-                    .Append(" · 방어 ")
-                    .Append(selectedUnit.DefensePower.ToString("N2"))
                     .Append(" · 사기 ")
-                    .Append(selectedUnit.Morale.ToString("N0"))
-                    .Append(" · 피로 ")
-                    .Append(selectedUnit.Fatigue.ToString("N0"))
-                    .Append("\n편성 전열 ")
-                    .Append(selectedUnit.Formation.FrontlineSoldiers.ToString("N0"))
-                    .Append(" · 원거리 ")
-                    .Append(selectedUnit.Formation.RangedSoldiers.ToString("N0"))
-                    .Append(" · 기병 ")
-                    .Append(selectedUnit.Formation.CavalrySoldiers.ToString("N0"))
-                    .Append("\n이동 배율 편성 x")
-                    .Append(selectedUnit.WeightedBranchMobilityModifier.ToString("F2"))
-                    .Append(" · 갑옷 x")
-                    .Append(selectedUnit.ArmorMobilityModifier.ToString("F2"))
-                    .Append(" · 지휘관 병참 x")
-                    .Append(selectedUnit.CommanderMobilityModifier.ToString("F2"))
-                    .Append(" · 최종 x")
-                    .Append(selectedUnit.MobilityModifier.ToString("F2"));
+                    .Append(selectedUnit.Morale.ToString("N0"));
                 if (selectedUnit.Commander != null)
                 {
-                    builder.Append("\n지휘관 ")
+                    builder.Append("\n장수 ")
                         .Append(selectedUnit.Commander.DisplayName)
-                        .Append(" · ")
-                        .Append(MapCommanderPersonalityNames.GetKoreanName(
-                            selectedUnit.Commander.Personality))
-                        .Append(" · 충성 ")
-                        .Append(selectedUnit.Commander.Loyalty)
-                        .Append(" · 통솔 ")
-                        .Append(selectedUnit.Commander.Command)
-                        .Append(" · 전술 ")
-                        .Append(selectedUnit.Commander.Tactics)
-                        .Append(" · 병참 ")
-                        .Append(selectedUnit.Commander.Logistics);
+                        .Append(selectedUnit.Commander.IsProtagonist
+                            ? " · 불사"
+                            : string.Empty);
+                }
+
+                MapMilitaryUpkeepRecord upkeep =
+                    MapCommanderUpkeepRules.Calculate(selectedUnit);
+                builder.Append("\n유지비 ")
+                    .Append(upkeep.TotalUpkeep.ToString("N0"))
+                    .Append("원/일");
+                if (upkeep.HasConcentrationSurcharge)
+                {
+                    builder.Append(" · 병력 집중 +")
+                        .Append(upkeep.ConcentrationSurcharge.ToString("N0"))
+                        .Append(" (한도 ")
+                        .Append(upkeep.CommandCapacity.ToString("N0"))
+                        .Append(')');
                 }
 
                 if (selectedUnit.IsMoving && gameplayMap.GameplayService != null)
@@ -1226,9 +1250,6 @@ namespace Game.Presentation
                 }
             }
 
-            builder.Append('\n')
-                .Append(CampaignResultKoreanFormatter.Format(
-                    singlePlayerSimulation.CampaignResult));
             _singlePlayerStatus.text = builder.ToString();
         }
 
@@ -1261,17 +1282,38 @@ namespace Game.Presentation
                  capital.WallDurability * 100 <=
                  capital.MaxWallDurability * 30);
 
-            _campaignHudLabel.text =
-                CampaignResultKoreanFormatter.FormatHud(
-                    result,
-                    campaign,
-                    singlePlayerSimulation.RealtimeDayNumber,
-                    singlePlayerSimulation.MaxCampaignTurns,
-                    bankruptcyLimit,
-                    capital?.IsUnderSiege == true,
-                    capital?.WallDurability ?? 0,
-                    capital?.MaxWallDurability ?? 0,
-                    _campaignTransitionAlert);
+            if (result == null)
+            {
+                _campaignHudLabel.text = "경제력 집계 대기";
+            }
+            else
+            {
+                var builder = new StringBuilder(96)
+                    .Append("경제력 ")
+                    .Append(result.PlayerEconomicPower.ToString("N0"))
+                    .Append(" · 상대 ")
+                    .Append(result.OpponentCombinedEconomicPower.ToString("N0"));
+                if (hasRisk)
+                {
+                    string risk = !string.IsNullOrEmpty(
+                            _campaignTransitionAlert)
+                        ? _campaignTransitionAlert
+                        : campaign?.Player?.Company?.IsBankrupt == true
+                            ? "파산"
+                            : campaign?.Player?.IsCapitalStanding == false
+                                ? "수도 멸망"
+                                : capital?.IsUnderSiege == true
+                                    ? "수도 공성 중"
+                                    : capital != null &&
+                                      capital.MaxWallDurability > 0 &&
+                                      capital.WallDurability * 100 <=
+                                      capital.MaxWallDurability * 30
+                                        ? "수도 성벽 위험"
+                                        : "부채 위험";
+                    builder.Append("\n주의 · ").Append(risk);
+                }
+                _campaignHudLabel.text = builder.ToString();
+            }
             _campaignHudLabel.style.color = hasRisk
                 ? new Color(1f, 0.68f, 0.34f)
                 : new Color(0.84f, 0.90f, 0.98f);
@@ -1636,41 +1678,14 @@ namespace Game.Presentation
 
             HeadquartersInventorySnapshot inventory =
                 singlePlayerSimulation.GetPlayerHeadquartersInventory();
-            var builder = new StringBuilder(320);
+            var builder = new StringBuilder(96);
             builder.Append(selection.InteractionHint)
-                .Append("\n\n내 성 창고")
-                .Append("\n용량 ")
+                .Append("\n창고 ")
                 .Append(inventory.UsedCapacity.ToString("N2"))
                 .Append(" / ")
                 .Append(inventory.Capacity.ToString("N2"))
-                .Append(" · 남음 ")
-                .Append(inventory.AvailableCapacity.ToString("N2"));
-
-            if (inventory.Items.Count == 0)
-            {
-                builder.Append("\n- 보관 중인 물품 없음");
-            }
-            else
-            {
-                for (int i = 0; i < inventory.Items.Count; i++)
-                {
-                    HeadquartersInventoryItem item = inventory.Items[i];
-                    builder.Append("\n- ")
-                        .Append(item.DisplayName)
-                        .Append(": ")
-                        .Append(item.OnHand.ToString("N2"));
-                    if (item.Reserved > 0m)
-                    {
-                        builder.Append(" · 사용 가능 ")
-                            .Append(item.Available.ToString("N2"))
-                            .Append(" · 예약 ")
-                            .Append(item.Reserved.ToString("N2"));
-                    }
-                }
-            }
-
-            builder.Append("\n점령한 철광산의 철광석은 매일 자정 자동 입고됩니다.")
-                .Append("\n금광 수익은 보유 자금으로 자동 정산됩니다.");
+                .Append(" · 품목 ")
+                .Append(inventory.Items.Count);
             return builder.ToString();
         }
 
@@ -1725,12 +1740,6 @@ namespace Game.Presentation
             SetVisible(
                 _contextInspectUnitButton,
                 !string.IsNullOrEmpty(selection.UnitId));
-            ConfigureFormationButton(
-                _contextFormationButton,
-                gameplayMap.SelectedPlayerUnit,
-                gameplayMap.SelectedPlayerUnit != null &&
-                gameplayMap.SelectedPlayerUnit.Coordinate.Equals(
-                    selection.Coordinate));
             ConfigureCaptureMineButton(selection);
             ConfigureEconomicDevelopmentButtons(selection);
             ConfigureCastleButtons(selection);
@@ -1901,6 +1910,43 @@ namespace Game.Presentation
                 (result.CastleCaptured ? " · 성 함락" : string.Empty));
         }
 
+        private void HandleCommanderGenerated(
+            MapCommanderGeneratedRecord record)
+        {
+            if (!_selection.IsSinglePlayer || record.Commander == null)
+                return;
+
+            string winner = string.Equals(
+                record.WinningFactionId,
+                "player",
+                StringComparison.Ordinal)
+                ? "플레이어"
+                : record.WinningFactionId;
+            SetMapActionFeedback(
+                $"{winner} 승전 · 3% 장수 생성 발동! " +
+                $"{record.Commander.DisplayName} 장수가 공용 소환 후보에 합류했습니다.");
+            RefreshNeutralNpcView();
+        }
+
+        private void HandleCommanderDied(MapCommanderDeathRecord record)
+        {
+            if (!_selection.IsSinglePlayer)
+                return;
+
+            string defeated = string.Equals(
+                record.DefeatedFactionId,
+                "player",
+                StringComparison.Ordinal)
+                ? "플레이어"
+                : record.DefeatedFactionId;
+            SetMapActionFeedback(
+                $"{defeated} 패전 · 5% 전사 판정으로 " +
+                $"{record.CommanderDisplayName} 장수가 전사했습니다.");
+            RefreshNeutralNpcView();
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
         private void HandleSupplyInterdictionResolved(
             MapSupplyInterdictionResult result)
         {
@@ -1936,6 +1982,9 @@ namespace Game.Presentation
 
             singlePlayerSimulation.ApplyMapMineProduction(
                 gameplayMap.CreateDailyMineProduction());
+            MapMilitaryUpkeepSettlementReport upkeep =
+                singlePlayerSimulation.SettleMapMilitaryUpkeep(
+                    gameplayMap.CreateDailyMilitaryUpkeep());
             IReadOnlyList<MapSupplyTransportRecord> supplyTransports =
                 gameplayMap.AdvanceDailySupplyLogistics(
                     singlePlayerSimulation);
@@ -1958,7 +2007,19 @@ namespace Game.Presentation
                 SetMapActionFeedback(
                     $"일일 보급 수송 {supplyTransports.Count:N0}건을 " +
                     $"예약했습니다. 비용 {totalCost:N0}원 · " +
-                    $"최장 {latestArrivalDay:N0}일 도착");
+                    $"최장 {latestArrivalDay:N0}일 도착 · " +
+                    $"군 유지비 {upkeep.PlayerAssessed:N0}원" +
+                    (upkeep.PlayerConcentrationSurcharge > 0m
+                        ? $"(집중 할증 +" +
+                          $"{upkeep.PlayerConcentrationSurcharge:N0})"
+                        : string.Empty));
+            }
+            else if (upkeep.PlayerConcentrationSurcharge > 0m)
+            {
+                SetMapActionFeedback(
+                    $"군 유지비 {upkeep.PlayerAssessed:N0}원 정산 · " +
+                    $"장수 병력 집중 할증 +" +
+                    $"{upkeep.PlayerConcentrationSurcharge:N0}원");
             }
         }
 
@@ -2070,9 +2131,8 @@ namespace Game.Presentation
 
         private MapCommanderState GetPendingCommander()
         {
-            IReadOnlyList<MapCommanderState> commanders =
-                gameplayMap?.Commanders;
-            if (commanders == null || commanders.Count == 0)
+            List<MapCommanderState> commanders = GetCommanderCandidates();
+            if (commanders.Count == 0)
                 return null;
 
             _pendingCommanderIndex = Math.Clamp(
@@ -2082,13 +2142,29 @@ namespace Game.Presentation
             return commanders[_pendingCommanderIndex];
         }
 
-        private void CyclePendingCommander()
+        private List<MapCommanderState> GetCommanderCandidates()
         {
+            var candidates = new List<MapCommanderState>();
             IReadOnlyList<MapCommanderState> commanders =
                 gameplayMap?.Commanders;
-            if (commanders == null || commanders.Count == 0)
+            if (commanders == null)
+                return candidates;
+
+            for (int i = 0; i < commanders.Count; i++)
             {
-                SetNeutralNpcFeedback("고용 가능한 중립 지휘관이 없습니다.");
+                MapCommanderState commander = commanders[i];
+                if (commander.IsAlive && !commander.IsProtagonist)
+                    candidates.Add(commander);
+            }
+            return candidates;
+        }
+
+        private void CyclePendingCommander()
+        {
+            List<MapCommanderState> commanders = GetCommanderCandidates();
+            if (commanders.Count == 0)
+            {
+                SetNeutralNpcFeedback("소환 가능한 AI 장수가 없습니다.");
                 return;
             }
 
@@ -2099,31 +2175,22 @@ namespace Game.Presentation
 
         private string BuildCommanderCandidateList()
         {
-            IReadOnlyList<MapCommanderState> commanders =
-                gameplayMap?.Commanders;
-            if (commanders == null || commanders.Count == 0)
-                return "중립 지휘관 후보 없음";
+            List<MapCommanderState> commanders = GetCommanderCandidates();
+            if (commanders.Count == 0)
+                return "공용 AI 장수 후보 없음";
 
-            var builder = new StringBuilder("중립 지휘관 후보 목록");
+            var builder = new StringBuilder("공용 AI 장수");
             for (int i = 0; i < commanders.Count; i++)
             {
                 MapCommanderState commander = commanders[i];
                 builder.Append('\n')
                     .Append(i == _pendingCommanderIndex ? "▶ " : "  ")
                     .Append(commander.DisplayName)
-                    .Append(" · 통솔 ")
-                    .Append(commander.Command)
-                    .Append(" / 전술 ")
-                    .Append(commander.Tactics)
-                    .Append(" / 병참 ")
-                    .Append(commander.Logistics)
                     .Append(" · ")
                     .Append(MapCommanderPersonalityNames.GetKoreanName(
                         commander.Personality))
-                    .Append(" · 충성 ")
-                    .Append(commander.Loyalty)
                     .Append(commander.IsAvailable
-                        ? " · 고용 가능"
+                        ? " · 소환 가능"
                         : $" · {commander.AssignedUnitId} 배속 중");
             }
 
@@ -2140,7 +2207,7 @@ namespace Game.Presentation
             if (commander == null || unit == null)
             {
                 SetNeutralNpcFeedback(
-                    "중립 지휘관과 배속할 플레이어 부대를 선택하세요.");
+                    "AI 장수와 배속할 플레이어 부대를 선택하세요.");
                 return;
             }
             if (!singlePlayerSimulation.CanAffordPlayerCash(
@@ -2168,9 +2235,9 @@ namespace Game.Presentation
             }
 
             string result =
-                $"{commander.DisplayName} 지휘관을 {unit.Id}에 배속했습니다. " +
+                $"{commander.DisplayName} 장수를 {unit.Id}에 소환·배속했습니다. " +
                 $"성향 {MapCommanderPersonalityNames.GetKoreanName(commander.Personality)} · " +
-                $"충성도 {commander.Loyalty} · 고용비 {commander.HiringCost:N0}";
+                $"충성도 {commander.Loyalty} · 소환비 {commander.HiringCost:N0}";
             SetMapActionFeedback(result);
             SetNeutralNpcFeedback(result);
             RefreshNeutralNpcView();
@@ -2246,63 +2313,6 @@ namespace Game.Presentation
                 _contextUnitTypeButton.text = label;
         }
 
-        private static void ConfigureFormationButton(
-            Button button,
-            MapUnitState unit,
-            bool visible)
-        {
-            if (button == null)
-                return;
-
-            SetVisible(button, visible && unit != null);
-            if (!visible || unit == null)
-                return;
-
-            MapUnitFormation formation = unit.Formation;
-            button.SetEnabled(unit.Soldiers > 0);
-            button.text =
-                $"편성: {MapUnitFormationPresetNames.GetKoreanName(formation.Preset)} · " +
-                $"전열 {formation.FrontlineRatio:P0} / " +
-                $"원거리 {formation.RangedRatio:P0} / " +
-                $"기병 {formation.CavalryRatio:P0} · 클릭해서 변경";
-        }
-
-        private void CycleSelectedUnitFormation()
-        {
-            MapUnitState unit = gameplayMap?.SelectedPlayerUnit;
-            if (unit == null)
-            {
-                SetMapActionFeedback("먼저 편성을 변경할 플레이어 부대를 선택하세요.");
-                return;
-            }
-
-            MapUnitFormationPreset[] order =
-            {
-                MapUnitFormationPreset.Balanced,
-                MapUnitFormationPreset.Frontline,
-                MapUnitFormationPreset.Ranged,
-                MapUnitFormationPreset.Cavalry
-            };
-            int currentIndex = Array.IndexOf(order, unit.Formation.Preset);
-            MapUnitFormationPreset next = order[(currentIndex + 1) % order.Length];
-            if (!gameplayMap.TrySetSelectedPlayerUnitFormation(
-                    next,
-                    out string reason))
-            {
-                SetMapActionFeedback(reason);
-                return;
-            }
-
-            MapUnitFormation formation = unit.Formation;
-            SetMapActionFeedback(
-                $"{unit.Id} 편성을 " +
-                $"{MapUnitFormationPresetNames.GetKoreanName(next)}으로 변경했습니다. " +
-                $"전열 {formation.FrontlineSoldiers:N0}명 · " +
-                $"원거리 {formation.RangedSoldiers:N0}명 · " +
-                $"기병 {formation.CavalrySoldiers:N0}명");
-            RefreshSelectedMapActions();
-        }
-
         private void InspectUnitAtCurrentSelection()
         {
             if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
@@ -2326,30 +2336,14 @@ namespace Game.Presentation
                 ? $"이동 중 → {unit.Destination.Value}"
                 : "대기 중";
             string commander = unit.Commander == null
-                ? "지휘관 없음"
-                : $"지휘관 {unit.Commander.DisplayName} · " +
-                  $"{MapCommanderPersonalityNames.GetKoreanName(unit.Commander.Personality)} · " +
-                  $"충성 {unit.Commander.Loyalty}";
-            string mobility =
-                $"이동 편성 x{unit.WeightedBranchMobilityModifier:F2} · " +
-                $"갑옷 x{unit.ArmorMobilityModifier:F2} · " +
-                $"지휘관 병참 x{unit.CommanderMobilityModifier:F2} · " +
-                $"최종 x{unit.MobilityModifier:F2}";
+                ? "장수 없음"
+                : $"장수 {unit.Commander.DisplayName}" +
+                  (unit.Commander.IsProtagonist ? "(불사)" : string.Empty);
             SetMapActionFeedback(
-                $"부대 정보 | {owner} | {unit.ArchetypeDisplayName} | " +
-                $"{unit.WeaponDisplayName} / {unit.ArmorDisplayName} | " +
-                $"공격 x{unit.AttackModifier:F2} · 방어 x{unit.DefenseModifier:F2} · " +
-                $"기동 x{unit.MobilityModifier:F2} | " +
-                $"병력 {unit.Soldiers:N0} · 공격 {unit.AttackPower:N2} · " +
-                $"방어 {unit.DefensePower:N2} · 사기 {unit.Morale:N0} · " +
-                $"편성 전열 {unit.Formation.FrontlineSoldiers:N0} · " +
-                $"원거리 {unit.Formation.RangedSoldiers:N0} · " +
-                $"기병 {unit.Formation.CavalrySoldiers:N0} | " +
-                $"{mobility} | " +
-                $"{commander} | " +
-                $"피로 {unit.Fatigue:N0} | " +
-                $"체력 {unit.Stamina}/{unit.MaxStamina} | " +
-                $"위치 {unit.Coordinate} | {movement}");
+                $"{owner} · {unit.ArchetypeDisplayName} · " +
+                $"병력 {unit.Soldiers:N0} · 사기 {unit.Morale:N0} · " +
+                $"체력 {unit.Stamina}/{unit.MaxStamina}\n" +
+                $"{commander} · {unit.Coordinate} · {movement}");
         }
 
         private void SelectPlayerUnit()
@@ -2617,10 +2611,8 @@ namespace Game.Presentation
             MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
             _singleMapActionTitle.text = selectedUnit == null
                 ? "지도 행동 · 선택된 유닛 없음"
-                : $"지도 행동 · {selectedUnit.ArchetypeDisplayName} " +
-                  $"{selectedUnit.Id} {selectedUnit.Coordinate} · " +
-                  $"{selectedUnit.WeaponDisplayName}/{selectedUnit.ArmorDisplayName} · " +
-                  $"체력 {selectedUnit.Stamina}/{selectedUnit.MaxStamina}";
+                : $"지도 행동 · {selectedUnit.ArchetypeDisplayName} · " +
+                  $"병력 {selectedUnit.Soldiers:N0}";
 
             ConfigureMapActionButtons(
                 selection,
@@ -2633,11 +2625,6 @@ namespace Game.Presentation
             bool hasUnit = !string.IsNullOrEmpty(selection.UnitId);
             SetVisible(_unitTypeButton, false);
             SetVisible(_inspectUnitButton, hasUnit);
-            ConfigureFormationButton(
-                _formationButton,
-                selectedUnit,
-                selectedUnit != null);
-
             if (_mapContextMenu != null &&
                 _mapContextMenu.resolvedStyle.display == DisplayStyle.Flex)
             {
@@ -2649,11 +2636,6 @@ namespace Game.Presentation
                 ConfigureCancelMoveButton(_contextCancelMoveButton);
                 SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
-                ConfigureFormationButton(
-                    _contextFormationButton,
-                    selectedUnit,
-                    selectedUnit != null &&
-                    selectedUnit.Coordinate.Equals(selection.Coordinate));
                 ConfigureCaptureMineButton(selection);
                 ConfigureEconomicDevelopmentButtons(selection);
                 ConfigureCastleButtons(selection);
@@ -3348,9 +3330,6 @@ namespace Game.Presentation
             _inspectUnitButton = CreateMapActionButton(
                 "이 칸의 부대 정보 확인",
                 InspectUnitAtCurrentSelection);
-            _formationButton = CreateMapActionButton(
-                "편성: 전열 중심 · 클릭해서 변경",
-                CycleSelectedUnitFormation);
             _moveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 MoveSelectedPlayerUnit);
@@ -3361,12 +3340,11 @@ namespace Game.Presentation
             _singleMapActionPanel.Add(_createUnitButton);
             _singleMapActionPanel.Add(_selectUnitButton);
             _singleMapActionPanel.Add(_inspectUnitButton);
-            _singleMapActionPanel.Add(_formationButton);
             _singleMapActionPanel.Add(_moveUnitButton);
             _singleMapActionPanel.Add(_cancelMoveButton);
 
             _singleMapActionFeedback = new Label(
-                "본사를 선택해 첫 유닛을 창설하세요.");
+                "지도에서 행동할 칸을 선택하세요.");
             _singleMapActionFeedback.style.fontSize = 13;
             _singleMapActionFeedback.style.color =
                 new Color(0.70f, 0.80f, 0.92f);
@@ -3379,7 +3357,6 @@ namespace Game.Presentation
             SetVisible(_unitTypeButton, false);
             SetVisible(_selectUnitButton, false);
             SetVisible(_inspectUnitButton, false);
-            SetVisible(_formationButton, false);
             SetVisible(_moveUnitButton, false);
             SetVisible(_cancelMoveButton, false);
         }
@@ -3444,9 +3421,6 @@ namespace Game.Presentation
                     InspectUnitAtCurrentSelection();
                     HideMapContextMenu();
                 });
-            _contextFormationButton = CreateMapActionButton(
-                "편성: 전열 중심 · 클릭해서 변경",
-                CycleSelectedUnitFormation);
             _contextMoveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 () =>
@@ -3531,7 +3505,6 @@ namespace Game.Presentation
             _mapContextMenu.Add(_contextCreateUnitButton);
             _mapContextMenu.Add(_contextSelectUnitButton);
             _mapContextMenu.Add(_contextInspectUnitButton);
-            _mapContextMenu.Add(_contextFormationButton);
             _mapContextMenu.Add(_contextMoveUnitButton);
             _mapContextMenu.Add(_contextCancelMoveButton);
             _mapContextMenu.Add(_contextCaptureMineButton);
@@ -3557,7 +3530,7 @@ namespace Game.Presentation
         {
             _neutralNpcTopButton = new Button(OpenNeutralNpcView)
             {
-                text = "중립 NPC · 용병/장비/지휘관"
+                text = "병영 · 부대/장비/장수"
             };
             _neutralNpcTopButton.focusable = false;
             _neutralNpcTopButton.style.position = Position.Absolute;
@@ -3575,8 +3548,8 @@ namespace Game.Presentation
 
             _neutralNpcView = CreateCard(
                 root,
-                "중립 용병·장비·지휘관",
-                "병종과 장비를 구성하거나 능력·성향·충성도가 다른 지휘관을 선택 부대에 고용합니다.");
+                "병영 · 부대/장비/장수",
+                "부대를 편성하고 공용 AI 장수를 소환합니다.");
             _neutralNpcView.style.position = Position.Absolute;
             _neutralNpcView.style.top = 78;
             _neutralNpcView.style.left = 440;
@@ -3611,10 +3584,10 @@ namespace Game.Presentation
             _npcEquipButton.style.backgroundColor =
                 new Color(0.45f, 0.31f, 0.12f, 1f);
             _npcCommanderButton = CreateMapActionButton(
-                "중립 지휘관 선택",
+                "AI 장수 선택",
                 CyclePendingCommander);
             _npcHireCommanderButton = CreateMapActionButton(
-                "선택 부대에 지휘관 고용",
+                "선택 부대에 장수 소환",
                 HirePendingCommander);
             _npcHireCommanderButton.style.backgroundColor =
                 new Color(0.34f, 0.20f, 0.50f, 1f);
@@ -4332,13 +4305,13 @@ namespace Game.Presentation
                     ? "장비 변경 대상: 선택된 부대 없음"
                     : $"장비 변경 대상: {selectedUnit.ArchetypeDisplayName} {selectedUnit.Id}") +
                 (pendingCommander == null
-                    ? "\n중립 지휘관 후보 없음"
-                    : $"\n지휘관 후보: {pendingCommander.DisplayName} · " +
+                    ? "\n공용 AI 장수 후보 없음"
+                    : $"\n장수 후보: {pendingCommander.DisplayName} · " +
                       $"통솔 {pendingCommander.Command} / 전술 {pendingCommander.Tactics} / " +
                       $"병참 {pendingCommander.Logistics} · " +
                       $"{MapCommanderPersonalityNames.GetKoreanName(pendingCommander.Personality)} · " +
                       $"충성 {pendingCommander.Loyalty} · " +
-                      $"고용비 {pendingCommander.HiringCost:N0}") +
+                      $"소환비 {pendingCommander.HiringCost:N0}") +
                 "\n" + commanderCandidateList;
 
             _npcArchetypeButton.text = $"병종: {archetypeName} · 클릭해 변경";
@@ -4349,13 +4322,13 @@ namespace Game.Presentation
                 ? "선택 부대 장비 변경"
                 : $"{selectedUnit.Id} 장비 변경 · {equipmentCost:N0}";
             _npcCommanderButton.text = pendingCommander == null
-                ? "중립 지휘관 후보 없음"
-                : $"지휘관: {pendingCommander.DisplayName} · 클릭해 변경";
+                ? "공용 AI 장수 후보 없음"
+                : $"장수: {pendingCommander.DisplayName} · 클릭해 변경";
             _npcHireCommanderButton.text = pendingCommander == null
-                ? "고용할 지휘관 없음"
+                ? "소환할 장수 없음"
                 : selectedUnit?.Commander != null
                     ? $"{selectedUnit.Commander.DisplayName} 지휘 중"
-                    : $"{pendingCommander.DisplayName} 고용 · " +
+                    : $"{pendingCommander.DisplayName} 소환 · " +
                       $"{pendingCommander.HiringCost:N0}";
 
             bool canCreate = gameplayMap != null &&
@@ -4381,7 +4354,7 @@ namespace Game.Presentation
             _npcRecruitButton.SetEnabled(canCreate);
             _npcEquipButton.SetEnabled(canEquip);
             _npcCommanderButton.SetEnabled(
-                gameplayMap != null && gameplayMap.Commanders.Count > 1);
+                GetCommanderCandidates().Count > 1);
             _npcHireCommanderButton.SetEnabled(canHireCommander);
         }
 
@@ -4791,6 +4764,24 @@ namespace Game.Presentation
             input.style.color = Color.white;
         }
 
+        private static void StyleSetupField<TValue>(BaseField<TValue> field)
+        {
+            if (field == null)
+                return;
+
+            field.style.minHeight = 36;
+            field.style.marginTop = 3;
+            field.style.marginBottom = 3;
+            field.style.fontSize = 14;
+            field.style.color = new Color(0.08f, 0.10f, 0.14f, 1f);
+            field.labelElement.style.minWidth = 106;
+            field.labelElement.style.marginRight = 10;
+            field.labelElement.style.fontSize = 14;
+            field.labelElement.style.unityFontStyleAndWeight =
+                FontStyle.Bold;
+            field.labelElement.style.color = SinglePlayerSetupTextColor;
+        }
+
         private static void SetVisible(VisualElement element, bool visible)
         {
             if (element != null)
@@ -4843,6 +4834,8 @@ namespace Game.Presentation
                 gameplayMap.CapitalDestroyed -= HandleCapitalDestroyed;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
                 gameplayMap.SiegeDayResolved -= HandleSiegeDayResolved;
+                gameplayMap.CommanderGenerated -= HandleCommanderGenerated;
+                gameplayMap.CommanderDied -= HandleCommanderDied;
                 gameplayMap.SupplyInterdictionResolved -=
                     HandleSupplyInterdictionResolved;
                 _mapEventsBound = false;
