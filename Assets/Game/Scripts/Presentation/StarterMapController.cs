@@ -139,6 +139,13 @@ namespace Game.Presentation
         [SerializeField] private Color movementPreviewColor =
             new Color(1.00f, 0.86f, 0.12f, 1f);
 
+        [Header("플레이어 유닛 가시성")]
+        [SerializeField, Min(1f)] private float playerUnitVisualScale = 1.38f;
+        [SerializeField, Min(0f)] private float castleUnitElevation = 1.18f;
+        [SerializeField, Min(0f)] private float mineUnitElevation = 0.52f;
+        [SerializeField] private Color playerUnitHighlightColor =
+            new Color(1.00f, 0.82f, 0.08f, 1f);
+
         [Header("세력과 거점 색상")]
         [SerializeField] private Color playerFactionColor =
             new Color(0.05f, 0.42f, 1.00f, 1f);
@@ -192,12 +199,14 @@ namespace Game.Presentation
         private int _generationSequence;
         private RealtimeMapGameplayService _gameplayService;
         private string _selectedPlayerUnitId = string.Empty;
+        private string _trackedEnemyUnitId = string.Empty;
         private string _movementPreviewUnitId = string.Empty;
 
         public GridMapLayout CurrentLayout { get; private set; }
         public MapCellSelection? CurrentSelection { get; private set; }
         public RealtimeMapGameplayService GameplayService => _gameplayService;
         public string SelectedPlayerUnitId => _selectedPlayerUnitId;
+        public string TrackedEnemyUnitId => _trackedEnemyUnitId;
         public string SelectedAuthoritativeServerUnitId =>
             _authoritativeServerUnitIdByLocalId.TryGetValue(
                 _selectedPlayerUnitId,
@@ -387,6 +396,7 @@ namespace Game.Presentation
             }
 
             _selectedPlayerUnitId = unit.Id;
+            _trackedEnemyUnitId = string.Empty;
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
             return true;
@@ -478,6 +488,25 @@ namespace Game.Presentation
             return _gameplayService?.FindUnitAt(coordinate);
         }
 
+        public bool TrySelectMapCell(
+            GridCoordinate coordinate,
+            out MapCellSelection selection)
+        {
+            selection = default;
+            if (CurrentLayout == null ||
+                !CurrentLayout.TryNormalize(
+                    coordinate,
+                    out GridCoordinate normalized))
+            {
+                return false;
+            }
+
+            selection = DescribeCell(CurrentLayout, normalized);
+            ApplyMapSelection(selection);
+            CellSelected?.Invoke(selection);
+            return true;
+        }
+
         public bool CanSelectPlayerUnitAt(
             GridCoordinate coordinate,
             out string reason)
@@ -512,6 +541,7 @@ namespace Game.Presentation
                 _gameplayService.PlayerFactionId,
                 coordinate);
             _selectedPlayerUnitId = unit.Id;
+            _trackedEnemyUnitId = string.Empty;
             ClearMovementPreviewState();
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
@@ -1268,6 +1298,7 @@ namespace Game.Presentation
                         StringComparison.Ordinal))
                 {
                     _selectedPlayerUnitId = localUnit.Id;
+                    _trackedEnemyUnitId = string.Empty;
                 }
             }
 
@@ -1388,6 +1419,7 @@ namespace Game.Presentation
                 out _))
             {
                 _selectedPlayerUnitId = startingUnit.Id;
+                _trackedEnemyUnitId = string.Empty;
                 _gameplayService.TryHireCommander(
                     _gameplayService.PlayerFactionId,
                     RealtimeMapGameplayService.ProtagonistCommanderId,
@@ -1397,6 +1429,7 @@ namespace Game.Presentation
             else
             {
                 _selectedPlayerUnitId = string.Empty;
+                _trackedEnemyUnitId = string.Empty;
             }
         }
 
@@ -1443,6 +1476,7 @@ namespace Game.Presentation
 
             _gameplayService = null;
             _selectedPlayerUnitId = string.Empty;
+            _trackedEnemyUnitId = string.Empty;
             _authoritativeServerUnitIdByLocalId.Clear();
             ClearMovementPreviewState();
             _unitMarkerRoots.Clear();
@@ -1769,8 +1803,12 @@ namespace Game.Presentation
             if (unit != null)
             {
                 string ownerName = GetFactionDisplayName(unit.OwnerFactionId);
-                detail += $"\n{ownerName} {unit.ArchetypeDisplayName} {unit.Id}" +
+                detail += $"\n{ownerName} {unit.ArchetypeDisplayName}" +
+                          $" · 병력 {unit.Soldiers:N0}" +
                           $" · {unit.WeaponDisplayName} / {unit.ArmorDisplayName}" +
+                          $" · 편성 " +
+                          MapUnitFormationPresetNames.GetKoreanName(
+                              unit.Formation.Preset) +
                           $" · 체력 {unit.Stamina}/{unit.MaxStamina}" +
                           $" · 보급 {unit.SupplyRatio:P0}" +
                           $" (식량 {unit.FoodSupply:N1}, " +
@@ -1778,13 +1816,7 @@ namespace Game.Presentation
                           $"의약품 {unit.MedicineSupply:N1})" +
                           $" · 이동 보급 {unit.MovementSupplyModifier:P0}" +
                           $" / 공격 보급 {unit.AttackSupplyModifier:P0}" +
-                          $" / 회복 보급 {unit.RecoverySupplyModifier:P0}" +
-                          $" · 편성 전열 {unit.Formation.FrontlineRatio:P0}" +
-                          $" / 원거리 {unit.Formation.RangedRatio:P0}" +
-                          $" / 기병 {unit.Formation.CavalryRatio:P0}" +
-                          $" · 공격 {unit.AttackModifier:F2}" +
-                          $" 방어 {unit.DefenseModifier:F2}" +
-                          $" 기동 {unit.MobilityModifier:F2}";
+                          $" / 회복 보급 {unit.RecoverySupplyModifier:P0}";
                 if (unit.Commander != null)
                 {
                     detail += $" · 지휘관 {unit.Commander.DisplayName}" +
@@ -1794,10 +1826,6 @@ namespace Game.Presentation
                               $"병참 {unit.Commander.Logistics}, " +
                               $"충성 {unit.Commander.Loyalty})";
                 }
-                detail += $" · 이동 편성 x{unit.WeightedBranchMobilityModifier:F2}" +
-                          $" 갑옷 x{unit.ArmorMobilityModifier:F2}" +
-                          $" 병참 x{unit.CommanderMobilityModifier:F2}" +
-                          $" 최종 x{unit.MobilityModifier:F2}";
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
                 if (_gameplayService != null &&
@@ -2243,9 +2271,13 @@ namespace Game.Presentation
             {
                 MapUnitState unit = _gameplayService.Units[i];
                 Color color = GetFactionColor(unit.OwnerFactionId);
+                string highlightedUnitId = string.IsNullOrEmpty(
+                    _trackedEnemyUnitId)
+                    ? _selectedPlayerUnitId
+                    : _trackedEnemyUnitId;
                 bool selected = string.Equals(
                     unit.Id,
-                    _selectedPlayerUnitId,
+                    highlightedUnitId,
                     StringComparison.Ordinal);
                 if (unit.IsMoving &&
                     unit.PlannedPath.Count > 1 &&
@@ -2551,6 +2583,12 @@ namespace Game.Presentation
             bool selected,
             Transform markerRoot)
         {
+            bool isPlayerUnit = string.Equals(
+                unit.OwnerFactionId,
+                _gameplayService?.PlayerFactionId,
+                StringComparison.Ordinal);
+            position += Vector3.up * GetUnitSiteElevation(unit.Coordinate);
+
             float width = 0.38f;
             float height = 0.52f;
             float depth = 0.38f;
@@ -2584,12 +2622,29 @@ namespace Game.Presentation
             }
 
             float selectionScale = selected ? 1.16f : 1f;
+            float ownershipScale = isPlayerUnit
+                ? Mathf.Max(1f, playerUnitVisualScale)
+                : 1f;
+            float visualScale = selectionScale * ownershipScale;
+            if (isPlayerUnit)
+            {
+                CreateBlock(
+                    unit.Id + "_아군식별표시",
+                    position + new Vector3(0f, 0.36f, 0f),
+                    new Vector3(
+                        tileSize * 0.88f,
+                        0.075f,
+                        tileSize * 0.88f),
+                    playerUnitHighlightColor,
+                    markerRoot,
+                    false);
+            }
             if (selected)
             {
                 CreateBlock(
                     unit.Id + "_선택표시",
                     position + new Vector3(0f, 0.40f, 0f),
-                    new Vector3(tileSize * 0.68f, 0.06f, tileSize * 0.68f),
+                    new Vector3(tileSize * 0.68f, 0.065f, tileSize * 0.68f),
                     Color.white,
                     markerRoot,
                     false);
@@ -2599,9 +2654,9 @@ namespace Game.Presentation
                 $"{unit.Id}_{unit.ArchetypeDisplayName}",
                 position + new Vector3(0f, 0.72f, 0f),
                 new Vector3(
-                    tileSize * width * selectionScale,
-                    height * selectionScale,
-                    tileSize * depth * selectionScale),
+                    tileSize * width * visualScale,
+                    height * visualScale,
+                    tileSize * depth * visualScale),
                 color,
                 markerRoot,
                 false);
@@ -2618,7 +2673,8 @@ namespace Game.Presentation
                     new Vector3(
                         tileSize * width * (heavyArmor ? 1.12f : 1.03f),
                         heavyArmor ? 0.22f : 0.12f,
-                        tileSize * depth * (heavyArmor ? 1.12f : 1.03f)),
+                        tileSize * depth * (heavyArmor ? 1.12f : 1.03f)) *
+                    ownershipScale,
                     armorColor,
                     markerRoot,
                     false);
@@ -2663,6 +2719,29 @@ namespace Game.Presentation
                 accent,
                 markerRoot,
                 false);
+
+            if (isPlayerUnit)
+            {
+                CreateBlock(
+                    unit.Id + "_아군위치표식",
+                    position + new Vector3(0f, 1.52f, 0f),
+                    new Vector3(
+                        tileSize * 0.34f,
+                        0.09f,
+                        tileSize * 0.34f),
+                    playerUnitHighlightColor,
+                    markerRoot,
+                    false);
+            }
+        }
+
+        private float GetUnitSiteElevation(GridCoordinate coordinate)
+        {
+            if (_gameplayService?.FindCastle(coordinate) != null)
+                return Mathf.Max(0f, castleUnitElevation);
+            if (_gameplayService?.FindMine(coordinate) != null)
+                return Mathf.Max(0f, mineUnitElevation);
+            return 0f;
         }
 
         private Color GetMineControlColor(MapMineControlState mine)
@@ -2819,11 +2898,73 @@ namespace Game.Presentation
             if (!CurrentSelection.HasValue || CurrentLayout == null)
                 return;
 
+            GridCoordinate coordinate = CurrentSelection.Value.Coordinate;
+            MapUnitState trackedEnemy = null;
+            if (!string.IsNullOrEmpty(_trackedEnemyUnitId))
+            {
+                trackedEnemy = _gameplayService?.FindUnit(
+                    _trackedEnemyUnitId);
+                if (trackedEnemy == null || string.Equals(
+                        trackedEnemy.OwnerFactionId,
+                        _gameplayService?.PlayerFactionId,
+                        StringComparison.Ordinal))
+                {
+                    _trackedEnemyUnitId = string.Empty;
+                    trackedEnemy = null;
+                }
+                else
+                {
+                    coordinate = trackedEnemy.Coordinate;
+                }
+            }
+
             MapCellSelection selection = DescribeCell(
                 CurrentLayout,
-                CurrentSelection.Value.Coordinate);
+                coordinate);
+            if (trackedEnemy != null && !string.Equals(
+                    selection.UnitId,
+                    trackedEnemy.Id,
+                    StringComparison.Ordinal))
+            {
+                selection = WithTrackedUnit(selection, trackedEnemy);
+            }
             CurrentSelection = selection;
             CellSelected?.Invoke(selection);
+        }
+
+        private void ApplyMapSelection(MapCellSelection selection)
+        {
+            CurrentSelection = selection;
+            bool tracksEnemy = !string.IsNullOrEmpty(selection.UnitId) &&
+                !string.Equals(
+                    selection.UnitOwnerFactionId,
+                    _gameplayService?.PlayerFactionId,
+                    StringComparison.Ordinal);
+            _trackedEnemyUnitId = tracksEnemy
+                ? selection.UnitId
+                : string.Empty;
+            RefreshGameplayMarkers();
+        }
+
+        private static MapCellSelection WithTrackedUnit(
+            MapCellSelection selection,
+            MapUnitState unit)
+        {
+            return new MapCellSelection(
+                selection.Coordinate,
+                selection.Content,
+                selection.DisplayName,
+                selection.InteractionHint,
+                unit.Id,
+                unit.OwnerFactionId,
+                selection.MineOwnerFactionId,
+                selection.CapturingFactionId,
+                selection.CaptureProgress,
+                selection.CaptureRequired,
+                selection.CastleOwnerFactionId,
+                selection.CastleRole,
+                selection.CastleConflictKind,
+                selection.CastleGarrisonUnitCount);
         }
 
         private void ForEachSurfaceCopy(Action<float> action)
@@ -3121,7 +3262,7 @@ namespace Game.Presentation
             MapCellSelection selection = DescribeCell(
                 CurrentLayout,
                 coordinate);
-            CurrentSelection = selection;
+            ApplyMapSelection(selection);
             bool appendWaypoint =
                 UnityEngine.Input.GetKey(KeyCode.LeftShift) ||
                 UnityEngine.Input.GetKey(KeyCode.RightShift);
@@ -3207,6 +3348,7 @@ namespace Game.Presentation
 
             CurrentLayout = null;
             CurrentSelection = null;
+            _trackedEnemyUnitId = string.Empty;
             _gameplayMarkerRoot = null;
             _mapSurfaceColliders.Clear();
             _iconBillboards.Clear();

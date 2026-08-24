@@ -4,6 +4,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Game.Application.PvP;
 using Game.Application.Session;
+using Game.Application.Turn;
 using Game.Application.World;
 using Game.Domain.Campaign;
 using Game.Domain.Common;
@@ -41,6 +42,7 @@ namespace Game.Presentation
         private VisualElement _singlePlayerView;
         private VisualElement _singlePlayerResultView;
         private VisualElement _multiplayerView;
+        private ScrollView _singlePlayerScroll;
         private TextField _endpointField;
         private TextField _displayNameField;
         private TextField _roomCodeField;
@@ -58,6 +60,9 @@ namespace Game.Presentation
         private Label _roomStatus;
         private Label _singlePlayerStatus;
         private Label _singleMapSelectionStatus;
+        private Button _singleStatusToggleButton;
+        private VisualElement _singleStatusContent;
+        private bool _singleStatusExpanded = true;
         private VisualElement _singleMapActionPanel;
         private Label _singleMapActionTitle;
         private Label _singleMapActionFeedback;
@@ -526,7 +531,20 @@ namespace Game.Presentation
                 _uiRoot,
                 "1인 플레이",
                 string.Empty);
-            _singlePlayerStatus = AddStatus(_singlePlayerView);
+            _singlePlayerView.name = "single-player-hud";
+            _singleStatusToggleButton = CreateMapActionButton(
+                "상태 정보 접기 ▲",
+                ToggleSinglePlayerStatus);
+            _singleStatusToggleButton.name = "single-status-toggle";
+            _singleStatusToggleButton.style.marginBottom = 8;
+            _singlePlayerView.Add(_singleStatusToggleButton);
+            _singleStatusContent = new VisualElement
+            {
+                name = "single-status-content"
+            };
+            _singlePlayerView.Add(_singleStatusContent);
+            _singlePlayerStatus = AddStatus(_singleStatusContent);
+            _singlePlayerStatus.name = "single-player-status";
             _campaignHudLabel = new Label
             {
                 name = "campaign-status-label"
@@ -538,12 +556,12 @@ namespace Game.Presentation
                 0.98f);
             _campaignHudLabel.style.whiteSpace = WhiteSpace.Normal;
             _campaignHudLabel.style.marginBottom = 9;
-            _singlePlayerView.Add(_campaignHudLabel);
-            _singleMapSelectionStatus = AddStatus(_singlePlayerView);
+            _singleStatusContent.Add(_campaignHudLabel);
+            _singleMapSelectionStatus = AddStatus(_singleStatusContent);
             _singleMapSelectionStatus.text =
                 "지도 칸을 선택하세요.";
-            BuildSinglePlayerMapActionPanel(_singlePlayerView);
-            MakeCardVerticallyScrollable(
+            BuildSinglePlayerMapActionPanel(_singleStatusContent);
+            _singlePlayerScroll = MakeCardVerticallyScrollable(
                 _singlePlayerView,
                 "single-player-scroll");
             StyleGameplayHud(_singlePlayerView);
@@ -1153,6 +1171,42 @@ namespace Game.Presentation
             SetVisible(_pauseMenuOverlay, false);
             SetVisible(_keySettingsView, false);
             _resumeRealtimeAfterPauseMenu = false;
+        }
+
+        private void ToggleSinglePlayerStatus()
+        {
+            _singleStatusExpanded = !_singleStatusExpanded;
+            SetVisible(_singleStatusContent, _singleStatusExpanded);
+            if (_singlePlayerView != null)
+            {
+                if (_singleStatusExpanded)
+                {
+                    _singlePlayerView.style.height =
+                        new Length(94, LengthUnit.Percent);
+                }
+                else
+                {
+                    _singlePlayerView.style.height = StyleKeyword.Auto;
+                }
+            }
+            if (_singlePlayerScroll != null)
+            {
+                _singlePlayerScroll.style.flexGrow = _singleStatusExpanded
+                    ? 1f
+                    : 0f;
+                _singlePlayerScroll.verticalScrollerVisibility =
+                    _singleStatusExpanded
+                        ? ScrollerVisibility.Auto
+                        : ScrollerVisibility.Hidden;
+            }
+            if (_singleStatusToggleButton != null)
+            {
+                _singleStatusToggleButton.text = _singleStatusExpanded
+                    ? "상태 정보 접기 ▲"
+                    : "상태 정보 펼치기 ▼";
+                _singleStatusToggleButton.style.marginBottom =
+                    _singleStatusExpanded ? 8f : 0f;
+            }
         }
 
         private void RefreshSinglePlayerStatus()
@@ -2343,6 +2397,9 @@ namespace Game.Presentation
                 $"{owner} · {unit.ArchetypeDisplayName} · " +
                 $"병력 {unit.Soldiers:N0} · 사기 {unit.Morale:N0} · " +
                 $"체력 {unit.Stamina}/{unit.MaxStamina}\n" +
+                $"능력 배율: 공격 x{unit.EffectiveAttackModifier:F2} · " +
+                $"방어 x{unit.EffectiveDefenseModifier:F2} · " +
+                $"기동 x{unit.MobilityModifier:F2}\n" +
                 $"{commander} · {unit.Coordinate} · {movement}");
         }
 
@@ -3302,6 +3359,7 @@ namespace Game.Presentation
         private void BuildSinglePlayerMapActionPanel(VisualElement parent)
         {
             _singleMapActionPanel = new VisualElement();
+            _singleMapActionPanel.name = "single-map-action-panel";
             _singleMapActionPanel.style.paddingLeft = 12;
             _singleMapActionPanel.style.paddingRight = 12;
             _singleMapActionPanel.style.paddingTop = 10;
@@ -3328,7 +3386,7 @@ namespace Game.Presentation
                 "이 칸의 아군 유닛 선택",
                 SelectPlayerUnit);
             _inspectUnitButton = CreateMapActionButton(
-                "이 칸의 부대 정보 확인",
+                "이 칸의 부대 자세히 보기",
                 InspectUnitAtCurrentSelection);
             _moveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
@@ -3345,6 +3403,7 @@ namespace Game.Presentation
 
             _singleMapActionFeedback = new Label(
                 "지도에서 행동할 칸을 선택하세요.");
+            _singleMapActionFeedback.name = "single-map-action-feedback";
             _singleMapActionFeedback.style.fontSize = 13;
             _singleMapActionFeedback.style.color =
                 new Color(0.70f, 0.80f, 0.92f);
@@ -3415,7 +3474,7 @@ namespace Game.Presentation
                     HideMapContextMenu();
                 });
             _contextInspectUnitButton = CreateMapActionButton(
-                "이 칸의 부대 정보 확인",
+                "이 칸의 부대 자세히 보기",
                 () =>
                 {
                     InspectUnitAtCurrentSelection();
@@ -3564,6 +3623,8 @@ namespace Game.Presentation
                 new Color(0.075f, 0.085f, 0.105f, 0.98f);
 
             _neutralNpcSelectionStatus = AddStatus(_neutralNpcView);
+            _neutralNpcSelectionStatus.name =
+                "neutral-npc-selection-status";
             _npcArchetypeButton = CreateMapActionButton(
                 "병종 선택",
                 CyclePendingUnitArchetype);
@@ -4277,6 +4338,18 @@ namespace Game.Presentation
             decimal equipmentCost = UnitEquipmentCatalog.GetEquipmentCost(
                 _pendingWeaponType,
                 _pendingArmorClass);
+            decimal attackModifier =
+                MapUnitState.GetArchetypeAttackModifier(
+                    _pendingUnitArchetype) *
+                UnitEquipmentCatalog.GetAttackModifier(_pendingWeaponType);
+            decimal defenseModifier =
+                MapUnitState.GetArchetypeDefenseModifier(
+                    _pendingUnitArchetype) *
+                UnitEquipmentCatalog.GetDefenseModifier(_pendingArmorClass);
+            decimal mobilityModifier =
+                UnitEquipmentCatalog.GetMobilityModifier(
+                    _pendingUnitArchetype,
+                    _pendingArmorClass);
             MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
             MapCommanderState pendingCommander = GetPendingCommander();
             string commanderCandidateList = BuildCommanderCandidateList();
@@ -4297,9 +4370,9 @@ namespace Game.Presentation
             _neutralNpcSelectionStatus.text =
                 $"징병 위치: {recruitOrigin} · {recruitmentStatus}\n" +
                 $"구성: {archetypeName} · {weaponName} · {armorName}\n" +
-                $"능력: 공격 x{UnitEquipmentCatalog.GetAttackModifier(_pendingWeaponType):F2} · " +
-                $"방어 x{UnitEquipmentCatalog.GetDefenseModifier(_pendingArmorClass):F2} · " +
-                $"기동 x{UnitEquipmentCatalog.GetMobilityModifier(_pendingUnitArchetype, _pendingArmorClass):F2}\n" +
+                $"능력 배율: 공격 x{attackModifier:F2} · " +
+                $"방어 x{defenseModifier:F2} · " +
+                $"기동 x{mobilityModifier:F2}\n" +
                 $"모집비 {recruitCost:N0} · 장비 구입비 {equipmentCost:N0}\n" +
                 (selectedUnit == null
                     ? "장비 변경 대상: 선택된 부대 없음"
@@ -4632,7 +4705,9 @@ namespace Game.Presentation
             row.style.flexWrap = Wrap.Wrap;
             row.style.marginBottom = 8;
             AddSpeedButton(row, "일시정지", ToggleSinglePlayerPause);
-            for (int speed = 1; speed <= 5; speed++)
+            for (int speed = 1;
+                 speed <= RealtimeSimulationClock.MaximumSpeedMultiplier;
+                 speed++)
             {
                 int capturedSpeed = speed;
                 AddSpeedButton(
@@ -4679,7 +4754,7 @@ namespace Game.Presentation
                 new Color(0.07f, 0.095f, 0.14f, 0.92f);
         }
 
-        private static void MakeCardVerticallyScrollable(
+        private static ScrollView MakeCardVerticallyScrollable(
             VisualElement card,
             string scrollName)
         {
@@ -4700,6 +4775,7 @@ namespace Game.Presentation
                 scroll.Add(children[i]);
             }
             card.Add(scroll);
+            return scroll;
         }
 
         private void RegisterMapInputGuard(VisualElement element)

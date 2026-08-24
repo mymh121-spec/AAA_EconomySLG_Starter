@@ -8,8 +8,7 @@ namespace Game.Application.Turn
         Normal = 1,
         Fast2 = 2,
         Fast3 = 3,
-        Fast4 = 4,
-        Fast5 = 5
+        Fast4 = 4
     }
 
     public readonly struct RealtimeAdvanceResult
@@ -41,7 +40,7 @@ namespace Game.Application.Turn
     /// </summary>
     public sealed class RealtimeSimulationClock
     {
-        public const int MaximumSpeedMultiplier = 5;
+        public const int MaximumSpeedMultiplier = 4;
 
         private readonly double _realSecondsPerGameDay;
         private readonly double _fixedRealStepSeconds;

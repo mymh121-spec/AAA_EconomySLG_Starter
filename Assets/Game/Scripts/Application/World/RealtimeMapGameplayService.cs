@@ -601,6 +601,20 @@ namespace Game.Application.World
             Commander?.MobilityModifier ?? 1m;
         public decimal ArmorMobilityModifier =>
             UnitEquipmentCatalog.GetMobilityModifier(ArmorClass);
+        public decimal ArchetypeAttackModifier =>
+            CombatBalance.Get(Archetype).BaseAttack;
+        public decimal ArchetypeDefenseModifier =>
+            CombatBalance.Get(Archetype).BaseDefense;
+        public decimal EffectiveAttackModifier =>
+            ArchetypeAttackModifier *
+            AttackModifier *
+            FormationAttackModifier *
+            CommanderAttackModifier;
+        public decimal EffectiveDefenseModifier =>
+            ArchetypeDefenseModifier *
+            DefenseModifier *
+            FormationDefenseModifier *
+            CommanderDefenseModifier;
         public decimal WeightedBranchMobilityModifier
         {
             get
@@ -987,6 +1001,14 @@ namespace Game.Application.World
                 default: return archetype.ToString();
             }
         }
+
+        public static decimal GetArchetypeAttackModifier(
+            UnitArchetype archetype) =>
+            CombatBalance.Get(archetype).BaseAttack;
+
+        public static decimal GetArchetypeDefenseModifier(
+            UnitArchetype archetype) =>
+            CombatBalance.Get(archetype).BaseDefense;
 
         internal bool TrySpendStamina(int amount, out string reason)
         {

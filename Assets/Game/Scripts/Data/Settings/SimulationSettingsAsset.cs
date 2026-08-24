@@ -35,7 +35,7 @@ namespace Game.Data
         [SerializeField, Min(5f)] private float realSecondsPerGameDay = 60f;
         [SerializeField, Range(0.02f, 0.5f)]
         private float fixedRealtimeStepSeconds = 0.1f;
-        [SerializeField, Range(1, 5)] private int initialGameSpeed = 1;
+        [SerializeField, Range(1, 4)] private int initialGameSpeed = 1;
         [SerializeField, Range(1, 64)] private int maxRealtimeStepsPerFrame = 16;
 
         [Header("캠페인 승패")]

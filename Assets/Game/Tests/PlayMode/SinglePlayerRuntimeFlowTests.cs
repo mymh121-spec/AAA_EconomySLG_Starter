@@ -259,6 +259,59 @@ namespace Game.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator EnemySelection_FollowsUnitAfterMovement()
+        {
+            var root = new GameObject("적 부대 선택 추적 테스트");
+            StarterMapController map = root.AddComponent<StarterMapController>();
+            map.Initialize();
+            yield return null;
+
+            Assert.That(
+                map.GameplayService.TryCreateUnit(
+                    "ai_1",
+                    out MapUnitState enemy,
+                    out string createReason),
+                Is.True,
+                createReason);
+            GridCoordinate destination = FindReachableDestinationForUnit(
+                map,
+                enemy);
+            Assert.That(destination, Is.Not.EqualTo(enemy.Coordinate));
+            Assert.That(
+                map.TrySelectMapCell(
+                    enemy.Coordinate,
+                    out MapCellSelection selectedCell),
+                Is.True);
+            Assert.That(selectedCell.UnitId, Is.EqualTo(enemy.Id));
+            Assert.That(map.TrackedEnemyUnitId, Is.EqualTo(enemy.Id));
+
+            Assert.That(
+                map.GameplayService.TryIssueMove(
+                    enemy.OwnerFactionId,
+                    enemy.Id,
+                    destination,
+                    out string moveReason),
+                Is.True,
+                moveReason);
+            int movementSteps = map.GameplayService
+                .GetRemainingMovementFixedSteps(enemy);
+            map.AdvanceGameplayFixedSteps(Math.Max(1, movementSteps));
+            yield return null;
+
+            Assert.That(enemy.Coordinate, Is.EqualTo(destination));
+            Assert.That(map.CurrentSelection.HasValue, Is.True);
+            Assert.That(map.CurrentSelection.Value.Coordinate,
+                Is.EqualTo(destination));
+            Assert.That(map.CurrentSelection.Value.UnitId,
+                Is.EqualTo(enemy.Id));
+            Assert.That(GameObject.Find(enemy.Id + "_선택표시"), Is.Not.Null,
+                "이동한 적 부대에도 선택 강조가 계속 남아야 합니다.");
+
+            UnityEngine.Object.Destroy(root);
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator MenuToMovementAndCampaignResult_CompletesInPlayMode()
         {
             GameModeSelectionController controller =
@@ -290,6 +343,7 @@ namespace Game.Tests.PlayMode
             Button keySettingsButton = null;
             bool hasReadyButton = false;
             bool hasFormationChangeButton = false;
+            bool hasFiveTimesButton = false;
             document.rootVisualElement.Query<Button>().ForEach(button =>
             {
                 if (button.text == "1인이서 하기")
@@ -300,6 +354,8 @@ namespace Game.Tests.PlayMode
                     joinRoomButton = button;
                 else if (button.text == "키 설정")
                     keySettingsButton = button;
+                else if (button.text == "5배")
+                    hasFiveTimesButton = true;
                 else if (button.text == "이번 턴 준비 완료")
                     hasReadyButton = true;
                 if (button.text != null &&
@@ -320,6 +376,8 @@ namespace Game.Tests.PlayMode
                 "실시간 플레이 화면에는 준비 완료 버튼을 표시하지 않아야 합니다.");
             Assert.That(hasFormationChangeButton, Is.False,
                 "편성 비율 변경 버튼은 표시하지 않아야 합니다.");
+            Assert.That(hasFiveTimesButton, Is.False,
+                "시간 조작에는 5배속 버튼을 표시하지 않아야 합니다.");
             bool hasRoomCapacityInput = false;
             document.rootVisualElement.Query<TextField>().ForEach(field =>
             {
@@ -360,6 +418,16 @@ namespace Game.Tests.PlayMode
             Assert.That(map.SelectedPlayerUnit.Commander, Is.Not.Null);
             Assert.That(map.SelectedPlayerUnit.Commander.IsProtagonist, Is.True);
             Assert.That(map.SelectedPlayerUnit.Commander.IsAlive, Is.True);
+            GameObject playerHighlight = GameObject.Find(
+                map.SelectedPlayerUnit.Id + "_아군식별표시");
+            GameObject playerVisual = GameObject.Find(
+                map.SelectedPlayerUnit.Id + "_" +
+                map.SelectedPlayerUnit.ArchetypeDisplayName);
+            Assert.That(playerHighlight, Is.Not.Null,
+                "플레이어 유닛에는 멀리서도 보이는 전용 식별판이 필요합니다.");
+            Assert.That(playerVisual, Is.Not.Null);
+            Assert.That(playerVisual.transform.position.y, Is.GreaterThan(1.5f),
+                "성에 주둔한 플레이어 유닛은 성채 위로 올라와 보여야 합니다.");
             Assert.That(simulation.CurrentCampaignState.Participants.Count,
                 Is.EqualTo(4));
             Assert.That(simulation.CurrentWorldEconomy.Markets.Count,
@@ -371,6 +439,99 @@ namespace Game.Tests.PlayMode
             Assert.That(campaignStatus.text, Does.Contain("경제력 집계 대기"));
             Assert.That(campaignStatus.text, Does.Not.Contain("남은"),
                 "좌측 캠페인 패널은 날짜나 시간을 표시하지 않아야 합니다.");
+            Button statusToggle = document.rootVisualElement.Q<Button>(
+                "single-status-toggle");
+            VisualElement statusContent = document.rootVisualElement
+                .Q<VisualElement>("single-status-content");
+            VisualElement singlePlayerHud = document.rootVisualElement
+                .Q<VisualElement>("single-player-hud");
+            VisualElement mapActionPanel = document.rootVisualElement
+                .Q<VisualElement>("single-map-action-panel");
+            ScrollView singlePlayerScroll = document.rootVisualElement
+                .Q<ScrollView>("single-player-scroll");
+            Assert.That(statusToggle, Is.Not.Null,
+                "상태 정보에는 접기/펼치기 버튼이 있어야 합니다.");
+            Assert.That(statusContent, Is.Not.Null);
+            Assert.That(singlePlayerHud, Is.Not.Null);
+            Assert.That(mapActionPanel, Is.Not.Null);
+            Assert.That(mapActionPanel.parent, Is.SameAs(statusContent),
+                "파란 지도 행동 패널도 상태 정보와 함께 접혀야 합니다.");
+            InvokePrivate(controller, "ToggleSinglePlayerStatus");
+            Assert.That(statusContent.style.display.value,
+                Is.EqualTo(DisplayStyle.None));
+            Assert.That(singlePlayerHud.style.height.keyword,
+                Is.EqualTo(StyleKeyword.Auto),
+                "접었을 때 파란 HUD 창 높이도 내용에 맞게 줄어야 합니다.");
+            Assert.That(singlePlayerScroll.verticalScrollerVisibility,
+                Is.EqualTo(ScrollerVisibility.Hidden));
+            Assert.That(statusToggle.text, Does.Contain("펼치기"));
+            InvokePrivate(controller, "ToggleSinglePlayerStatus");
+            Assert.That(statusContent.style.display.value,
+                Is.EqualTo(DisplayStyle.Flex));
+            Assert.That(singlePlayerScroll.verticalScrollerVisibility,
+                Is.EqualTo(ScrollerVisibility.Auto));
+            Assert.That(statusToggle.text, Does.Contain("접기"));
+            string interactionHint =
+                map.CurrentSelection.Value.InteractionHint;
+            string formationName = MapUnitFormationPresetNames.GetKoreanName(
+                map.SelectedPlayerUnit.Formation.Preset);
+            Assert.That(interactionHint,
+                Does.Contain("편성 " + formationName));
+            int formationStart = interactionHint.IndexOf(
+                " · 편성 ",
+                StringComparison.Ordinal);
+            int staminaStart = interactionHint.IndexOf(
+                " · 체력 ",
+                formationStart,
+                StringComparison.Ordinal);
+            Assert.That(formationStart, Is.GreaterThanOrEqualTo(0));
+            Assert.That(staminaStart, Is.GreaterThan(formationStart));
+            string formationSegment = interactionHint.Substring(
+                formationStart,
+                staminaStart - formationStart);
+            Assert.That(formationSegment, Does.Not.Contain("%"),
+                "부대 편성 정보에는 전열·원거리·기병 비율을 표시하지 않아야 합니다.");
+            int unitLineStart = interactionHint.LastIndexOf(
+                '\n',
+                formationStart) + 1;
+            int unitLineEnd = interactionHint.IndexOf(
+                '\n',
+                staminaStart);
+            if (unitLineEnd < 0)
+                unitLineEnd = interactionHint.Length;
+            string unitLine = interactionHint.Substring(
+                unitLineStart,
+                unitLineEnd - unitLineStart);
+            Assert.That(unitLine, Does.Not.Contain("능력 배율:"),
+                "지도 선택 요약에는 전투 배율을 표시하지 않아야 합니다.");
+            Label compactStatus = document.rootVisualElement.Q<Label>(
+                "single-player-status");
+            Assert.That(compactStatus, Is.Not.Null);
+            Assert.That(compactStatus.text, Does.Not.Contain("능력 배율:"),
+                "좌측 상시 상태에는 전투 배율을 표시하지 않아야 합니다.");
+            InvokePrivate(controller, "InspectUnitAtCurrentSelection");
+            Label unitDetail = document.rootVisualElement.Q<Label>(
+                "single-map-action-feedback");
+            Assert.That(unitDetail, Is.Not.Null);
+            Assert.That(unitDetail.text,
+                Does.Contain("능력 배율: 공격 x"));
+            Assert.That(unitDetail.text, Does.Contain("방어 x"));
+            Assert.That(unitDetail.text, Does.Contain("기동 x"));
+            InvokePrivate(controller, "ToggleSinglePlayerStatus");
+            Assert.That(statusContent.style.display.value,
+                Is.EqualTo(DisplayStyle.None),
+                "부대 자세히 보기 글도 패널과 함께 접혀야 합니다.");
+            InvokePrivate(controller, "ToggleSinglePlayerStatus");
+            InvokePrivate(controller, "OpenNeutralNpcView");
+            Label recruitmentStatus = document.rootVisualElement.Q<Label>(
+                "neutral-npc-selection-status");
+            Assert.That(recruitmentStatus, Is.Not.Null);
+            Assert.That(recruitmentStatus.text,
+                Does.Contain("능력 배율: 공격 x"),
+                "병종 모집 화면에는 공격·방어·기동 배율을 표시해야 합니다.");
+            Assert.That(recruitmentStatus.text, Does.Contain("방어 x"));
+            Assert.That(recruitmentStatus.text, Does.Contain("기동 x"));
+            InvokePrivate(controller, "CloseNeutralNpcView");
             VisualElement timeHud = document.rootVisualElement.Q<VisualElement>(
                 "time-hud");
             Assert.That(timeHud, Is.Not.Null,
@@ -445,7 +606,11 @@ namespace Game.Tests.PlayMode
                 }
             });
             Assert.That(mapActionTitle, Is.Not.Null);
-            Assert.That(mapActionTitle.text, Does.Contain(unit.Id));
+            Assert.That(mapActionTitle.text,
+                Does.Contain(unit.ArchetypeDisplayName));
+            Assert.That(mapActionTitle.text, Does.Contain("병력"));
+            Assert.That(mapActionTitle.text, Does.Not.Contain(unit.Id),
+                "간소화된 지도 행동 제목에는 내부 유닛 ID를 노출하지 않아야 합니다.");
             Assert.That(mapActionTitle.text, Does.Not.Contain("없음"));
             GridCoordinate destination = FindReachableDestination(map, unit);
             Assert.That(destination, Is.Not.EqualTo(unit.Coordinate),
@@ -519,6 +684,40 @@ namespace Game.Tests.PlayMode
             return unit.Coordinate;
         }
 
+        private static GridCoordinate FindReachableDestinationForUnit(
+            StarterMapController map,
+            MapUnitState unit)
+        {
+            GridMapLayout layout = map.CurrentLayout;
+            for (int distance = 1; distance <= 10; distance++)
+            {
+                for (int y = 0; y < layout.Height; y++)
+                {
+                    for (int x = 0; x < layout.Width; x++)
+                    {
+                        var coordinate = new GridCoordinate(x, y);
+                        if (layout.ManhattanDistance(
+                                unit.Coordinate,
+                                coordinate) != distance)
+                        {
+                            continue;
+                        }
+                        if (map.GameplayService.CanIssueMove(
+                                unit.OwnerFactionId,
+                                unit.Id,
+                                coordinate,
+                                out _,
+                                out _))
+                        {
+                            return coordinate;
+                        }
+                    }
+                }
+            }
+
+            return unit.Coordinate;
+        }
+
         private static string CreateStreamJson(
             string streamId,
             long version,
@@ -566,9 +765,42 @@ namespace Game.Tests.PlayMode
             string methodName,
             params object[] arguments)
         {
-            MethodInfo method = target.GetType().GetMethod(
-                methodName,
+            MethodInfo method = null;
+            MethodInfo[] candidates = target.GetType().GetMethods(
                 BindingFlags.Instance | BindingFlags.NonPublic);
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                MethodInfo candidate = candidates[i];
+                if (!string.Equals(
+                        candidate.Name,
+                        methodName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                ParameterInfo[] parameters = candidate.GetParameters();
+                if (parameters.Length != arguments.Length)
+                    continue;
+
+                bool compatible = true;
+                for (int j = 0; j < parameters.Length; j++)
+                {
+                    if (arguments[j] != null &&
+                        !parameters[j].ParameterType.IsInstanceOfType(
+                            arguments[j]))
+                    {
+                        compatible = false;
+                        break;
+                    }
+                }
+
+                if (!compatible)
+                    continue;
+
+                method = candidate;
+                break;
+            }
             Assert.That(method, Is.Not.Null,
                 $"{methodName} 동작을 찾을 수 있어야 합니다.");
             method.Invoke(target, arguments);

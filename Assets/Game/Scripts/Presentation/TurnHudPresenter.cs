@@ -40,7 +40,6 @@ namespace Game.Presentation
         public void OnSpeed2Pressed() => SetSpeed(2);
         public void OnSpeed3Pressed() => SetSpeed(3);
         public void OnSpeed4Pressed() => SetSpeed(4);
-        public void OnSpeed5Pressed() => SetSpeed(5);
 
         public void OnCancelLastCommandPressed()
         {

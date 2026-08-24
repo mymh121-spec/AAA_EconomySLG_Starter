@@ -86,7 +86,7 @@ namespace Game.Tests
         }
 
         [Test]
-        public void RealtimeClock_SupportsPauseAndOneToFiveTimesSpeed()
+        public void RealtimeClock_SupportsPauseAndOneToFourTimesSpeed()
         {
             var clock = new RealtimeSimulationClock(
                 realSecondsPerGameDay: 60d,
@@ -100,12 +100,12 @@ namespace Game.Tests
             Assert.That(clock.CurrentDayNumber, Is.EqualTo(2));
             Assert.That(clock.SpeedMultiplier, Is.EqualTo(1));
 
-            Assert.That(clock.SetSpeed(5), Is.True);
-            RealtimeAdvanceResult fiveTimes = clock.Advance(12d);
+            Assert.That(clock.SetSpeed(4), Is.True);
+            RealtimeAdvanceResult fourTimes = clock.Advance(15d);
 
-            Assert.That(fiveTimes.CompletedGameDays, Is.EqualTo(1));
+            Assert.That(fourTimes.CompletedGameDays, Is.EqualTo(1));
             Assert.That(clock.CurrentDayNumber, Is.EqualTo(3));
-            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(4));
 
             Assert.That(clock.TogglePause(), Is.True);
             Assert.That(clock.IsPaused, Is.True);
@@ -113,9 +113,9 @@ namespace Game.Tests
             Assert.That(clock.CurrentDayNumber, Is.EqualTo(3));
 
             Assert.That(clock.TogglePause(), Is.True);
-            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
-            Assert.That(clock.SetSpeed(9), Is.False);
-            Assert.That(clock.SpeedMultiplier, Is.EqualTo(5));
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(4));
+            Assert.That(clock.SetSpeed(5), Is.False);
+            Assert.That(clock.SpeedMultiplier, Is.EqualTo(4));
         }
 
         [Test]
@@ -125,7 +125,7 @@ namespace Game.Tests
                 realSecondsPerGameDay: 60d,
                 fixedRealStepSeconds: 0.1d,
                 maxStepsPerAdvance: 16,
-                initialSpeedMultiplier: 5);
+                initialSpeedMultiplier: 4);
 
             RealtimeAdvanceResult result = clock.Advance(10d);
 
@@ -742,6 +742,45 @@ namespace Game.Tests
                     out string ownershipReason),
                 Is.False);
             Assert.That(ownershipReason, Does.Contain("다른 세력"));
+        }
+
+        [Test]
+        public void MilitaryArchetypes_KeepConfiguredStatMultipliers()
+        {
+            MilitaryBalanceCatalog catalog =
+                MilitaryBalanceCatalog.CreatePrototypeDefaults();
+            UnitArchetypeDefinition spearman =
+                catalog.Get(UnitArchetype.Spearman);
+            Assert.That(spearman.BaseAttack, Is.EqualTo(0.90m));
+            Assert.That(spearman.BaseDefense, Is.EqualTo(1.08m));
+            Assert.That(spearman.Mobility, Is.EqualTo(0.88m));
+            Assert.That(spearman.Morale, Is.EqualTo(1.05m));
+            Assert.That(
+                UnitEquipmentCatalog.GetArchetypeMobilityModifier(
+                    UnitArchetype.Cavalry),
+                Is.EqualTo(1.65m));
+
+            var configuredDefinition = new UnitArchetypeDefinition(
+                UnitArchetype.Cavalry,
+                "설정 기병",
+                1.8m,
+                0.6m,
+                2.2m,
+                1.4m,
+                0,
+                0m,
+                1m,
+                0.9m,
+                0m,
+                0.12m,
+                0.04m,
+                2.1m,
+                new DamageProfile(0m, 0m, 0m),
+                new DamageProfile(0.48m, 0.38m, 0.14m));
+            Assert.That(configuredDefinition.BaseAttack, Is.EqualTo(1.8m));
+            Assert.That(configuredDefinition.BaseDefense, Is.EqualTo(0.6m));
+            Assert.That(configuredDefinition.Mobility, Is.EqualTo(2.2m));
+            Assert.That(configuredDefinition.Morale, Is.EqualTo(1.4m));
         }
 
         [Test]
@@ -2680,6 +2719,7 @@ namespace Game.Tests
             Assert.That(
                 gameplay.TryCreateUnit(
                     "opponent_1",
+                    UnitArchetype.Swordsman,
                     out MapUnitState blocker,
                     out _),
                 Is.True);
