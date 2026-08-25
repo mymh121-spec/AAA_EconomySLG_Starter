@@ -348,8 +348,7 @@ namespace Game.Presentation
                 return;
 
             gameplayMap.CellSelected += HandleMapCellSelected;
-            gameplayMap.CellMovementPreviewRequested +=
-                HandleMapMovementPreviewRequested;
+            gameplayMap.CellMoveRequested += HandleMapMoveRequested;
             gameplayMap.PrimaryCellSelected += HideMapContextMenu;
             gameplayMap.CellActionRequested += HandleMapActionRequested;
             gameplayMap.GameplayStateChanged += HandleMapGameplayStateChanged;
@@ -1671,46 +1670,7 @@ namespace Game.Presentation
                 canIssue && gameplayMap.SelectedPlayerUnit?.IsMoving == true);
         }
 
-        private void HandleMapMovementPreviewRequested(
-            MapCellSelection selection,
-            bool confirmRepeatedSelection)
-        {
-            if (confirmRepeatedSelection &&
-                IsCurrentMovementPreviewTarget(selection))
-            {
-                MoveSelectedPlayerUnit();
-                return;
-            }
-            RefreshMovementPreview(selection);
-        }
-
-        private bool IsCurrentMovementPreviewTarget(
-            MapCellSelection selection)
-        {
-            if (!_selection.IsSinglePlayer || gameplayMap == null ||
-                !gameplayMap.CurrentMovementPreview.HasValue)
-            {
-                return false;
-            }
-
-            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
-            if (selectedUnit == null ||
-                selectedUnit.Coordinate.Equals(selection.Coordinate) ||
-                gameplayMap.CanSelectPlayerUnitAt(selection.Coordinate, out _))
-            {
-                return false;
-            }
-
-            MapMovementPreview preview =
-                gameplayMap.CurrentMovementPreview.Value;
-            return string.Equals(
-                       preview.UnitId,
-                       selectedUnit.Id,
-                       StringComparison.Ordinal) &&
-                   preview.Destination.Equals(selection.Coordinate);
-        }
-
-        private void RefreshMovementPreview(MapCellSelection selection)
+        private void HandleMapMoveRequested(MapCellSelection selection)
         {
             if (!_selection.IsSinglePlayer || gameplayMap == null)
                 return;
@@ -1720,24 +1680,10 @@ namespace Game.Presentation
                 selectedUnit.Coordinate.Equals(selection.Coordinate) ||
                 gameplayMap.CanSelectPlayerUnitAt(selection.Coordinate, out _))
             {
-                gameplayMap.ClearMovementPreview();
                 return;
             }
 
-            if (!gameplayMap.TryPreviewSelectedPlayerUnitMove(
-                selection.Coordinate,
-                out MapMovementPreview preview,
-                out string reason))
-            {
-                SetMapActionFeedback(reason);
-                return;
-            }
-
-            SetMapActionFeedback(
-                "이동 미리보기 · " +
-                $"{preview.RemainingTileCount}칸 · " +
-                $"도착 예상 {FormatMovementArrival(preview.EstimatedFixedSteps)}\n" +
-                "같은 목적지를 한 번 더 클릭하면 이 경로로 이동합니다.");
+            MoveSelectedPlayerUnit();
         }
 
         private string FormatMovementArrival(int remainingFixedSteps)
@@ -4992,8 +4938,7 @@ namespace Game.Presentation
             if (gameplayMap != null && _mapEventsBound)
             {
                 gameplayMap.CellSelected -= HandleMapCellSelected;
-                gameplayMap.CellMovementPreviewRequested -=
-                    HandleMapMovementPreviewRequested;
+                gameplayMap.CellMoveRequested -= HandleMapMoveRequested;
                 gameplayMap.PrimaryCellSelected -= HideMapContextMenu;
                 gameplayMap.CellActionRequested -= HandleMapActionRequested;
                 gameplayMap.GameplayStateChanged -= HandleMapGameplayStateChanged;

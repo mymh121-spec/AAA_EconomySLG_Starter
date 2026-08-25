@@ -74,29 +74,6 @@ namespace Game.Presentation
             $"{DisplayName} {Coordinate}\n{InteractionHint}";
     }
 
-    public readonly struct MapMovementPreview
-    {
-        public string UnitId { get; }
-        public GridCoordinate Destination { get; }
-        public IReadOnlyList<GridCoordinate> Path { get; }
-        public int RemainingTileCount { get; }
-        public int EstimatedFixedSteps { get; }
-
-        public MapMovementPreview(
-            string unitId,
-            GridCoordinate destination,
-            IReadOnlyList<GridCoordinate> path,
-            int remainingTileCount,
-            int estimatedFixedSteps)
-        {
-            UnitId = unitId ?? string.Empty;
-            Destination = destination;
-            Path = path ?? Array.Empty<GridCoordinate>();
-            RemainingTileCount = Math.Max(0, remainingTileCount);
-            EstimatedFixedSteps = Math.Max(0, estimatedFixedSteps);
-        }
-    }
-
     /// <summary>
     /// 문명식 평면 월드 맵을 표시한다.
     /// 논리 좌표와 카메라는 가로로 래핑되고 세로는 극지 경계에서 막힌다.
@@ -133,9 +110,6 @@ namespace Game.Presentation
         [SerializeField, Range(0f, 1f)] private float movementPathAlpha = 0.92f;
         [SerializeField, Min(1f)] private float movementInterpolationSharpness =
             18f;
-        [SerializeField] private Color movementPreviewColor =
-            new Color(1.00f, 0.86f, 0.12f, 1f);
-
         [Header("플레이어 유닛 가시성")]
         [SerializeField, Min(1f)] private float playerUnitVisualScale = 1.38f;
         [SerializeField, Min(0f)] private float castleUnitElevation = 1.18f;
@@ -175,8 +149,6 @@ namespace Game.Presentation
             new HashSet<Collider>();
         private readonly List<Transform> _iconBillboards =
             new List<Transform>();
-        private readonly List<GridCoordinate> _movementPreviewPath =
-            new List<GridCoordinate>();
         private readonly Dictionary<string, List<Transform>> _unitMarkerRoots =
             new Dictionary<string, List<Transform>>(StringComparer.Ordinal);
         private readonly Dictionary<string, Vector3> _unitVisualPositions =
@@ -209,7 +181,6 @@ namespace Game.Presentation
         private RealtimeMapGameplayService _gameplayService;
         private string _selectedPlayerUnitId = string.Empty;
         private string _trackedEnemyUnitId = string.Empty;
-        private string _movementPreviewUnitId = string.Empty;
 
         public GridMapLayout CurrentLayout { get; private set; }
         public MapCellSelection? CurrentSelection { get; private set; }
@@ -229,10 +200,8 @@ namespace Game.Presentation
         public IReadOnlyList<MapCommanderState> Commanders =>
             _gameplayService?.Commanders ?? Array.Empty<MapCommanderState>();
         public MapGenerationSettings GenerationSettings { get; private set; }
-        public MapMovementPreview? CurrentMovementPreview { get; private set; }
         public event Action<MapCellSelection> CellSelected;
-        public event Action<MapCellSelection, bool>
-            CellMovementPreviewRequested;
+        public event Action<MapCellSelection> CellMoveRequested;
         public event Action PrimaryCellSelected;
         public event Action<MapCellSelection, Vector2> CellActionRequested;
         public event Action GameplayStateChanged;
@@ -551,7 +520,6 @@ namespace Game.Presentation
                 coordinate);
             _selectedPlayerUnitId = unit.Id;
             _trackedEnemyUnitId = string.Empty;
-            ClearMovementPreviewState();
             RefreshGameplayMarkers();
             RefreshCurrentSelection();
             return true;
@@ -586,70 +554,6 @@ namespace Game.Presentation
                     destination);
         }
 
-        public bool TryPreviewSelectedPlayerUnitMove(
-            GridCoordinate destination,
-            out MapMovementPreview preview,
-            out string reason)
-        {
-            preview = default;
-            if (_gameplayService == null || SelectedPlayerUnit == null)
-            {
-                ClearMovementPreview();
-                reason = "먼저 아군 유닛을 선택하세요.";
-                return false;
-            }
-
-            if (!_gameplayService.CanIssueMove(
-                    _gameplayService.PlayerFactionId,
-                    _selectedPlayerUnitId,
-                    destination,
-                    out IReadOnlyList<GridCoordinate> route,
-                    out reason))
-            {
-                ClearMovementPreview();
-                return false;
-            }
-
-            _movementPreviewPath.Clear();
-            _movementPreviewPath.Add(SelectedPlayerUnit.Coordinate);
-            for (int i = 0; i < route.Count; i++)
-                _movementPreviewPath.Add(route[i]);
-
-            _movementPreviewUnitId = _selectedPlayerUnitId;
-            int stepsPerTile =
-                _gameplayService.GetRequiredMovementStepsPerTile(
-                    SelectedPlayerUnit);
-            int estimatedSteps = route.Count * stepsPerTile;
-            preview = new MapMovementPreview(
-                _movementPreviewUnitId,
-                destination,
-                _movementPreviewPath,
-                route.Count,
-                estimatedSteps);
-            CurrentMovementPreview = preview;
-            RefreshGameplayMarkers();
-            return true;
-        }
-
-        public void ClearMovementPreview()
-        {
-            if (_movementPreviewPath.Count == 0 &&
-                !CurrentMovementPreview.HasValue)
-            {
-                return;
-            }
-
-            ClearMovementPreviewState();
-            RefreshGameplayMarkers();
-        }
-
-        private void ClearMovementPreviewState()
-        {
-            _movementPreviewPath.Clear();
-            _movementPreviewUnitId = string.Empty;
-            CurrentMovementPreview = null;
-        }
-
         public bool TryMoveSelectedPlayerUnit(
             GridCoordinate destination,
             out string reason)
@@ -664,7 +568,6 @@ namespace Game.Presentation
                 out reason);
             if (moved)
             {
-                ClearMovementPreviewState();
                 RefreshGameplayMarkers();
             }
             return moved;
@@ -695,7 +598,6 @@ namespace Game.Presentation
                 out reason);
             if (cancelled)
             {
-                ClearMovementPreviewState();
                 RefreshGameplayMarkers();
             }
             return cancelled;
@@ -737,7 +639,6 @@ namespace Game.Presentation
                 out reason);
             if (ordered)
             {
-                ClearMovementPreviewState();
                 RefreshGameplayMarkers();
             }
             return ordered;
@@ -1412,7 +1313,6 @@ namespace Game.Presentation
             _selectedPlayerUnitId = string.Empty;
             _trackedEnemyUnitId = string.Empty;
             _authoritativeServerUnitIdByLocalId.Clear();
-            ClearMovementPreviewState();
             _unitMarkerRoots.Clear();
             _unitVisualPositions.Clear();
         }
@@ -2249,20 +2149,6 @@ namespace Game.Presentation
                 });
             }
 
-            if (_movementPreviewPath.Count > 1 &&
-                string.Equals(
-                    _movementPreviewUnitId,
-                    _selectedPlayerUnitId,
-                    StringComparison.Ordinal))
-            {
-                CreateMovementPath(
-                    "이동_미리보기",
-                    _movementPreviewPath,
-                    movementPreviewColor,
-                    movementPathWidth * 1.18f,
-                    movementPathAlpha);
-            }
-
             UpdateUnitMarkerInterpolation();
         }
 
@@ -2993,13 +2879,6 @@ namespace Game.Presentation
             if (selectsPlayerUnit)
             {
                 _selectedPlayerUnitId = selection.UnitId;
-                if (!string.Equals(
-                        previousSelectedPlayerUnitId,
-                        _selectedPlayerUnitId,
-                        StringComparison.Ordinal))
-                {
-                    ClearMovementPreviewState();
-                }
             }
             _trackedEnemyUnitId = tracksEnemy
                 ? selection.UnitId
@@ -3424,11 +3303,11 @@ namespace Game.Presentation
                 CurrentLayout,
                 coordinate);
             ApplyMapSelection(selection);
-            CellMovementPreviewRequested?.Invoke(
-                selection,
-                leftClicked);
             if (leftClicked)
+            {
+                CellMoveRequested?.Invoke(selection);
                 PrimaryCellSelected?.Invoke();
+            }
             CellSelected?.Invoke(selection);
             if (rightClicked)
                 CellActionRequested?.Invoke(

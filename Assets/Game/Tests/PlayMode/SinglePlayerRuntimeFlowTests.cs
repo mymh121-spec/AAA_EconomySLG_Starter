@@ -666,9 +666,16 @@ namespace Game.Tests.PlayMode
             GridCoordinate destination = FindReachableDestination(map, unit);
             Assert.That(destination, Is.Not.EqualTo(unit.Coordinate),
                 "초기 부대가 이동할 수 있는 육지 칸이 있어야 합니다.");
-            Assert.That(map.TryMoveSelectedPlayerUnit(destination, out string reason),
-                Is.True,
-                reason);
+            Assert.That(map.TrySelectMapCell(destination, out MapCellSelection target),
+                Is.True);
+            InvokePrivate(controller, "HandleMapMoveRequested", target);
+            yield return null;
+            Assert.That(unit.IsMoving, Is.True,
+                "목적지를 한 번 선택하면 미리보기 없이 즉시 이동해야 합니다.");
+            Assert.That(GameObject.Find(unit.Id + "_이동 점선"), Is.Not.Null,
+                "이동 중에는 확정된 세력색 경로가 표시되어야 합니다.");
+            Assert.That(GameObject.Find("이동_미리보기_이동 점선"), Is.Null,
+                "노란 이동 미리보기 경로는 생성되지 않아야 합니다.");
             int movementSteps = map.GameplayService
                 .GetRemainingMovementFixedSteps(unit);
             map.AdvanceGameplayFixedSteps(Math.Max(1, movementSteps));
