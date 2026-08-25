@@ -4,8 +4,9 @@ Unity C# architecture for a real-time economy and strategy game.
 
 ## Play in browser
 
-- Submission build: <https://mymh121-spec.github.io/AAA_EconomySLG_Starter/>
+- Live WebGL game: <https://mymh121-spec.github.io/SyndicatesAndEmpires/>
 - No installation or login is required. A desktop Chrome, Edge, Firefox, or Safari browser is recommended.
+- Public releases target WebGL on GitHub Pages. Windows builds are local validation artifacts and are not distributed.
 
 ## Included
 
@@ -37,19 +38,20 @@ Unity C# architecture for a real-time economy and strategy game.
 3. Open the menu `게임 > 기본 경제 에셋 생성` if you want to regenerate the sample data.
 4. Reference `Assets/Game/Scripts/Application/SimulationEngine.cs` as the entry point for the simulation.
 
-## Windows build and run
-
-- Use Unity menu `게임 > Windows EXE 빌드` to create the standalone game.
-- When a `D:` drive is available, the default output is `D:\SyndicatesAndEmpires\Builds\Windows\SyndicatesAndEmpires.exe`.
-- Set `SYNDICATES_AND_EMPIRES_BUILD_ROOT` before launching Unity to choose another build root.
-- Run `RUN_WINDOWS_EXE.cmd`; it checks the D: build first and falls back to the project-local `Builds` folder.
-
-## SYNDICATES & EMPIRES WebGL build
+## WebGL deployment
 
 - Install Unity's Web Build Support module for `6000.3.21f1`.
 - Use Unity menu `게임 > SYNDICATES & EMPIRES WebGL 제출 빌드`, or run Unity in batch mode with `-buildTarget WebGL -executeMethod Game.Editor.StandaloneBuild.BuildWebGlSubmission`.
 - The command writes a GitHub Pages-ready build to `docs/`, including `.nojekyll` and a responsive Korean loading page.
 - See `SUBMISSION_TRACK1_KO.md` for the final title, short description, controls, and Codex collaboration notes.
+
+## Optional local Windows build
+
+- This build is for local validation only and is not part of the public release.
+- Use Unity menu `게임 > Windows EXE 빌드` to create the standalone game.
+- When a `D:` drive is available, the default output is `D:\SyndicatesAndEmpires\Builds\Windows\SyndicatesAndEmpires.exe`.
+- Set `SYNDICATES_AND_EMPIRES_BUILD_ROOT` before launching Unity to choose another build root.
+- Run `RUN_WINDOWS_EXE.cmd`; it checks the D: build first and falls back to the project-local `Builds` folder.
 
 ## Korean-first UI
 

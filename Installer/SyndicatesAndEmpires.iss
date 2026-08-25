@@ -1,7 +1,7 @@
 #define MyAppName "SYNDICATES & EMPIRES"
 #define MyAppExeName "SyndicatesAndEmpires.exe"
 #define MyAppPublisher "mymh121-spec"
-#define MyAppUrl "https://github.com/mymh121-spec/AAA_EconomySLG_Starter"
+#define MyAppUrl "https://github.com/mymh121-spec/SyndicatesAndEmpires"
 #define MyAppVersion GetEnv("SYNDICATES_AND_EMPIRES_INSTALLER_VERSION")
 #if MyAppVersion == ""
   #define MyAppVersion "1.0.0"
