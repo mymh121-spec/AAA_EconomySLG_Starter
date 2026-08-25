@@ -199,6 +199,8 @@ namespace Game.Presentation
             _gameplayService?.FindUnit(_selectedPlayerUnitId);
         public IReadOnlyList<MapCommanderState> Commanders =>
             _gameplayService?.Commanders ?? Array.Empty<MapCommanderState>();
+        public Color GetFactionDisplayColor(string factionId) =>
+            GetFactionColor(factionId);
         public MapGenerationSettings GenerationSettings { get; private set; }
         public event Action<MapCellSelection> CellSelected;
         public event Action<MapCellSelection> CellMoveRequested;
@@ -1876,12 +1878,35 @@ namespace Game.Presentation
                 castle?.GarrisonUnitCount ?? 0);
         }
 
-        private static string GetFactionDisplayName(string factionId)
+        private string GetFactionDisplayName(string factionId)
         {
-            if (string.Equals(factionId, "player", StringComparison.Ordinal))
+            if (string.Equals(
+                    factionId,
+                    _gameplayService?.PlayerFactionId,
+                    StringComparison.Ordinal) ||
+                (_gameplayService == null && string.Equals(
+                    factionId,
+                    "player",
+                    StringComparison.Ordinal)))
+            {
                 return "플레이어";
+            }
             if (factionId != null && factionId.StartsWith("ai_", StringComparison.Ordinal))
                 return "경쟁 기업 " + factionId.Substring(3);
+            IReadOnlyList<string> opponents = _gameplayService?.AiFactionIds;
+            if (opponents != null)
+            {
+                for (int i = 0; i < opponents.Count; i++)
+                {
+                    if (string.Equals(
+                            factionId,
+                            opponents[i],
+                            StringComparison.Ordinal))
+                    {
+                        return $"경쟁 세력 {i + 1}";
+                    }
+                }
+            }
             return string.IsNullOrWhiteSpace(factionId) ? "중립" : factionId;
         }
 
@@ -2599,9 +2624,7 @@ namespace Game.Presentation
             float badgeWidth = commander.IsProtagonist
                 ? protagonistPortraitWidth
                 : aiCommanderPortraitWidth;
-            Color factionColor = commander.IsProtagonist
-                ? playerUnitHighlightColor
-                : GetFactionColor(unit.OwnerFactionId);
+            Color factionColor = GetFactionColor(unit.OwnerFactionId);
             Color innerColor = new Color(0.035f, 0.045f, 0.06f, 1f);
             string badgeName = badgeObject.name;
 
@@ -2712,15 +2735,48 @@ namespace Game.Presentation
 
         private Color GetFactionColor(string factionId)
         {
-            if (string.Equals(factionId, "player", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(factionId))
+                return neutralFactionColor;
+            if (string.Equals(
+                    factionId,
+                    _gameplayService?.PlayerFactionId,
+                    StringComparison.Ordinal) ||
+                (_gameplayService == null && string.Equals(
+                    factionId,
+                    "player",
+                    StringComparison.Ordinal)))
+            {
                 return playerFactionColor;
-            if (string.Equals(factionId, "ai_1", StringComparison.Ordinal))
-                return GetEnemyFactionColor(0);
-            if (string.Equals(factionId, "ai_2", StringComparison.Ordinal))
-                return GetEnemyFactionColor(1);
-            if (string.Equals(factionId, "ai_3", StringComparison.Ordinal))
-                return GetEnemyFactionColor(2);
-            return neutralFactionColor;
+            }
+
+            IReadOnlyList<string> opponents = _gameplayService?.AiFactionIds;
+            if (opponents != null)
+            {
+                for (int i = 0; i < opponents.Count; i++)
+                {
+                    if (string.Equals(
+                            factionId,
+                            opponents[i],
+                            StringComparison.Ordinal))
+                    {
+                        return GetEnemyFactionColor(i);
+                    }
+                }
+            }
+
+            if (factionId.StartsWith("ai_", StringComparison.Ordinal) &&
+                int.TryParse(factionId.Substring(3), out int aiNumber))
+            {
+                return GetEnemyFactionColor(Math.Max(0, aiNumber - 1));
+            }
+
+            uint stableHash = 2166136261u;
+            for (int i = 0; i < factionId.Length; i++)
+            {
+                stableHash ^= factionId[i];
+                stableHash *= 16777619u;
+            }
+            return GetEnemyFactionColor((int)(stableHash & 0x7fffffffu));
         }
 
         private Color GetEnemyFactionColor(int enemyIndex)

@@ -73,6 +73,11 @@ namespace Game.Presentation
         private Button _moveUnitButton;
         private Button _cancelMoveButton;
         private VisualElement _mapContextMenu;
+        private ScrollView _mapContextOptionsScroll;
+        private VisualElement _contextUnitSection;
+        private VisualElement _contextEconomySection;
+        private VisualElement _contextSiegeSection;
+        private VisualElement _contextMissionSection;
         private Label _mapContextTitle;
         private Label _mapContextHint;
         private Button _contextCreateUnitButton;
@@ -451,6 +456,9 @@ namespace Game.Presentation
                     Environment.TickCount ^ DateTime.UtcNow.Millisecond));
             AddButton(_singlePlayerSetupView, "이 설정으로 시작", SelectSinglePlayer);
             AddButton(_singlePlayerSetupView, "뒤로", ShowModeSelection);
+            MakeCardVerticallyScrollable(
+                _singlePlayerSetupView,
+                "single-player-setup-scroll");
             ApplySinglePlayerSetupTheme();
 
             _connectionView = CreateCard(
@@ -574,6 +582,7 @@ namespace Game.Presentation
             _campaignHudLabel.style.marginBottom = 9;
             _singleStatusContent.Add(_campaignHudLabel);
             _singleMapSelectionStatus = AddStatus(_singleStatusContent);
+            _singleMapSelectionStatus.name = "single-map-selection-status";
             _singleMapSelectionStatus.text =
                 "지도 칸을 선택하세요.";
             BuildSinglePlayerMapActionPanel(_singleStatusContent);
@@ -581,6 +590,10 @@ namespace Game.Presentation
                 _singlePlayerView,
                 "single-player-scroll");
             StyleGameplayHud(_singlePlayerView);
+            ConfigureDraggableGameplayPanel(
+                _singlePlayerView,
+                _singlePlayerScroll,
+                "single-player-drag-handle");
             RegisterMapInputGuard(_singlePlayerView);
 
             _singlePlayerResultView = CreateCard(
@@ -593,6 +606,9 @@ namespace Game.Presentation
                 _singlePlayerResultView,
                 "확인하고 새 게임 시작",
                 ConfirmSinglePlayerResult);
+            MakeCardVerticallyScrollable(
+                _singlePlayerResultView,
+                "single-player-result-scroll");
 
             _multiplayerView = CreateCard(
                 _uiRoot,
@@ -600,6 +616,8 @@ namespace Game.Presentation
                 string.Empty);
             _multiplayerStatus = AddStatus(_multiplayerView);
             _multiplayerMapSelectionStatus = AddStatus(_multiplayerView);
+            _multiplayerMapSelectionStatus.name =
+                "multiplayer-map-selection-status";
             _multiplayerMapSelectionStatus.text =
                 "지도 칸을 클릭하면 지역 정보와 가능한 행동을 확인합니다.";
             _multiplayerMapOrderButton = AddButton(
@@ -619,12 +637,21 @@ namespace Game.Presentation
                 "서버 지도에서 아군 부대를 선택한 뒤 목표 칸을 선택하세요.";
             AddButton(_multiplayerView, "서버 상태 새로고침", RefreshMultiplayer);
             AddButton(_multiplayerView, "연결 종료 후 모드 선택", ShowModeSelection);
+            ScrollView multiplayerScroll = MakeCardVerticallyScrollable(
+                _multiplayerView,
+                "multiplayer-hud-scroll");
             StyleGameplayHud(_multiplayerView);
+            ConfigureDraggableGameplayPanel(
+                _multiplayerView,
+                multiplayerScroll,
+                "multiplayer-drag-handle");
             RegisterMapInputGuard(_multiplayerView);
             BuildMapContextMenu(_uiRoot);
             BuildNeutralNpcInterface(_uiRoot);
             BuildOperationBoardInterface(_uiRoot);
             BuildTimeHudAndPauseMenu(_uiRoot);
+            _uiRoot.RegisterCallback<GeometryChangedEvent>(
+                HandleRootGeometryChanged);
         }
 
         private void SelectSinglePlayer()
@@ -1187,6 +1214,7 @@ namespace Game.Presentation
             SetVisible(_pauseMenuOverlay, false);
             SetVisible(_keySettingsView, false);
             _resumeRealtimeAfterPauseMenu = false;
+            _uiRoot.schedule.Execute(UpdateResponsiveLayoutFromRoot);
         }
 
         private void ToggleSinglePlayerStatus()
@@ -1494,6 +1522,7 @@ namespace Game.Presentation
 
         private void HandleMapCellSelected(MapCellSelection selection)
         {
+            ApplySelectionOwnerTheme(selection);
             string description =
                 $"선택: {selection.DisplayName} " +
                 $"({selection.Coordinate.X}, {selection.Coordinate.Y})\n" +
@@ -1810,6 +1839,7 @@ namespace Game.Presentation
                 _contextSupplyBlockadeButton,
                 hasSelectedUnit && hasSupplyRoute && !friendlySupplyRoute);
 
+            RefreshMapContextSections();
             PositionMapContextMenu(screenPosition);
             SetVisible(_mapContextMenu, true);
         }
@@ -3434,6 +3464,16 @@ namespace Game.Presentation
             _mapContextHint.style.marginBottom = 8;
             _mapContextMenu.Add(_mapContextHint);
 
+            _mapContextOptionsScroll = new ScrollView(ScrollViewMode.Vertical)
+            {
+                name = "map-context-options-scroll",
+                verticalScrollerVisibility = ScrollerVisibility.Auto
+            };
+            _mapContextOptionsScroll.style.flexGrow = 1;
+            _mapContextOptionsScroll.style.flexShrink = 1;
+            _mapContextOptionsScroll.style.minHeight = 0;
+            _mapContextMenu.Add(_mapContextOptionsScroll);
+
             _contextCreateUnitButton = CreateMapActionButton(
                 "유닛 생산 · 병종과 장비 선택",
                 () =>
@@ -3538,25 +3578,41 @@ namespace Game.Presentation
             closeButton.style.backgroundColor =
                 new Color(0.18f, 0.22f, 0.29f, 1f);
 
-            _mapContextMenu.Add(_contextUnitTypeButton);
-            _mapContextMenu.Add(_contextCreateUnitButton);
-            _mapContextMenu.Add(_contextSelectUnitButton);
-            _mapContextMenu.Add(_contextInspectUnitButton);
-            _mapContextMenu.Add(_contextMoveUnitButton);
-            _mapContextMenu.Add(_contextCancelMoveButton);
-            _mapContextMenu.Add(_contextCaptureMineButton);
-            _mapContextMenu.Add(_contextEconomicSurveyButton);
-            _mapContextMenu.Add(_contextBuildMineButton);
-            _mapContextMenu.Add(_contextCastleActionButton);
-            _mapContextMenu.Add(_contextCastleRoleButton);
-            _mapContextMenu.Add(_contextSiegeActionButton);
-            _mapContextMenu.Add(_contextLootButton);
-            _mapContextMenu.Add(_contextPreserveButton);
-            _mapContextMenu.Add(_contextAutonomyButton);
-            _mapContextMenu.Add(_contextMissionButton);
-            _mapContextMenu.Add(_contextSupplyRaidButton);
-            _mapContextMenu.Add(_contextSupplyBlockadeButton);
-            _mapContextMenu.Add(_contextSupplyEscortButton);
+            _contextUnitSection = CreateContextMenuSection(
+                _mapContextOptionsScroll,
+                "context-unit-section",
+                "부대 명령",
+                _contextUnitTypeButton,
+                _contextCreateUnitButton,
+                _contextSelectUnitButton,
+                _contextInspectUnitButton,
+                _contextMoveUnitButton,
+                _contextCancelMoveButton);
+            _contextEconomySection = CreateContextMenuSection(
+                _mapContextOptionsScroll,
+                "context-economy-section",
+                "소유·경제 거점",
+                _contextCaptureMineButton,
+                _contextEconomicSurveyButton,
+                _contextBuildMineButton,
+                _contextCastleActionButton,
+                _contextCastleRoleButton);
+            _contextSiegeSection = CreateContextMenuSection(
+                _mapContextOptionsScroll,
+                "context-siege-section",
+                "공성·점령 정책",
+                _contextSiegeActionButton,
+                _contextLootButton,
+                _contextPreserveButton,
+                _contextAutonomyButton);
+            _contextMissionSection = CreateContextMenuSection(
+                _mapContextOptionsScroll,
+                "context-mission-section",
+                "미션·보급",
+                _contextMissionButton,
+                _contextSupplyRaidButton,
+                _contextSupplyBlockadeButton,
+                _contextSupplyEscortButton);
             _mapContextMenu.Add(closeButton);
             root.Add(_mapContextMenu);
             RegisterMapInputGuard(_mapContextMenu);
@@ -3651,6 +3707,9 @@ namespace Game.Presentation
             _neutralNpcView.Add(_npcHireCommanderButton);
             _neutralNpcFeedback = AddStatus(_neutralNpcView);
             AddButton(_neutralNpcView, "닫기", CloseNeutralNpcView);
+            MakeCardVerticallyScrollable(
+                _neutralNpcView,
+                "neutral-npc-scroll");
 
             RegisterMapInputGuard(_neutralNpcTopButton);
             RegisterMapInputGuard(_neutralNpcView);
@@ -3721,6 +3780,9 @@ namespace Game.Presentation
             _operationBoardView.Add(_acceptOperationButton);
             _operationBoardFeedback = AddStatus(_operationBoardView);
             AddButton(_operationBoardView, "닫기", CloseOperationBoard);
+            MakeCardVerticallyScrollable(
+                _operationBoardView,
+                "operation-board-scroll");
 
             RegisterMapInputGuard(_operationBoardTopButton);
             RegisterMapInputGuard(_operationBoardView);
@@ -3740,6 +3802,7 @@ namespace Game.Presentation
             if (gameplayMap != null)
                 gameplayMap.PointerSelectionBlocked = true;
             RefreshOperationBoard();
+            _uiRoot?.schedule.Execute(UpdateResponsiveLayoutFromRoot);
         }
 
         private void CloseOperationBoard()
@@ -4317,6 +4380,7 @@ namespace Game.Presentation
             if (gameplayMap != null)
                 gameplayMap.PointerSelectionBlocked = true;
             RefreshNeutralNpcView();
+            _uiRoot?.schedule.Execute(UpdateResponsiveLayoutFromRoot);
         }
 
         private void CloseNeutralNpcView()
@@ -4689,6 +4753,102 @@ namespace Game.Presentation
                 _operationBoardView.resolvedStyle.display == DisplayStyle.Flex;
         }
 
+        private void ApplySelectionOwnerTheme(MapCellSelection selection)
+        {
+            if (gameplayMap == null)
+                return;
+
+            string ownerFactionId = !string.IsNullOrWhiteSpace(
+                    selection.UnitOwnerFactionId)
+                ? selection.UnitOwnerFactionId
+                : !string.IsNullOrWhiteSpace(selection.CastleOwnerFactionId)
+                    ? selection.CastleOwnerFactionId
+                    : !string.IsNullOrWhiteSpace(selection.MineOwnerFactionId)
+                        ? selection.MineOwnerFactionId
+                        : selection.CapturingFactionId;
+            Color ownerColor = gameplayMap.GetFactionDisplayColor(ownerFactionId);
+            Color readableAccent = Color.Lerp(ownerColor, Color.white, 0.22f);
+
+            ApplyOwnerAccent(_singleMapSelectionStatus, ownerColor);
+            ApplyOwnerAccent(_multiplayerMapSelectionStatus, ownerColor);
+            ApplyOwnerAccent(_singleMapActionPanel, ownerColor);
+            if (_singleMapActionTitle != null)
+                _singleMapActionTitle.style.color = readableAccent;
+            if (_mapContextTitle != null)
+                _mapContextTitle.style.color = readableAccent;
+            if (_mapContextMenu != null)
+            {
+                _mapContextMenu.style.borderTopColor = ownerColor;
+                _mapContextMenu.style.borderBottomColor = ownerColor;
+                _mapContextMenu.style.borderLeftColor = ownerColor;
+                _mapContextMenu.style.borderRightColor = ownerColor;
+            }
+        }
+
+        private static void ApplyOwnerAccent(
+            VisualElement element,
+            Color ownerColor)
+        {
+            if (element == null)
+                return;
+
+            element.style.borderLeftWidth = 6;
+            element.style.borderLeftColor = ownerColor;
+        }
+
+        private void RefreshMapContextSections()
+        {
+            SetVisible(
+                _contextUnitSection,
+                HasVisibleContextOption(
+                    _contextUnitTypeButton,
+                    _contextCreateUnitButton,
+                    _contextSelectUnitButton,
+                    _contextInspectUnitButton,
+                    _contextMoveUnitButton,
+                    _contextCancelMoveButton));
+            SetVisible(
+                _contextEconomySection,
+                HasVisibleContextOption(
+                    _contextCaptureMineButton,
+                    _contextEconomicSurveyButton,
+                    _contextBuildMineButton,
+                    _contextCastleActionButton,
+                    _contextCastleRoleButton));
+            SetVisible(
+                _contextSiegeSection,
+                HasVisibleContextOption(
+                    _contextSiegeActionButton,
+                    _contextLootButton,
+                    _contextPreserveButton,
+                    _contextAutonomyButton));
+            SetVisible(
+                _contextMissionSection,
+                HasVisibleContextOption(
+                    _contextMissionButton,
+                    _contextSupplyRaidButton,
+                    _contextSupplyBlockadeButton,
+                    _contextSupplyEscortButton));
+        }
+
+        private static bool HasVisibleContextOption(
+            params VisualElement[] options)
+        {
+            for (int i = 0; i < options.Length; i++)
+            {
+                if (options[i] == null)
+                    continue;
+
+                StyleEnum<DisplayStyle> display = options[i].style.display;
+                if (display.keyword == StyleKeyword.Null ||
+                    display.value != DisplayStyle.None)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void PositionMapContextMenu(Vector2 screenPosition)
         {
             if (_uiRoot == null || _mapContextMenu == null)
@@ -4704,8 +4864,16 @@ namespace Game.Presentation
             float x = screenPosition.x * rootWidth / Mathf.Max(1f, Screen.width);
             float y = (Screen.height - screenPosition.y) * rootHeight /
                       Mathf.Max(1f, Screen.height);
-            const float menuWidth = 320f;
-            const float estimatedMenuHeight = 410f;
+            float menuWidth = Mathf.Min(320f, Mathf.Max(180f, rootWidth - 20f));
+            float menuHeight = Mathf.Max(180f, rootHeight - 20f);
+            _mapContextMenu.style.width = menuWidth;
+            _mapContextMenu.style.maxHeight = menuHeight;
+            if (_mapContextOptionsScroll != null)
+            {
+                _mapContextOptionsScroll.style.maxHeight =
+                    Mathf.Max(80f, menuHeight - 150f);
+            }
+            float estimatedMenuHeight = Mathf.Min(menuHeight, 620f);
             _mapContextMenu.style.left = Mathf.Clamp(
                 x + 10f,
                 10f,
@@ -4737,6 +4905,33 @@ namespace Game.Presentation
             button.style.backgroundColor = new Color(0.18f, 0.42f, 0.70f);
             button.style.color = Color.white;
             return button;
+        }
+
+        private static VisualElement CreateContextMenuSection(
+            ScrollView parent,
+            string sectionName,
+            string title,
+            params VisualElement[] controls)
+        {
+            var section = new VisualElement
+            {
+                name = sectionName
+            };
+            section.style.marginBottom = 7;
+            var label = new Label(title);
+            label.style.fontSize = 12;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            label.style.color = new Color(0.66f, 0.78f, 0.92f, 1f);
+            label.style.marginTop = 3;
+            label.style.marginBottom = 3;
+            section.Add(label);
+            for (int i = 0; i < controls.Length; i++)
+            {
+                if (controls[i] != null)
+                    section.Add(controls[i]);
+            }
+            parent.Add(section);
+            return section;
         }
 
         private void AddRealtimeSpeedControls(VisualElement parent)
@@ -4782,6 +4977,11 @@ namespace Game.Presentation
 
         private static void StyleGameplayHud(VisualElement card)
         {
+            card.style.position = Position.Absolute;
+            card.style.left = 20;
+            card.style.top = 20;
+            card.style.right = StyleKeyword.Auto;
+            card.style.bottom = StyleKeyword.Auto;
             card.style.width = 420;
             card.style.maxWidth = new Length(46, LengthUnit.Percent);
             card.style.height = new Length(94, LengthUnit.Percent);
@@ -4789,8 +4989,8 @@ namespace Game.Presentation
             card.style.paddingRight = 20;
             card.style.paddingTop = 18;
             card.style.paddingBottom = 18;
-            card.style.marginLeft = 20;
-            card.style.marginTop = 20;
+            card.style.marginLeft = 0;
+            card.style.marginTop = 0;
             card.style.backgroundColor =
                 new Color(0.07f, 0.095f, 0.14f, 0.92f);
         }
@@ -4809,7 +5009,10 @@ namespace Game.Presentation
                 verticalScrollerVisibility = ScrollerVisibility.Auto
             };
             scroll.style.flexGrow = 1;
+            scroll.style.flexShrink = 1;
             scroll.style.minHeight = 0;
+            card.style.maxHeight = new Length(92, LengthUnit.Percent);
+            card.style.minHeight = 0;
             for (int i = 0; i < children.Count; i++)
             {
                 children[i].RemoveFromHierarchy();
@@ -4817,6 +5020,207 @@ namespace Game.Presentation
             }
             card.Add(scroll);
             return scroll;
+        }
+
+        private void ConfigureDraggableGameplayPanel(
+            VisualElement panel,
+            ScrollView scroll,
+            string handleName)
+        {
+            if (panel == null || scroll?.contentContainer == null ||
+                scroll.contentContainer.childCount == 0 ||
+                !(scroll.contentContainer[0] is Label dragHandle))
+            {
+                return;
+            }
+
+            dragHandle.RemoveFromHierarchy();
+            panel.Insert(0, dragHandle);
+            dragHandle.name = handleName;
+            dragHandle.text += " · 드래그 이동";
+            dragHandle.style.paddingTop = 4;
+            dragHandle.style.paddingBottom = 8;
+            dragHandle.style.marginBottom = 4;
+            dragHandle.style.borderBottomWidth = 1;
+            dragHandle.style.borderBottomColor =
+                new Color(0.24f, 0.50f, 0.82f, 0.85f);
+
+            Vector2 pointerOrigin = Vector2.zero;
+            Vector2 panelOrigin = Vector2.zero;
+            int capturedPointerId = -1;
+            dragHandle.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                    return;
+
+                capturedPointerId = evt.pointerId;
+                pointerOrigin = new Vector2(evt.position.x, evt.position.y);
+                float currentLeft = panel.resolvedStyle.left;
+                float currentTop = panel.resolvedStyle.top;
+                panelOrigin = new Vector2(
+                    float.IsNaN(currentLeft) ? 20f : currentLeft,
+                    float.IsNaN(currentTop) ? 20f : currentTop);
+                panel.BringToFront();
+                dragHandle.CapturePointer(capturedPointerId);
+                evt.StopPropagation();
+            });
+            dragHandle.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (capturedPointerId != evt.pointerId ||
+                    !dragHandle.HasPointerCapture(evt.pointerId))
+                {
+                    return;
+                }
+
+                Vector2 current = new Vector2(evt.position.x, evt.position.y);
+                SetFloatingPanelPosition(
+                    panel,
+                    panelOrigin + current - pointerOrigin);
+                evt.StopPropagation();
+            });
+            dragHandle.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (capturedPointerId != evt.pointerId)
+                    return;
+
+                if (dragHandle.HasPointerCapture(evt.pointerId))
+                    dragHandle.ReleasePointer(evt.pointerId);
+                capturedPointerId = -1;
+                evt.StopPropagation();
+            });
+        }
+
+        private void HandleRootGeometryChanged(GeometryChangedEvent evt)
+        {
+            UpdateResponsiveLayout(evt.newRect.width, evt.newRect.height);
+        }
+
+        private void UpdateResponsiveLayoutFromRoot()
+        {
+            if (_uiRoot == null)
+                return;
+            UpdateResponsiveLayout(
+                _uiRoot.resolvedStyle.width,
+                _uiRoot.resolvedStyle.height);
+        }
+
+        private void UpdateResponsiveLayout(float rootWidth, float rootHeight)
+        {
+            if (rootWidth <= 0f || rootHeight <= 0f)
+                return;
+
+            bool compact = rootWidth < 1200f;
+            float setupPadding = rootWidth < 720f ? 18f : 42f;
+            if (_singlePlayerSetupView != null)
+            {
+                _singlePlayerSetupView.style.paddingLeft = setupPadding;
+                _singlePlayerSetupView.style.paddingRight = setupPadding;
+            }
+
+            if (_neutralNpcTopButton != null)
+            {
+                if (compact)
+                {
+                    _neutralNpcTopButton.style.left = StyleKeyword.Auto;
+                    _neutralNpcTopButton.style.right = 16;
+                    _neutralNpcTopButton.style.width =
+                        Mathf.Min(280f, Mathf.Max(120f, rootWidth - 32f));
+                }
+                else
+                {
+                    _neutralNpcTopButton.style.left = 440;
+                    _neutralNpcTopButton.style.right = StyleKeyword.Auto;
+                    _neutralNpcTopButton.style.width = 310;
+                }
+            }
+            if (_operationBoardTopButton != null)
+            {
+                if (compact)
+                {
+                    _operationBoardTopButton.style.left = StyleKeyword.Auto;
+                    _operationBoardTopButton.style.right = 16;
+                    _operationBoardTopButton.style.top = 74;
+                    _operationBoardTopButton.style.width =
+                        Mathf.Min(280f, Mathf.Max(120f, rootWidth - 32f));
+                }
+                else
+                {
+                    _operationBoardTopButton.style.left = 770;
+                    _operationBoardTopButton.style.right = StyleKeyword.Auto;
+                    _operationBoardTopButton.style.top = 16;
+                    _operationBoardTopButton.style.width = 270;
+                }
+            }
+            if (_timeHudView != null)
+            {
+                _timeHudView.style.top = compact ? 132 : 16;
+                _timeHudView.style.width =
+                    Mathf.Min(400f, Mathf.Max(120f, rootWidth - 32f));
+            }
+
+            float overlayMaxHeight = Mathf.Max(180f, rootHeight - 98f);
+            if (_neutralNpcView != null)
+                _neutralNpcView.style.maxHeight = overlayMaxHeight;
+            if (_operationBoardView != null)
+                _operationBoardView.style.maxHeight = overlayMaxHeight;
+
+            if (_selection.IsSinglePlayer)
+                ClampFloatingPanelToRoot(_singlePlayerView);
+            else if (_selection.IsMultiplayer)
+                ClampFloatingPanelToRoot(_multiplayerView);
+            ClampFloatingPanelToRoot(_neutralNpcView);
+            ClampFloatingPanelToRoot(_operationBoardView);
+            ClampFloatingPanelToRoot(_mapContextMenu);
+        }
+
+        private void ClampFloatingPanelToRoot(VisualElement panel)
+        {
+            if (panel == null ||
+                panel.resolvedStyle.display == DisplayStyle.None)
+            {
+                return;
+            }
+
+            float left = panel.resolvedStyle.left;
+            float top = panel.resolvedStyle.top;
+            SetFloatingPanelPosition(
+                panel,
+                new Vector2(
+                    float.IsNaN(left) ? 8f : left,
+                    float.IsNaN(top) ? 8f : top));
+        }
+
+        private void SetFloatingPanelPosition(
+            VisualElement panel,
+            Vector2 proposedPosition)
+        {
+            if (_uiRoot == null || panel == null)
+                return;
+
+            float rootWidth = _uiRoot.resolvedStyle.width;
+            float rootHeight = _uiRoot.resolvedStyle.height;
+            if (float.IsNaN(rootWidth) || rootWidth <= 0f)
+                rootWidth = Screen.width;
+            if (float.IsNaN(rootHeight) || rootHeight <= 0f)
+                rootHeight = Screen.height;
+
+            float panelWidth = panel.resolvedStyle.width;
+            float panelHeight = panel.resolvedStyle.height;
+            if (float.IsNaN(panelWidth) || panelWidth <= 0f)
+                panelWidth = Mathf.Min(420f, rootWidth - 16f);
+            if (float.IsNaN(panelHeight) || panelHeight <= 0f)
+                panelHeight = Mathf.Min(rootHeight * 0.94f, rootHeight - 16f);
+
+            panel.style.right = StyleKeyword.Auto;
+            panel.style.bottom = StyleKeyword.Auto;
+            panel.style.left = Mathf.Clamp(
+                proposedPosition.x,
+                8f,
+                Mathf.Max(8f, rootWidth - panelWidth - 8f));
+            panel.style.top = Mathf.Clamp(
+                proposedPosition.y,
+                8f,
+                Mathf.Max(8f, rootHeight - panelHeight - 8f));
         }
 
         private void RegisterMapInputGuard(VisualElement element)

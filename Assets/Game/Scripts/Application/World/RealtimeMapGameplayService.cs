@@ -1426,6 +1426,7 @@ namespace Game.Application.World
         private readonly bool _enableAi;
 
         public string PlayerFactionId { get; }
+        public IReadOnlyList<string> AiFactionIds => _aiFactionIds;
         public IReadOnlyList<MapUnitState> Units => _units;
         public IReadOnlyList<MapCommanderState> Commanders => _commanders;
         public IReadOnlyList<MapMineControlState> Mines => _mines;

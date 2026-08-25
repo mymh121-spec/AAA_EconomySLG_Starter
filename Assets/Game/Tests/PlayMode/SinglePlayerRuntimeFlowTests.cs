@@ -253,6 +253,11 @@ namespace Game.Tests.PlayMode
             Assert.That(map.SelectedPlayerUnit.Stamina, Is.EqualTo(7));
             Assert.That(map.GameplayService.FindMine(new GridCoordinate(3, 4))
                 .OwnerFactionId, Is.EqualTo("company_host"));
+            Color ownColor = map.GetFactionDisplayColor("company_host");
+            Color enemyColor = map.GetFactionDisplayColor("company_guest");
+            Assert.That(ownColor, Is.EqualTo(new Color(0.05f, 0.42f, 1f, 1f)));
+            Assert.That(enemyColor, Is.EqualTo(new Color(0.92f, 0.10f, 0.12f, 1f)),
+                "멀티플레이 회사 ID도 중립 회색이 아닌 적 세력색을 받아야 합니다.");
 
             UnityEngine.Object.Destroy(root);
             yield return null;
@@ -346,6 +351,22 @@ namespace Game.Tests.PlayMode
                     "multiplayer-connection-scroll"),
                 Is.Not.Null,
                 "멀티플레이 방 연결 화면도 세로 스크롤을 제공해야 합니다.");
+            Assert.That(
+                document.rootVisualElement.Q<ScrollView>(
+                    "single-player-setup-scroll"),
+                Is.Not.Null,
+                "작은 WebGL 화면에서도 세계 설정 선택지가 잘리지 않아야 합니다.");
+            Assert.That(
+                document.rootVisualElement.Q<ScrollView>(
+                    "map-context-options-scroll"),
+                Is.Not.Null,
+                "지도 행동 선택지는 세부 분류된 스크롤 영역에 있어야 합니다.");
+            Assert.That(
+                document.rootVisualElement.Q<ScrollView>("neutral-npc-scroll"),
+                Is.Not.Null);
+            Assert.That(
+                document.rootVisualElement.Q<ScrollView>("operation-board-scroll"),
+                Is.Not.Null);
             Button singlePlayerButton = null;
             Button createRoomButton = null;
             Button joinRoomButton = null;
@@ -484,6 +505,13 @@ namespace Game.Tests.PlayMode
                     protagonistPortrait.name + "_세력색사각형"),
                 Is.Not.Null,
                 "장수 초상은 세력색 사각 배경으로 구분되어야 합니다.");
+            SpriteRenderer ownerBadgeRenderer = GameObject.Find(
+                    protagonistPortrait.name + "_세력색사각형")
+                .GetComponent<SpriteRenderer>();
+            Assert.That(ownerBadgeRenderer.color,
+                Is.EqualTo(map.GetFactionDisplayColor(
+                    map.SelectedPlayerUnit.OwnerFactionId)),
+                "주인공 장수 배지도 강조색이 아닌 실제 소유자 색을 사용해야 합니다.");
             Assert.That(GameObject.Find(
                     protagonistPortrait.name + "_아래화살표"),
                 Is.Not.Null,
@@ -513,6 +541,42 @@ namespace Game.Tests.PlayMode
                 "상태 정보에는 접기/펼치기 버튼이 있어야 합니다.");
             Assert.That(statusContent, Is.Not.Null);
             Assert.That(singlePlayerHud, Is.Not.Null);
+            Assert.That(singlePlayerHud.resolvedStyle.position,
+                Is.EqualTo(Position.Absolute),
+                "파란 선택 HUD는 드래그 가능한 독립 창이어야 합니다.");
+            Label dragHandle = document.rootVisualElement.Q<Label>(
+                "single-player-drag-handle");
+            Assert.That(dragHandle, Is.Not.Null);
+            Assert.That(dragHandle.text, Does.Contain("드래그 이동"));
+            InvokePrivate(
+                controller,
+                "SetFloatingPanelPosition",
+                singlePlayerHud,
+                new Vector2(10000f, 10000f));
+            yield return null;
+            Assert.That(
+                singlePlayerHud.resolvedStyle.left +
+                singlePlayerHud.resolvedStyle.width,
+                Is.LessThanOrEqualTo(
+                    document.rootVisualElement.resolvedStyle.width + 0.5f),
+                "드래그한 파란 창은 WebGL 화면 밖으로 잘리면 안 됩니다.");
+            Assert.That(
+                singlePlayerHud.resolvedStyle.top +
+                singlePlayerHud.resolvedStyle.height,
+                Is.LessThanOrEqualTo(
+                    document.rootVisualElement.resolvedStyle.height + 0.5f));
+            InvokePrivate(
+                controller,
+                "SetFloatingPanelPosition",
+                singlePlayerHud,
+                new Vector2(20f, 20f));
+            Label selectionStatus = document.rootVisualElement.Q<Label>(
+                "single-map-selection-status");
+            Assert.That(selectionStatus, Is.Not.Null);
+            Assert.That(selectionStatus.resolvedStyle.borderLeftColor,
+                Is.EqualTo(map.GetFactionDisplayColor(
+                    map.SelectedPlayerUnit.OwnerFactionId)),
+                "선택 정보창 테두리는 현재 소유자 색을 보여야 합니다.");
             Assert.That(mapActionPanel, Is.Not.Null);
             Assert.That(mapActionPanel.parent, Is.SameAs(statusContent),
                 "파란 지도 행동 패널도 상태 정보와 함께 접혀야 합니다.");
