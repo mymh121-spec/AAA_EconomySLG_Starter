@@ -104,6 +104,10 @@ namespace Game.Presentation
         [SerializeField] private bool createCameraIfMissing = true;
         [SerializeField] private bool createLightIfMissing = true;
 
+        [Header("지도 선택")]
+        [SerializeField, Range(0.15f, 0.6f)]
+        private float destinationDoubleClickInterval = 0.35f;
+
         [Header("유닛 이동 경로")]
         [SerializeField, Min(0.03f)] private float movementPathWidth = 0.12f;
         [SerializeField, Min(0.01f)] private float movementPathHeight = 0.13f;
@@ -177,6 +181,9 @@ namespace Game.Presentation
         private Vector3 _cameraFocus;
         private Vector3 _lastMousePosition;
         private bool _isMousePanning;
+        private bool _hasPendingPrimaryClick;
+        private float _lastPrimaryClickTime;
+        private GridCoordinate _lastPrimaryClickCoordinate;
         private int _generationSequence;
         private RealtimeMapGameplayService _gameplayService;
         private string _selectedPlayerUnitId = string.Empty;
@@ -2164,17 +2171,22 @@ namespace Game.Presentation
             {
                 MapMineControlState mine = _gameplayService.Mines[i];
                 Color color = GetMineControlColor(mine);
-                ForEachSurfaceCopy(xOffset => CreateBlock(
-                    $"광산 소유권_{mine.Coordinate.X}_{mine.Coordinate.Y}",
-                    ToWorldPosition(mine.Coordinate, xOffset) +
-                    new Vector3(0f, 0.045f, 0f),
-                    new Vector3(
-                        tileSize * 0.78f,
-                        0.07f,
-                        tileSize * 0.78f),
-                    color,
-                    _gameplayMarkerRoot,
-                    false));
+                ForEachSurfaceCopy(xOffset =>
+                {
+                    Vector3 position = ToWorldPosition(
+                        mine.Coordinate,
+                        xOffset);
+                    CreateBlock(
+                        $"광산 소유자 칸_{mine.Coordinate.X}_{mine.Coordinate.Y}",
+                        position + new Vector3(0f, 0.075f, 0f),
+                        new Vector3(
+                            tileSize * 0.98f,
+                            0.08f,
+                            tileSize * 0.98f),
+                        color,
+                        _gameplayMarkerRoot,
+                        false);
+                });
             }
 
             for (int i = 0; i < _gameplayService.MineConstructions.Count; i++)
@@ -2420,9 +2432,9 @@ namespace Game.Presentation
 
             Color controlColor = GetCastleControlColor(castle);
             CreateBlock(
-                $"성 소유권_{castle.Coordinate.X}_{castle.Coordinate.Y}",
-                position + new Vector3(0f, 0.12f, 0f),
-                new Vector3(tileSize * 1.13f, 0.08f, tileSize * 1.13f),
+                $"성 소유자 칸_{castle.Coordinate.X}_{castle.Coordinate.Y}",
+                position + new Vector3(0f, 0.14f, 0f),
+                new Vector3(tileSize * 1.16f, 0.08f, tileSize * 1.16f),
                 controlColor,
                 _gameplayMarkerRoot,
                 false);
@@ -2878,6 +2890,8 @@ namespace Game.Presentation
 
         private void HandleMineCaptured(MapMineCaptureRecord record)
         {
+            RefreshGameplayMarkers();
+            RefreshCurrentSelection();
             MineCaptured?.Invoke(record);
         }
 
@@ -2897,6 +2911,7 @@ namespace Game.Presentation
 
         private void HandleCastleCaptured(MapCastleCaptureRecord record)
         {
+            RefreshGameplayMarkers();
             RefreshCurrentSelection();
             CastleCaptured?.Invoke(record);
         }
@@ -3339,6 +3354,27 @@ namespace Game.Presentation
             return block;
         }
 
+        private bool RegisterPrimaryClick(
+            GridCoordinate coordinate,
+            float clickTime)
+        {
+            bool isDoubleClick = _hasPendingPrimaryClick &&
+                _lastPrimaryClickCoordinate.Equals(coordinate) &&
+                clickTime >= _lastPrimaryClickTime &&
+                clickTime - _lastPrimaryClickTime <=
+                    destinationDoubleClickInterval;
+            if (isDoubleClick)
+            {
+                _hasPendingPrimaryClick = false;
+                return true;
+            }
+
+            _hasPendingPrimaryClick = true;
+            _lastPrimaryClickCoordinate = coordinate;
+            _lastPrimaryClickTime = clickTime;
+            return false;
+        }
+
         private void Update()
         {
 #if ENABLE_LEGACY_INPUT_MANAGER
@@ -3426,11 +3462,17 @@ namespace Game.Presentation
             MapCellSelection selection = DescribeCell(
                 CurrentLayout,
                 coordinate);
+            bool requestsMove = leftClicked && RegisterPrimaryClick(
+                coordinate,
+                Time.unscaledTime);
+            if (rightClicked)
+                _hasPendingPrimaryClick = false;
             ApplyMapSelection(selection);
             if (leftClicked)
             {
-                CellMoveRequested?.Invoke(selection);
                 PrimaryCellSelected?.Invoke();
+                if (requestsMove)
+                    CellMoveRequested?.Invoke(selection);
             }
             CellSelected?.Invoke(selection);
             if (rightClicked)

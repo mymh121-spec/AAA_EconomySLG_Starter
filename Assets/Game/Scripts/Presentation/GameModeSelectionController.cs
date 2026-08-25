@@ -2583,7 +2583,7 @@ namespace Game.Presentation
 
             SetMapActionFeedback(
                 $"{gameplayMap.SelectedPlayerUnitId}을(를) 선택했습니다. " +
-                "목적지 칸을 클릭하세요.");
+                "목적지 칸을 더블 클릭하거나 이동 버튼을 누르세요.");
             RefreshSelectedMapActions();
         }
 

@@ -800,12 +800,28 @@ namespace Game.Tests.PlayMode
             GridCoordinate destination = FindReachableDestination(map, unit);
             Assert.That(destination, Is.Not.EqualTo(unit.Coordinate),
                 "초기 부대가 이동할 수 있는 육지 칸이 있어야 합니다.");
+            Assert.That(
+                InvokePrivateResult<bool>(
+                    map,
+                    "RegisterPrimaryClick",
+                    destination,
+                    100f),
+                Is.False,
+                "목적지 첫 클릭은 선택만 해야 합니다.");
+            Assert.That(
+                InvokePrivateResult<bool>(
+                    map,
+                    "RegisterPrimaryClick",
+                    destination,
+                    100.1f),
+                Is.True,
+                "같은 칸을 제한 시간 안에 다시 눌러야 더블 클릭으로 인정해야 합니다.");
             Assert.That(map.TrySelectMapCell(destination, out MapCellSelection target),
                 Is.True);
             InvokePrivate(controller, "HandleMapMoveRequested", target);
             yield return null;
             Assert.That(unit.IsMoving, Is.True,
-                "목적지를 한 번 선택하면 미리보기 없이 즉시 이동해야 합니다.");
+                "더블 클릭 이동 요청은 미리보기 없이 즉시 확정되어야 합니다.");
             Assert.That(GameObject.Find(unit.Id + "_이동 점선"), Is.Not.Null,
                 "이동 중에는 확정된 세력색 경로가 표시되어야 합니다.");
             Assert.That(GameObject.Find("이동_미리보기_이동 점선"), Is.Null,
@@ -815,6 +831,42 @@ namespace Game.Tests.PlayMode
             map.AdvanceGameplayFixedSteps(Math.Max(1, movementSteps));
             Assert.That(unit.Coordinate, Is.EqualTo(destination),
                 "플레이어 이동 명령이 실제 지도 위치를 변경해야 합니다.");
+
+            MapMineControlState captureMine = FindReachableMine(map, unit);
+            Assert.That(captureMine, Is.Not.Null,
+                "소유자 칸 색을 검증할 도달 가능한 광산이 필요합니다.");
+            Assert.That(
+                map.TrySelectMapCell(
+                    captureMine.Coordinate,
+                    out MapCellSelection mineSelection),
+                Is.True);
+            InvokePrivate(controller, "HandleMapMoveRequested", mineSelection);
+            int mineTravelGuard = 0;
+            while (unit.IsMoving && mineTravelGuard < 10000)
+            {
+                map.AdvanceGameplayFixedSteps(1);
+                mineTravelGuard++;
+            }
+            Assert.That(unit.Coordinate, Is.EqualTo(captureMine.Coordinate));
+            map.AdvanceGameplayFixedSteps(
+                map.GameplayService.FixedStepsToCapture);
+            yield return null;
+            Assert.That(captureMine.OwnerFactionId,
+                Is.EqualTo(map.GameplayService.PlayerFactionId));
+            GameObject ownershipFrame = GameObject.Find(
+                $"광산 소유자 칸_{captureMine.Coordinate.X}_" +
+                $"{captureMine.Coordinate.Y}");
+            Assert.That(ownershipFrame, Is.Not.Null,
+                "점령 직후 광산 칸에 소유 세력색 테두리가 표시되어야 합니다.");
+            Renderer ownershipRenderer = ownershipFrame.GetComponent<Renderer>();
+            Assert.That(ownershipRenderer, Is.Not.Null);
+            var ownershipProperties = new MaterialPropertyBlock();
+            ownershipRenderer.GetPropertyBlock(ownershipProperties);
+            Assert.That(
+                ownershipProperties.GetColor("_BaseColor"),
+                Is.EqualTo(map.GetFactionDisplayColor(
+                    map.GameplayService.PlayerFactionId)),
+                "점령 칸의 색은 현재 소유자 세력색과 정확히 일치해야 합니다.");
 
             int resolvedDays = 0;
             while (!simulation.IsCampaignFinished &&
@@ -874,6 +926,40 @@ namespace Game.Tests.PlayMode
             }
 
             return unit.Coordinate;
+        }
+
+        private static MapMineControlState FindReachableMine(
+            StarterMapController map,
+            MapUnitState unit)
+        {
+            MapMineControlState best = null;
+            int bestDistance = int.MaxValue;
+            for (int i = 0; i < map.GameplayService.Mines.Count; i++)
+            {
+                MapMineControlState mine = map.GameplayService.Mines[i];
+                MapUnitState occupant = map.GameplayService.FindUnitAt(
+                    mine.Coordinate);
+                if (occupant != null && occupant.Soldiers > 0 &&
+                    !string.Equals(
+                        occupant.OwnerFactionId,
+                        unit.OwnerFactionId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (!map.CanMoveSelectedPlayerUnit(mine.Coordinate, out _))
+                    continue;
+
+                int distance = map.CurrentLayout.ManhattanDistance(
+                    unit.Coordinate,
+                    mine.Coordinate);
+                if (distance < bestDistance)
+                {
+                    best = mine;
+                    bestDistance = distance;
+                }
+            }
+            return best;
         }
 
         private static GridCoordinate FindReachableDestinationForUnit(
@@ -996,6 +1082,21 @@ namespace Game.Tests.PlayMode
             Assert.That(method, Is.Not.Null,
                 $"{methodName} 동작을 찾을 수 있어야 합니다.");
             method.Invoke(target, arguments);
+        }
+
+        private static T InvokePrivateResult<T>(
+            object target,
+            string methodName,
+            params object[] arguments)
+        {
+            MethodInfo method = target.GetType().GetMethod(
+                methodName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method, Is.Not.Null,
+                $"{methodName} 동작을 찾을 수 있어야 합니다.");
+            object result = method.Invoke(target, arguments);
+            Assert.That(result, Is.TypeOf<T>());
+            return (T)result;
         }
     }
 }
