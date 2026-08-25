@@ -3619,7 +3619,7 @@ namespace Game.Presentation
 
         private void BuildNeutralNpcInterface(VisualElement root)
         {
-            _neutralNpcTopButton = new Button(OpenNeutralNpcView)
+            _neutralNpcTopButton = new Button(ToggleNeutralNpcView)
             {
                 text = "병영 · 부대/장비/장수"
             };
@@ -3641,6 +3641,7 @@ namespace Game.Presentation
                 root,
                 "병영 · 부대/장비/장수",
                 "부대를 편성하고 공용 AI 장수를 소환합니다.");
+            _neutralNpcView.name = "neutral-npc-view";
             _neutralNpcView.style.position = Position.Absolute;
             _neutralNpcView.style.top = 78;
             _neutralNpcView.style.left = 440;
@@ -3713,7 +3714,7 @@ namespace Game.Presentation
 
         private void BuildOperationBoardInterface(VisualElement root)
         {
-            _operationBoardTopButton = new Button(OpenOperationBoard)
+            _operationBoardTopButton = new Button(ToggleOperationBoard)
             {
                 text = "미션·경제 작전 게시판"
             };
@@ -3736,6 +3737,7 @@ namespace Game.Presentation
                 root,
                 "미션·경제 작전 게시판",
                 "세계에서 실제로 발생한 위기와 기회입니다. 해결 방식에 따라 비용·위험·보상과 후속 경제가 달라집니다.");
+            _operationBoardView.name = "operation-board-view";
             _operationBoardView.style.position = Position.Absolute;
             _operationBoardView.style.top = 78;
             _operationBoardView.style.left = 610;
@@ -3812,6 +3814,14 @@ namespace Game.Presentation
             _selectedOperationApproachIndex = 0;
             SelectRecommendedApproachForCurrentAgent();
             RefreshOperationBoard();
+        }
+
+        private void ToggleOperationBoard()
+        {
+            if (IsOperationBoardOpen())
+                CloseOperationBoard();
+            else
+                OpenOperationBoard();
         }
 
         private void CycleSelectedOperationAgent()
@@ -4317,6 +4327,14 @@ namespace Game.Presentation
         {
             _pendingRecruitmentOrigin = gameplayMap?.CurrentLayout?.PlayerStart;
             OpenNeutralNpcView(true);
+        }
+
+        private void ToggleNeutralNpcView()
+        {
+            if (IsNeutralNpcViewOpen())
+                CloseNeutralNpcView();
+            else
+                OpenNeutralNpcView();
         }
 
         private GridCoordinate GetRecruitmentOrigin()

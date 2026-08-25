@@ -418,6 +418,34 @@ namespace Game.Tests.PlayMode
             Assert.That(map.SelectedPlayerUnit.Commander, Is.Not.Null);
             Assert.That(map.SelectedPlayerUnit.Commander.IsProtagonist, Is.True);
             Assert.That(map.SelectedPlayerUnit.Commander.IsAlive, Is.True);
+            VisualElement neutralNpcView =
+                document.rootVisualElement.Q<VisualElement>(
+                    "neutral-npc-view");
+            VisualElement operationBoardView =
+                document.rootVisualElement.Q<VisualElement>(
+                    "operation-board-view");
+            Assert.That(neutralNpcView, Is.Not.Null);
+            Assert.That(operationBoardView, Is.Not.Null);
+
+            InvokePrivate(controller, "ToggleNeutralNpcView");
+            yield return null;
+            Assert.That(neutralNpcView.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex));
+            InvokePrivate(controller, "ToggleNeutralNpcView");
+            yield return null;
+            Assert.That(neutralNpcView.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.None),
+                "병영 버튼을 다시 누르면 병영 창이 접혀야 합니다.");
+
+            InvokePrivate(controller, "ToggleOperationBoard");
+            yield return null;
+            Assert.That(operationBoardView.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex));
+            InvokePrivate(controller, "ToggleOperationBoard");
+            yield return null;
+            Assert.That(operationBoardView.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.None),
+                "미션 버튼을 다시 누르면 작전 게시판이 접혀야 합니다.");
             GameObject playerHighlight = GameObject.Find(
                 map.SelectedPlayerUnit.Id + "_아군식별표시");
             GameObject playerVisual = GameObject.Find(
