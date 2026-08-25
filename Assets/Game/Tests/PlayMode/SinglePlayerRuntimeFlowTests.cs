@@ -432,14 +432,25 @@ namespace Game.Tests.PlayMode
                 map.SelectedPlayerUnit.Id + "_주인공_장수초상");
             Assert.That(protagonistPortrait, Is.Not.Null,
                 "주인공 장수는 부대 위에 전용 초상 배지로 보여야 합니다.");
+            GameObject portraitLayer = GameObject.Find(
+                protagonistPortrait.name + "_초상");
+            Assert.That(portraitLayer, Is.Not.Null);
             SpriteRenderer portraitRenderer =
-                protagonistPortrait.GetComponent<SpriteRenderer>();
+                portraitLayer.GetComponent<SpriteRenderer>();
             Assert.That(portraitRenderer, Is.Not.Null);
             Assert.That(portraitRenderer.sprite, Is.Not.Null,
                 "주인공 초상 리소스가 지도 배지에 연결되어야 합니다.");
             Assert.That(protagonistPortrait.transform.position.y,
                 Is.GreaterThan(playerVisual.transform.position.y),
                 "장수 초상은 부대 블록에 가려지지 않도록 위에 배치되어야 합니다.");
+            Assert.That(GameObject.Find(
+                    protagonistPortrait.name + "_세력색사각형"),
+                Is.Not.Null,
+                "장수 초상은 세력색 사각 배경으로 구분되어야 합니다.");
+            Assert.That(GameObject.Find(
+                    protagonistPortrait.name + "_아래화살표"),
+                Is.Not.Null,
+                "장수 배지 아래에는 현재 부대를 가리키는 화살표가 필요합니다.");
             Assert.That(simulation.CurrentCampaignState.Participants.Count,
                 Is.EqualTo(4));
             Assert.That(simulation.CurrentWorldEconomy.Markets.Count,

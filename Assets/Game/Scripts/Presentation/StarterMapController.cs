@@ -192,8 +192,12 @@ namespace Game.Presentation
         private Sprite _goldMineSprite;
         private Sprite _protagonistCommanderSprite;
         private Sprite _aiCommanderSprite;
+        private Sprite _commanderSquareSprite;
+        private Sprite _commanderArrowSprite;
         private Texture2D _mapTexture;
         private Texture2D _movementPathTexture;
+        private Texture2D _commanderSquareTexture;
+        private Texture2D _commanderArrowTexture;
         private Material _mapMaterial;
         private Material _blockMaterial;
         private Material _movementPathMaterial;
@@ -2689,23 +2693,88 @@ namespace Game.Presentation
             Sprite portrait = commander.IsProtagonist
                 ? _protagonistCommanderSprite
                 : _aiCommanderSprite;
-            if (portrait == null)
+            if (portrait == null ||
+                _commanderSquareSprite == null ||
+                _commanderArrowSprite == null)
+            {
                 return;
+            }
 
-            var portraitObject = new GameObject(
+            var badgeObject = new GameObject(
                 $"{unit.Id}_{commander.DisplayName}_장수초상");
-            portraitObject.transform.SetParent(markerRoot, false);
-            portraitObject.transform.position = position +
+            badgeObject.transform.SetParent(markerRoot, false);
+            badgeObject.transform.position = position +
                 new Vector3(
                     0f,
                     commanderPortraitHeight +
                     (commander.IsProtagonist ? 0.14f : 0f),
                     0f);
 
-            var renderer = portraitObject.AddComponent<SpriteRenderer>();
-            renderer.sprite = portrait;
-            renderer.sortingOrder = commander.IsProtagonist ? 60 : 50;
-            _iconBillboards.Add(portraitObject.transform);
+            float badgeWidth = commander.IsProtagonist
+                ? protagonistPortraitWidth
+                : aiCommanderPortraitWidth;
+            Color factionColor = commander.IsProtagonist
+                ? playerUnitHighlightColor
+                : GetFactionColor(unit.OwnerFactionId);
+            Color innerColor = new Color(0.035f, 0.045f, 0.06f, 1f);
+            string badgeName = badgeObject.name;
+
+            CreateCommanderBadgeLayer(
+                badgeName + "_세력색사각형",
+                badgeObject.transform,
+                _commanderSquareSprite,
+                factionColor,
+                badgeWidth,
+                Vector3.zero,
+                55);
+            CreateCommanderBadgeLayer(
+                badgeName + "_안쪽사각형",
+                badgeObject.transform,
+                _commanderSquareSprite,
+                innerColor,
+                badgeWidth * 0.86f,
+                Vector3.zero,
+                56);
+            CreateCommanderBadgeLayer(
+                badgeName + "_초상",
+                badgeObject.transform,
+                portrait,
+                Color.white,
+                badgeWidth * 0.75f,
+                Vector3.zero,
+                57);
+            CreateCommanderBadgeLayer(
+                badgeName + "_아래화살표",
+                badgeObject.transform,
+                _commanderArrowSprite,
+                factionColor,
+                badgeWidth * 0.48f,
+                new Vector3(
+                    0f,
+                    -tileSize * badgeWidth * 0.64f,
+                    0f),
+                58);
+
+            _iconBillboards.Add(badgeObject.transform);
+        }
+
+        private static void CreateCommanderBadgeLayer(
+            string objectName,
+            Transform parent,
+            Sprite sprite,
+            Color color,
+            float scale,
+            Vector3 localPosition,
+            int sortingOrder)
+        {
+            var layerObject = new GameObject(objectName);
+            layerObject.transform.SetParent(parent, false);
+            layerObject.transform.localPosition = localPosition;
+            layerObject.transform.localScale = new Vector3(scale, scale, 1f);
+            var renderer = layerObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = sprite;
+            renderer.color = color;
+            renderer.sortingOrder = sortingOrder;
         }
 
         private float GetUnitSiteElevation(GridCoordinate coordinate)
@@ -2999,7 +3068,7 @@ namespace Game.Presentation
                 _protagonistCommanderSprite = CreateRuntimeSprite(
                     Resources.Load<Texture2D>(
                         "CommanderPortraits/protagonist_commander"),
-                    protagonistPortraitWidth);
+                    1f);
             }
 
             if (_aiCommanderSprite == null)
@@ -3007,7 +3076,25 @@ namespace Game.Presentation
                 _aiCommanderSprite = CreateRuntimeSprite(
                     Resources.Load<Texture2D>(
                         "CommanderPortraits/ai_commander"),
-                    aiCommanderPortraitWidth);
+                    1f);
+            }
+
+            if (_commanderSquareSprite == null)
+            {
+                _commanderSquareTexture =
+                    CreateSolidCommanderMarkerTexture();
+                _commanderSquareSprite = CreateRuntimeSprite(
+                    _commanderSquareTexture,
+                    1f);
+            }
+
+            if (_commanderArrowSprite == null)
+            {
+                _commanderArrowTexture =
+                    CreateDownArrowCommanderMarkerTexture();
+                _commanderArrowSprite = CreateRuntimeSprite(
+                    _commanderArrowTexture,
+                    1f);
             }
         }
 
@@ -3027,6 +3114,59 @@ namespace Game.Presentation
                 pixelsPerUnit,
                 0,
                 SpriteMeshType.FullRect);
+        }
+
+        private static Texture2D CreateSolidCommanderMarkerTexture()
+        {
+            const int size = 8;
+            var texture = new Texture2D(
+                size,
+                size,
+                TextureFormat.RGBA32,
+                false)
+            {
+                name = "장수 세력색 사각형"
+            };
+            var pixels = new Color32[size * size];
+            for (int i = 0; i < pixels.Length; i++)
+                pixels[i] = new Color32(255, 255, 255, 255);
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
+        }
+
+        private static Texture2D CreateDownArrowCommanderMarkerTexture()
+        {
+            const int width = 32;
+            const int height = 22;
+            var texture = new Texture2D(
+                width,
+                height,
+                TextureFormat.RGBA32,
+                false)
+            {
+                name = "장수 아래 화살표"
+            };
+            var pixels = new Color32[width * height];
+            Color32 transparent = new Color32(255, 255, 255, 0);
+            Color32 white = new Color32(255, 255, 255, 255);
+            for (int y = 0; y < height; y++)
+            {
+                float progress = y / (float)(height - 1);
+                int halfWidth = Mathf.RoundToInt(
+                    progress * (width - 1) * 0.5f);
+                int center = width / 2;
+                for (int x = 0; x < width; x++)
+                {
+                    pixels[y * width + x] =
+                        Mathf.Abs(x - center) <= halfWidth
+                            ? white
+                            : transparent;
+                }
+            }
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
         }
 
         private void CreateMineIcon(
