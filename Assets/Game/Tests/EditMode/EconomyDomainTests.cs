@@ -960,7 +960,7 @@ namespace Game.Tests
         }
 
         [Test]
-        public void RealtimeMapGameplay_AiStartsWithoutGeneratedCommander()
+        public void RealtimeMapGameplay_AiStartsWithVisibleFactionCommander()
         {
             var terrain = Enumerable.Repeat(
                 GridTerrainKind.Plains,
@@ -986,9 +986,15 @@ namespace Game.Tests
 
             MapUnitState aiUnit = service.Units.Single(unit =>
                 unit.OwnerFactionId == "ai_1");
-            Assert.That(service.Commanders.Count, Is.EqualTo(1));
-            Assert.That(service.Commanders[0].IsProtagonist, Is.True);
-            Assert.That(aiUnit.Commander, Is.Null);
+            Assert.That(service.Commanders.Count, Is.EqualTo(2));
+            Assert.That(service.Commanders.Count(commander =>
+                commander.IsProtagonist), Is.EqualTo(1),
+                "플레이어는 주인공 장수 한 명으로 시작해야 합니다.");
+            Assert.That(aiUnit.Commander, Is.Not.Null,
+                "적 AI의 첫 부대에는 지도에 표시할 장수가 있어야 합니다.");
+            Assert.That(aiUnit.Commander.IsProtagonist, Is.False);
+            Assert.That(aiUnit.Commander.EmployerFactionId, Is.EqualTo("ai_1"));
+            Assert.That(aiUnit.Commander.AssignedUnitId, Is.EqualTo(aiUnit.Id));
         }
 
         [Test]

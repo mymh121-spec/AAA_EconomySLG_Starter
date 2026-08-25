@@ -273,6 +273,15 @@ namespace Game.Tests.PlayMode
                     out string createReason),
                 Is.True,
                 createReason);
+            map.AdvanceGameplayFixedSteps(20);
+            yield return null;
+            Assert.That(enemy.Commander, Is.Not.Null,
+                "적 AI 부대에는 초기 장수가 배속되어야 합니다.");
+            Assert.That(
+                GameObject.Find(
+                    $"{enemy.Id}_{enemy.Commander.DisplayName}_장수초상"),
+                Is.Not.Null,
+                "적 장수 초상이 세력색 표식과 함께 지도에 보여야 합니다.");
             GridCoordinate destination = FindReachableDestinationForUnit(
                 map,
                 enemy);

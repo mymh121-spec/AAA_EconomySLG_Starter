@@ -1331,6 +1331,10 @@ namespace Game.Application.World
         {
             "서준", "하늘", "지안", "도현", "수아", "현우", "은채", "태윤"
         };
+        private static readonly string[] InitialAiCommanderNames =
+        {
+            "강철", "세린", "도윤", "해원"
+        };
         private sealed class PendingSupplyTransport
         {
             public MapSupplyTransportRecord Record;
@@ -1387,6 +1391,8 @@ namespace Game.Application.World
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
         private readonly List<MapCommanderState> _commanders =
             new List<MapCommanderState>();
+        private readonly HashSet<string> _initialAiCommanderFactionIds =
+            new HashSet<string>(StringComparer.Ordinal);
         private readonly List<MapMineControlState> _mines =
             new List<MapMineControlState>();
         private readonly Dictionary<GridCoordinate, MapEconomicSurveyState>
@@ -1718,6 +1724,39 @@ namespace Game.Application.World
             }
 
             return changed;
+        }
+
+        private bool AssignInitialCommanderToAiFaction(string factionId)
+        {
+            if (string.IsNullOrWhiteSpace(factionId) ||
+                _initialAiCommanderFactionIds.Contains(factionId))
+            {
+                return false;
+            }
+
+            MapUnitState unit = FindFirstOwnedUnit(factionId);
+            if (unit == null)
+                return false;
+
+            _initialAiCommanderFactionIds.Add(factionId);
+            if (unit.Commander != null)
+                return false;
+
+            int factionIndex = Math.Max(0, _aiFactionIds.IndexOf(factionId));
+            var commander = new MapCommanderState(
+                $"commander_initial_ai_{factionIndex + 1}",
+                InitialAiCommanderNames[
+                    factionIndex % InitialAiCommanderNames.Length],
+                70 + factionIndex * 3,
+                68 + factionIndex * 4,
+                66 + factionIndex * 2,
+                (MapCommanderPersonality)(factionIndex % 4),
+                76 + factionIndex * 3,
+                0m);
+            commander.Hire(factionId, unit.Id);
+            unit.AssignCommander(commander);
+            _commanders.Add(commander);
+            return true;
         }
 
         private MapCommanderState GenerateVictoryCommander(
@@ -5058,6 +5097,7 @@ namespace Game.Application.World
                         continue;
                     changed = true;
                 }
+                changed |= AssignInitialCommanderToAiFaction(factionId);
                 changed |= AssignAvailableCommandersToAiFaction(factionId);
                 for (int unitIndex = 0; unitIndex < _units.Count; unitIndex++)
                 {
