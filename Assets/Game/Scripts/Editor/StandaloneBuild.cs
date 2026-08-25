@@ -18,13 +18,13 @@ namespace Game.Editor
         private const string SceneFolder = "Assets/Game/Scenes";
         private const string ScenePath = SceneFolder + "/GameStart.unity";
         private const string OutputRelativePath =
-            "Builds/Windows/AAA_EconomySLG.exe";
+            "Builds/Windows/SyndicatesAndEmpires.exe";
         private const string WebGlOutputFolder = "docs";
-        private const string WebGlStagingFolder = "Temp/Track1WebGl";
-        private const string WebGlTemplate = "PROJECT:Track1";
-        private const string PreferredBuildRoot = @"D:\AAA_EconomySLG";
+        private const string WebGlStagingFolder = "Temp/SyndicatesAndEmpires";
+        private const string WebGlTemplate = "PROJECT:SyndicatesAndEmpires";
+        private const string PreferredBuildRoot = @"D:\SyndicatesAndEmpires";
         private const string BuildRootEnvironmentVariable =
-            "AAA_ECONOMY_SLG_BUILD_ROOT";
+            "SYNDICATES_AND_EMPIRES_BUILD_ROOT";
 
         [MenuItem("게임/Windows EXE 빌드")]
         public static void BuildWindowsStandalone()
@@ -55,7 +55,7 @@ namespace Game.Editor
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
         }
 
-        [MenuItem("게임/Track 1 WebGL 제출 빌드")]
+        [MenuItem("게임/SYNDICATES & EMPIRES WebGL 제출 빌드")]
         public static void BuildWebGlSubmission()
         {
             EnsureBootScene();
@@ -109,7 +109,7 @@ namespace Game.Editor
             if (summary.result != BuildResult.Succeeded)
             {
                 throw new InvalidOperationException(
-                    $"Track 1 WebGL 빌드 실패: {summary.result}, " +
+                    $"SYNDICATES & EMPIRES WebGL 빌드 실패: {summary.result}, " +
                     $"오류 {summary.totalErrors}개");
             }
 
@@ -122,7 +122,7 @@ namespace Game.Editor
 
             Directory.Move(stagingPath, outputPath);
             Debug.Log(
-                $"Track 1 WebGL 빌드 완료: {outputPath} " +
+                $"SYNDICATES & EMPIRES WebGL 빌드 완료: {outputPath} " +
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
         }
 

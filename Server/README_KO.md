@@ -1,4 +1,4 @@
-# 경제 SLG PvP 권위 서버 0.4.0
+# SYNDICATES & EMPIRES PvP 권위 서버 0.4.0
 
 이 서버는 Unity 클라이언트가 보낸 행동을 그대로 믿지 않고, 서버가 명령 유효성 검사·행동력 소비·시장 거래·생산·채굴지 이벤트·승패 판정을 직접 처리하는 턴제 권위 서버다. SQL은 사용하지 않는다.
 
@@ -70,7 +70,7 @@ D:\dotnet\dotnet.exe build .\Server\Game.Server\Game.Server.csproj -c Release
 D:\dotnet\dotnet.exe publish .\Server\Game.Server\Game.Server.csproj -c Release -r linux-x64 --self-contained true
 ```
 
-Windows에서는 저장소 루트의 `RUN_PVP_SERVER.cmd`를 실행하면 `D:\dotnet`과 `D:\AAA_EconomySLG\ServerData`를 우선 사용한다.
+Windows에서는 저장소 루트의 `RUN_PVP_SERVER.cmd`를 실행하면 `D:\dotnet`과 `D:\SyndicatesAndEmpires\ServerData`를 우선 사용한다.
 
 실제 API 통합 스모크 테스트:
 
@@ -81,7 +81,7 @@ Windows에서는 저장소 루트의 `RUN_PVP_SERVER.cmd`를 실행하면 `D:\do
 D:\dotnet\dotnet.exe run --project .\Validation\PvpMapAuthoritySmoke\PvpMapAuthoritySmoke.csproj
 ```
 
-테스트 서버 데이터와 로그는 `D:\AAA_EconomySLG\ServerTests` 아래의 실행별 격리 폴더에 저장된다.
+테스트 서버 데이터와 로그는 `D:\SyndicatesAndEmpires\ServerTests` 아래의 실행별 격리 폴더에 저장된다.
 
 ## VPS 배포
 

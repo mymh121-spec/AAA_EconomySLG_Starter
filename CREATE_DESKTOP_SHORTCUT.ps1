@@ -20,13 +20,13 @@ if ([string]::IsNullOrWhiteSpace($DestinationDirectory) -or
     throw "Shortcut destination folder could not be resolved."
 }
 
-$shortcutName = "$([char]0xACBD)$([char]0xC81C) SLG $([char]0xC2E4)$([char]0xD589).lnk"
+$shortcutName = "SYNDICATES & EMPIRES.lnk"
 $shortcutPath = Join-Path $DestinationDirectory $shortcutName
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $launcher
 $shortcut.WorkingDirectory = $sourceProject
-$shortcut.Description = "Synchronize and run Economy SLG"
+$shortcut.Description = "Synchronize and run SYNDICATES & EMPIRES"
 
 $unityEditor = @(
     "D:\Unity\Editor\6000.3.21f1\Editor\Unity.exe",

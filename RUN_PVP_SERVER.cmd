@@ -8,11 +8,11 @@ if not exist "%DOTNET_EXE%" set "DOTNET_EXE=dotnet"
 set "DOTNET_CLI_HOME=D:\dotnet\cli-home"
 set "NUGET_PACKAGES=D:\dotnet\packages"
 set "DOTNET_CLI_TELEMETRY_OPTOUT=1"
-set "PVP_DATA_DIR=D:\AAA_EconomySLG\ServerData"
+set "PVP_DATA_DIR=D:\SyndicatesAndEmpires\ServerData"
 set "PVP_URLS=http://127.0.0.1:5100"
 set "PVP_MAX_ROOMS=16"
 
-if not exist "D:\AAA_EconomySLG\ServerData" mkdir "D:\AAA_EconomySLG\ServerData"
+if not exist "D:\SyndicatesAndEmpires\ServerData" mkdir "D:\SyndicatesAndEmpires\ServerData"
 
 "%DOTNET_EXE%" run --project "Server\Game.Server\Game.Server.csproj" --no-launch-profile
 set "EXIT_CODE=%ERRORLEVEL%"

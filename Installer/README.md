@@ -1,4 +1,4 @@
-# Windows installer
+# SYNDICATES & EMPIRES Windows installer
 
 The installer packages the complete Unity Windows player from
 `Builds/Windows` into a single setup executable. It installs per-user by

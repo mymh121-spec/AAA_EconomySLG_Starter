@@ -31,5 +31,5 @@ if errorlevel 1 (
     exit /b 3
 )
 
-start "Economy SLG" "%UNITY_EDITOR%" -projectPath "%GAME_PROJECT%" -economyLaunchGame
+start "SYNDICATES & EMPIRES" "%UNITY_EDITOR%" -projectPath "%GAME_PROJECT%" -syndicatesAndEmpiresLaunchGame
 endlocal

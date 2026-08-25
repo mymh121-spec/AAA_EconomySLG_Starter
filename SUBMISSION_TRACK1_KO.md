@@ -2,7 +2,7 @@
 
 ## 필수 입력값
 
-- 최종 게임명: `AAA Economy SLG`
+- 최종 게임명: `SYNDICATES & EMPIRES`
 - 게임 소개: `경제·보급·전쟁이 하나의 세계에서 맞물리는 360일 실시간 전략 게임. 장수를 지휘하고 광산과 성을 점령해 생산망을 키우며, 살아 움직이는 AI 세력보다 먼저 경제 패권을 완성하세요.`
 - 플레이 링크: <https://mymh121-spec.github.io/AAA_EconomySLG_Starter/>
 - 로그인: 필요 없음

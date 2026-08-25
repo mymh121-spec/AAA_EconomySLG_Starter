@@ -417,7 +417,7 @@ namespace Game.Presentation
 
             _modeView = CreateCard(
                 _uiRoot,
-                "기업의 시대",
+                "SYNDICATES & EMPIRES",
                 string.Empty);
             AddButton(_modeView, "1인이서 하기", ShowSinglePlayerSetup);
             AddButton(_modeView, "여러 명이서 하기", SelectMultiplayer);

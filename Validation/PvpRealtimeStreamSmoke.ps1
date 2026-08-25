@@ -1,6 +1,6 @@
 param(
     [string]$DotnetPath = 'D:\dotnet\dotnet.exe',
-    [string]$ArtifactRoot = 'D:\AAA_EconomySLG\ServerTests',
+    [string]$ArtifactRoot = 'D:\SyndicatesAndEmpires\ServerTests',
     [int]$Port = 5317
 )
 

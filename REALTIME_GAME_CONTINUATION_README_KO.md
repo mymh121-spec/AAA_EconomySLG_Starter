@@ -1,4 +1,4 @@
-# 실시간 경제 SLG 개발 인계 README
+# SYNDICATES & EMPIRES 개발 인계 README
 
 ## 현재 방향
 
@@ -64,7 +64,7 @@ Hive Platform은 최종적으로 사용하지만 현재는 SDK를 설치하지 �
 아래 Unity 프로젝트의 개발을 계속하라.
 
 프로젝트 경로:
-C:\Users\andrew\Documents\Codex\2026-08-01\15-aaa-unity-c-slg-slg\work\AAA_EconomySLG_Starter
+C:\Users\andrew\Documents\Codex\2026-08-01\SyndicatesAndEmpires
 
 먼저 REALTIME_GAME_CONTINUATION_README_KO.md, WORLD_MAP_RULES_KO.md,
 NEXT_STEPS_KO.txt와 git status를 읽어라.

@@ -10,7 +10,8 @@ namespace Game.Editor
             "Game.Editor.SinglePlayerEditorLauncher.Pending";
         private const string AutoLaunchConsumedKey =
             "Game.Editor.SinglePlayerEditorLauncher.AutoLaunchConsumed";
-        private const string AutoLaunchArgument = "-economyLaunchGame";
+        private const string AutoLaunchArgument =
+            "-syndicatesAndEmpiresLaunchGame";
 
         [MenuItem("게임/게임 실행")]
         public static void Launch()

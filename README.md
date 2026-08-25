@@ -1,6 +1,6 @@
-# AAA Economy SLG Unity Starter
+# SYNDICATES & EMPIRES
 
-Unity C# starter architecture for an economic simulation + SLG game.
+Unity C# architecture for a real-time economy and strategy game.
 
 ## Play in browser
 
@@ -40,14 +40,14 @@ Unity C# starter architecture for an economic simulation + SLG game.
 ## Windows build and run
 
 - Use Unity menu `게임 > Windows EXE 빌드` to create the standalone game.
-- When a `D:` drive is available, the default output is `D:\AAA_EconomySLG\Builds\Windows\AAA_EconomySLG.exe`.
-- Set `AAA_ECONOMY_SLG_BUILD_ROOT` before launching Unity to choose another build root.
+- When a `D:` drive is available, the default output is `D:\SyndicatesAndEmpires\Builds\Windows\SyndicatesAndEmpires.exe`.
+- Set `SYNDICATES_AND_EMPIRES_BUILD_ROOT` before launching Unity to choose another build root.
 - Run `RUN_WINDOWS_EXE.cmd`; it checks the D: build first and falls back to the project-local `Builds` folder.
 
-## Track 1 WebGL build
+## SYNDICATES & EMPIRES WebGL build
 
 - Install Unity's Web Build Support module for `6000.3.21f1`.
-- Use Unity menu `게임 > Track 1 WebGL 제출 빌드`, or run Unity in batch mode with `-buildTarget WebGL -executeMethod Game.Editor.StandaloneBuild.BuildWebGlSubmission`.
+- Use Unity menu `게임 > SYNDICATES & EMPIRES WebGL 제출 빌드`, or run Unity in batch mode with `-buildTarget WebGL -executeMethod Game.Editor.StandaloneBuild.BuildWebGlSubmission`.
 - The command writes a GitHub Pages-ready build to `docs/`, including `.nojekyll` and a responsive Korean loading page.
 - See `SUBMISSION_TRACK1_KO.md` for the final title, short description, controls, and Codex collaboration notes.
 

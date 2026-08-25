@@ -8,11 +8,11 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $playerRoot = Join-Path $repositoryRoot 'Builds\Windows'
 $installerRoot = Join-Path $repositoryRoot 'Builds\Installer'
-$installerScript = Join-Path $PSScriptRoot 'AAA_EconomySLG.iss'
+$installerScript = Join-Path $PSScriptRoot 'SyndicatesAndEmpires.iss'
 
 $requiredPaths = @(
-    (Join-Path $playerRoot 'AAA_EconomySLG.exe'),
-    (Join-Path $playerRoot 'AAA_EconomySLG_Data'),
+    (Join-Path $playerRoot 'SyndicatesAndEmpires.exe'),
+    (Join-Path $playerRoot 'SyndicatesAndEmpires_Data'),
     (Join-Path $playerRoot 'MonoBleedingEdge'),
     (Join-Path $playerRoot 'UnityPlayer.dll')
 )
@@ -35,7 +35,7 @@ if (-not $compilerPath) {
 }
 
 New-Item -ItemType Directory -Path $installerRoot -Force | Out-Null
-$env:AAA_ECONOMY_SLG_INSTALLER_VERSION = $Version
+$env:SYNDICATES_AND_EMPIRES_INSTALLER_VERSION = $Version
 try {
     & $compilerPath /Qp $installerScript
     if ($LASTEXITCODE -ne 0) {
@@ -43,10 +43,10 @@ try {
     }
 }
 finally {
-    Remove-Item Env:AAA_ECONOMY_SLG_INSTALLER_VERSION -ErrorAction SilentlyContinue
+    Remove-Item Env:SYNDICATES_AND_EMPIRES_INSTALLER_VERSION -ErrorAction SilentlyContinue
 }
 
-$installerPath = Join-Path $installerRoot "AAA_EconomySLG_Setup_$Version.exe"
+$installerPath = Join-Path $installerRoot "SyndicatesAndEmpires_Setup_$Version.exe"
 if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "설치 파일이 생성되지 않았습니다: $installerPath"
 }

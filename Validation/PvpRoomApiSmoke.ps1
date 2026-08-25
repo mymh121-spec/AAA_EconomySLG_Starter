@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $serverDll = Join-Path $projectRoot 'Server\Game.Server\bin\Debug\net10.0\Game.Server.dll'
-$artifactRoot = 'D:\AAA_EconomySLG\ServerTests'
+$artifactRoot = 'D:\SyndicatesAndEmpires\ServerTests'
 $runId = [DateTimeOffset]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $runRoot = Join-Path $artifactRoot $runId
 $dataRoot = Join-Path $runRoot 'data'

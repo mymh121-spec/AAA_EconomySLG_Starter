@@ -1,7 +1,7 @@
 param(
     [string]$DotnetPath = 'D:\dotnet\dotnet.exe',
     [string]$UnityPath = 'D:\Unity\Editor\6000.3.21f1\Editor\Unity.exe',
-    [string]$ArtifactRoot = 'D:\AAA_EconomySLG\UnityTests',
+    [string]$ArtifactRoot = 'D:\SyndicatesAndEmpires\UnityTests',
     [int]$Port = 5327
 )
 

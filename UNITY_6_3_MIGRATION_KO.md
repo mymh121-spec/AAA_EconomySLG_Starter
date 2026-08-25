@@ -5,7 +5,7 @@
 - Editor: Unity 6.3 LTS `6000.3.20f1`
 - Changeset: `c9ba695d4f07`
 - Windows 빌드: IL2CPP 지원 모듈 설치
-- 원본 보관: `work/AAA_EconomySLG_Starter_2022_Backup`
+- 원본 보관: `work/SyndicatesAndEmpires_2022_Backup`
 
 ## 적용된 변경
 

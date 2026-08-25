@@ -16,5 +16,5 @@ if not exist "%TARGET_PROJECT%\RUN_SINGLE_PLAYER.cmd" (
     exit /b 2
 )
 
-start "Economy SLG" "%TARGET_PROJECT%\RUN_SINGLE_PLAYER.cmd"
+start "SYNDICATES & EMPIRES" "%TARGET_PROJECT%\RUN_SINGLE_PLAYER.cmd"
 endlocal

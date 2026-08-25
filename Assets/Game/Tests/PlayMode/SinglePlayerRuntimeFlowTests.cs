@@ -367,6 +367,21 @@ namespace Game.Tests.PlayMode
             Assert.That(
                 document.rootVisualElement.Q<ScrollView>("operation-board-scroll"),
                 Is.Not.Null);
+            bool hasRenamedTitle = false;
+            bool hasLegacyTitle = false;
+            document.rootVisualElement.Query<Label>().ForEach(label =>
+            {
+                if (label.text == "SYNDICATES & EMPIRES")
+                    hasRenamedTitle = true;
+                else if (label.text == "기업의 시대")
+                    hasLegacyTitle = true;
+            });
+            Assert.That(hasRenamedTitle, Is.True,
+                "메인 메뉴에 새 게임명이 표시되어야 합니다.");
+            Assert.That(hasLegacyTitle, Is.False,
+                "메인 메뉴에 이전 게임명이 남아 있으면 안 됩니다.");
+            Assert.That(UnityEngine.Application.productName,
+                Is.EqualTo("SYNDICATES & EMPIRES"));
             Button singlePlayerButton = null;
             Button createRoomButton = null;
             Button joinRoomButton = null;
