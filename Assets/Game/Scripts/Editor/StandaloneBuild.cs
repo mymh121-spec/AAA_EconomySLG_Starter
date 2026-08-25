@@ -113,7 +113,7 @@ namespace Game.Editor
                     $"오류 {summary.totalErrors}개");
             }
 
-            ApplyWebGlCacheVersion(stagingPath);
+            ApplyWebGlVersionedFilenames(stagingPath);
             File.WriteAllText(Path.Combine(stagingPath, ".nojekyll"), string.Empty);
             if (Directory.Exists(outputPath))
             {
@@ -126,7 +126,7 @@ namespace Game.Editor
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
         }
 
-        private static void ApplyWebGlCacheVersion(string stagingPath)
+        private static void ApplyWebGlVersionedFilenames(string stagingPath)
         {
             const string placeholder = "__BUILD_VERSION__";
             string indexPath = Path.Combine(stagingPath, "index.html");
@@ -139,9 +139,47 @@ namespace Game.Editor
 
             string buildVersion = DateTime.UtcNow.ToString(
                 "yyyyMMddHHmmss");
+            string buildFolder = Path.Combine(stagingPath, "Build");
+            string[] buildFiles = Directory.GetFiles(buildFolder);
+            int replacedReferenceCount = 0;
+            for (int i = 0; i < buildFiles.Length; i++)
+            {
+                string sourcePath = buildFiles[i];
+                string sourceName = Path.GetFileName(sourcePath);
+                int extensionIndex = sourceName.IndexOf('.');
+                if (extensionIndex <= 0)
+                    continue;
+
+                string versionedName = sourceName.Insert(
+                    extensionIndex,
+                    "." + buildVersion);
+                string sourceUrl =
+                    "Build/" + sourceName + "?v=" + placeholder;
+                if (html.Contains(sourceUrl))
+                {
+                    html = html.Replace(
+                        sourceUrl,
+                        "Build/" + versionedName);
+                    replacedReferenceCount++;
+                }
+
+                File.Move(
+                    sourcePath,
+                    Path.Combine(buildFolder, versionedName));
+            }
+
+            if (replacedReferenceCount < 4 || html.Contains(placeholder))
+            {
+                throw new InvalidOperationException(
+                    "WebGL 빌드 파일을 고유 버전 이름으로 연결하지 못했습니다.");
+            }
+
             File.WriteAllText(
                 indexPath,
-                html.Replace(placeholder, buildVersion));
+                html);
+            File.WriteAllText(
+                Path.Combine(stagingPath, "build-version.txt"),
+                buildVersion);
         }
 
         private static string ResolveOutputPath()
