@@ -25,7 +25,8 @@ namespace Game.Application.World
     {
         Food,
         Equipment,
-        Medicine
+        Medicine,
+        Horse
     }
 
     public enum MapSupplyDestinationKind
@@ -394,6 +395,7 @@ namespace Game.Application.World
         public decimal WarehouseFoodAmount { get; private set; }
         public decimal WarehouseEquipmentAmount { get; private set; }
         public decimal WarehouseMedicineAmount { get; private set; }
+        public decimal WarehouseHorseAmount { get; private set; }
         public int WallDurability { get; private set; }
         public int MaxWallDurability => IsCapital
             ? MapCastleRules.CapitalMaxWallDurability
@@ -454,6 +456,7 @@ namespace Game.Application.World
             WarehouseFoodAmount = 0m;
             WarehouseEquipmentAmount = 0m;
             WarehouseMedicineAmount = 0m;
+            WarehouseHorseAmount = isCapital ? 300m : 100m;
             SeedPrototypeArmory(isCapital ? 600 : 100);
             WallDurability = MaxWallDurability;
             FoodSupply = MaxFoodSupply;
@@ -686,6 +689,8 @@ namespace Game.Application.World
                     return WarehouseEquipmentAmount;
                 case MapSupplyKind.Medicine:
                     return WarehouseMedicineAmount;
+                case MapSupplyKind.Horse:
+                    return WarehouseHorseAmount;
                 default: return 0m;
             }
         }
@@ -705,6 +710,9 @@ namespace Game.Application.World
                     break;
                 case MapSupplyKind.Medicine:
                     WarehouseMedicineAmount += stored;
+                    break;
+                case MapSupplyKind.Horse:
+                    WarehouseHorseAmount += stored;
                     break;
             }
             return stored;
@@ -726,6 +734,9 @@ namespace Game.Application.World
                     break;
                 case MapSupplyKind.Medicine:
                     WarehouseMedicineAmount -= taken;
+                    break;
+                case MapSupplyKind.Horse:
+                    WarehouseHorseAmount -= taken;
                     break;
             }
             return taken;

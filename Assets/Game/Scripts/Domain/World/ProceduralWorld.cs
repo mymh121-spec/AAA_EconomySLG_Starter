@@ -33,7 +33,8 @@ namespace Game.Domain.World
         Arsenal,
         Barracks,
         Market,
-        Warehouse
+        Warehouse,
+        Ranch
     }
 
     public enum WorldNpcRole
@@ -287,8 +288,10 @@ namespace Game.Domain.World
         public RegionId RegionId { get; }
         public string OwnerFactionId { get; private set; }
         public ResourceId? InputResourceId { get; }
+        public ResourceId? SecondaryInputResourceId { get; }
         public ResourceId? OutputResourceId { get; }
         public decimal InputPerTurn { get; }
+        public decimal SecondaryInputPerTurn { get; }
         public decimal OutputPerTurn { get; }
         public decimal LaborDemand { get; }
         public decimal MaintenanceCost { get; }
@@ -306,15 +309,21 @@ namespace Game.Domain.World
             decimal outputPerTurn,
             decimal laborDemand,
             decimal maintenanceCost,
-            decimal operatingRatio = 1m)
+            decimal operatingRatio = 1m,
+            ResourceId? secondaryInputResourceId = null,
+            decimal secondaryInputPerTurn = 0m)
         {
             Id = id ?? string.Empty;
             Kind = kind;
             RegionId = regionId;
             OwnerFactionId = ownerFactionId ?? string.Empty;
             InputResourceId = inputResourceId;
+            SecondaryInputResourceId = secondaryInputResourceId;
             OutputResourceId = outputResourceId;
             InputPerTurn = Math.Max(0m, inputPerTurn);
+            SecondaryInputPerTurn = Math.Max(
+                0m,
+                secondaryInputPerTurn);
             OutputPerTurn = Math.Max(0m, outputPerTurn);
             LaborDemand = Math.Max(0m, laborDemand);
             MaintenanceCost = Math.Max(0m, maintenanceCost);
@@ -665,6 +674,7 @@ namespace Game.Domain.World
             ResourceId? wood = FindResource(resources, "wood");
             ResourceId? iron = FindResource(resources, "iron");
             ResourceId? steel = FindResource(resources, "steel");
+            ResourceId? horse = FindResource(resources, "horse");
 
             for (int i = 0; i < regions.Count; i++)
             {
@@ -696,6 +706,24 @@ namespace Game.Domain.World
                         18m + 42m * region.ForestDensity,
                         10m,
                         38m));
+                }
+                if (horse.HasValue && food.HasValue && wood.HasValue &&
+                    region.Settlement >= SettlementKind.Village)
+                {
+                    facilities.Add(new WorldFacilityState(
+                        $"facility_ranch_{i + 1}",
+                        WorldFacilityKind.Ranch,
+                        region.Id,
+                        region.OwnerFactionId,
+                        food,
+                        horse,
+                        3m,
+                        1m,
+                        8m,
+                        50m,
+                        NextDecimal(random, 0.45m, 0.85m),
+                        wood,
+                        1m));
                 }
                 if (iron.HasValue && steel.HasValue &&
                     region.Settlement >= SettlementKind.Town)

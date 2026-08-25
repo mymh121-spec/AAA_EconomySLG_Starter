@@ -38,6 +38,7 @@ namespace Game.Presentation
         [SerializeField, Min(1f)] private float starterWarehouseCapacity = 10000f;
         [SerializeField, Min(0f)] private float starterIronStock = 100f;
         [SerializeField, Min(0f)] private float starterCoalStock = 60f;
+        [SerializeField, Min(0f)] private float starterWoodStock = 30f;
         [SerializeField, Min(0f)] private float starterFoodStock = 50f;
         [SerializeField, Min(0)] private int starterEmployees = 20;
         [SerializeField, Min(0f)] private float starterWorkers = 20f;
@@ -784,6 +785,8 @@ namespace Game.Presentation
             RegisterFallbackResource(
                 "semiconductor", "반도체", 1200m,
                 ResourceRarity.Strategic, false);
+            RegisterFallbackResource(
+                "horse", "말", 300m, ResourceRarity.Uncommon, false);
         }
 
         private void RegisterFallbackResource(
@@ -904,6 +907,8 @@ namespace Game.Presentation
             RegisterGeneratedTradeRoutes(generatedWorld);
 
             RecipeDefinition starterRecipe = CreateStarterRecipe();
+            RecipeDefinition horseBreedingRecipe =
+                CreateHorseBreedingRecipe();
 
             for (int i = 0;
                 i < _campaignSession.State.Participants.Count;
@@ -929,6 +934,10 @@ namespace Game.Presentation
                     (decimal)starterCoalStock);
                 AddStarterInventory(
                     warehouse,
+                    "wood",
+                    (decimal)starterWoodStock);
+                AddStarterInventory(
+                    warehouse,
                     "food",
                     (decimal)starterFoodStock);
 
@@ -948,6 +957,15 @@ namespace Game.Presentation
                         participant.Company.Id,
                         companyRegion,
                         starterRecipe));
+                }
+                if (horseBreedingRecipe != null)
+                {
+                    runtime.AddFactory(new Factory(
+                        new FactoryId(
+                            $"ranch_{participant.Company.Id.Value}"),
+                        participant.Company.Id,
+                        companyRegion,
+                        horseBreedingRecipe));
                 }
 
                 _worldEconomy.RegisterCompany(runtime);
@@ -1071,6 +1089,50 @@ namespace Game.Presentation
                 5m,
                 1,
                 "강철 생산");
+        }
+
+        private RecipeDefinition CreateHorseBreedingRecipe()
+        {
+            if (recipeAssets != null)
+            {
+                for (int i = 0; i < recipeAssets.Length; i++)
+                {
+                    if (recipeAssets[i] == null)
+                        continue;
+
+                    RecipeDefinition recipe = recipeAssets[i].ToDomain();
+                    if (string.Equals(
+                            recipe.Id,
+                            "horse_breeding_recipe",
+                            StringComparison.Ordinal))
+                    {
+                        return recipe;
+                    }
+                }
+            }
+
+            if (!_catalog.TryGet("wood", out _) ||
+                !_catalog.TryGet("food", out _) ||
+                !_catalog.TryGet("horse", out _))
+            {
+                return null;
+            }
+
+            return new RecipeDefinition(
+                "horse_breeding_recipe",
+                new[]
+                {
+                    new ResourceAmount("wood", 1m),
+                    new ResourceAmount("food", 3m)
+                },
+                new[]
+                {
+                    new ResourceAmount("horse", 1m)
+                },
+                8m,
+                2m,
+                1,
+                "목장 말 사육");
         }
 
         private void AddStarterInventory(

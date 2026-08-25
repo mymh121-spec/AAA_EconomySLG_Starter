@@ -206,15 +206,18 @@ namespace Game.Application.World
         public decimal FoodAmount { get; }
         public decimal EquipmentAmount { get; }
         public decimal MedicineAmount { get; }
+        public decimal HorseAmount { get; }
 
         public MapCapitalSupplyStockReport(
             decimal foodAmount,
             decimal equipmentAmount,
-            decimal medicineAmount)
+            decimal medicineAmount,
+            decimal horseAmount = 0m)
         {
             FoodAmount = Math.Max(0m, foodAmount);
             EquipmentAmount = Math.Max(0m, equipmentAmount);
             MedicineAmount = Math.Max(0m, medicineAmount);
+            HorseAmount = Math.Max(0m, horseAmount);
         }
     }
 
@@ -225,7 +228,8 @@ namespace Game.Application.World
             {
                 (MapSupplyKind.Food, new ResourceId("food")),
                 (MapSupplyKind.Equipment, new ResourceId("steel")),
-                (MapSupplyKind.Medicine, new ResourceId("medicine"))
+                (MapSupplyKind.Medicine, new ResourceId("medicine")),
+                (MapSupplyKind.Horse, new ResourceId("horse"))
             };
 
         private readonly WorldEconomyState _world;
@@ -244,6 +248,7 @@ namespace Game.Application.World
             decimal food = 0m;
             decimal equipment = 0m;
             decimal medicine = 0m;
+            decimal horses = 0m;
             for (int companyIndex = 0;
                  companyIndex < _world.Companies.Count;
                  companyIndex++)
@@ -290,6 +295,9 @@ namespace Game.Application.World
                         case MapSupplyKind.Medicine:
                             medicine += stored;
                             break;
+                        case MapSupplyKind.Horse:
+                            horses += stored;
+                            break;
                     }
                 }
             }
@@ -297,7 +305,8 @@ namespace Game.Application.World
             return new MapCapitalSupplyStockReport(
                 food,
                 equipment,
-                medicine);
+                medicine,
+                horses);
         }
 
         public decimal SettleTransportCosts(

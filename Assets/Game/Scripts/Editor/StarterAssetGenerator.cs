@@ -29,6 +29,7 @@ namespace Game.Editor
             CreateResource("machinery", "기계", 600, ResourceRarity.Rare, false);
             CreateResource("medicine", "의약품", 450, ResourceRarity.Rare, true);
             CreateResource("semiconductor", "반도체", 1200, ResourceRarity.Strategic, false);
+            CreateResource("horse", "말", 300, ResourceRarity.Uncommon, false);
 
             CreateRecipe(
                 "steel_recipe",
@@ -37,6 +38,14 @@ namespace Game.Editor
                 10,
                 5,
                 "강철 생산");
+
+            CreateRecipe(
+                "horse_breeding_recipe",
+                new[] { ("wood", 1f), ("food", 3f) },
+                new[] { ("horse", 1f) },
+                8,
+                2,
+                "목장 말 사육");
 
             CreateMission(
                 "capture_iron_mine",

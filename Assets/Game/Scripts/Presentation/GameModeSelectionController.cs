@@ -1672,14 +1672,44 @@ namespace Game.Presentation
 
         private void HandleMapMovementPreviewRequested(
             MapCellSelection selection,
-            bool appendWaypoint)
+            bool confirmRepeatedSelection)
         {
-            RefreshMovementPreview(selection, appendWaypoint);
+            if (confirmRepeatedSelection &&
+                IsCurrentMovementPreviewTarget(selection))
+            {
+                MoveSelectedPlayerUnit();
+                return;
+            }
+            RefreshMovementPreview(selection);
         }
 
-        private void RefreshMovementPreview(
-            MapCellSelection selection,
-            bool appendWaypoint)
+        private bool IsCurrentMovementPreviewTarget(
+            MapCellSelection selection)
+        {
+            if (!_selection.IsSinglePlayer || gameplayMap == null ||
+                !gameplayMap.CurrentMovementPreview.HasValue)
+            {
+                return false;
+            }
+
+            MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            if (selectedUnit == null ||
+                selectedUnit.Coordinate.Equals(selection.Coordinate) ||
+                gameplayMap.CanSelectPlayerUnitAt(selection.Coordinate, out _))
+            {
+                return false;
+            }
+
+            MapMovementPreview preview =
+                gameplayMap.CurrentMovementPreview.Value;
+            return string.Equals(
+                       preview.UnitId,
+                       selectedUnit.Id,
+                       StringComparison.Ordinal) &&
+                   preview.Destination.Equals(selection.Coordinate);
+        }
+
+        private void RefreshMovementPreview(MapCellSelection selection)
         {
             if (!_selection.IsSinglePlayer || gameplayMap == null)
                 return;
@@ -1695,7 +1725,6 @@ namespace Game.Presentation
 
             if (!gameplayMap.TryPreviewSelectedPlayerUnitMove(
                 selection.Coordinate,
-                appendWaypoint,
                 out MapMovementPreview preview,
                 out string reason))
             {
@@ -1704,14 +1733,10 @@ namespace Game.Presentation
             }
 
             SetMapActionFeedback(
-                (preview.AppendsWaypoint
-                    ? "Shift 경유지 미리보기 · "
-                    : "이동 미리보기 · ") +
+                "이동 미리보기 · " +
                 $"{preview.RemainingTileCount}칸 · " +
                 $"도착 예상 {FormatMovementArrival(preview.EstimatedFixedSteps)}\n" +
-                (preview.AppendsWaypoint
-                    ? "기존 경로 뒤에 붙일 경유지를 확인한 뒤 예약 버튼을 누르세요."
-                    : "점선 경로를 확인한 뒤 이동 버튼을 눌러 확정하세요."));
+                "같은 목적지를 한 번 더 클릭하면 이 경로로 이동합니다.");
         }
 
         private string FormatMovementArrival(int remainingFixedSteps)
@@ -2449,12 +2474,9 @@ namespace Game.Presentation
 
             GridCoordinate destination =
                 gameplayMap.CurrentSelection.Value.Coordinate;
-            bool appendsWaypoint =
-                gameplayMap.CurrentMovementPreview?.AppendsWaypoint == true;
             bool isReroute =
-                gameplayMap.SelectedPlayerUnit?.IsMoving == true &&
-                !appendsWaypoint;
-            bool usesSeaTransport = !appendsWaypoint &&
+                gameplayMap.SelectedPlayerUnit?.IsMoving == true;
+            bool usesSeaTransport =
                 gameplayMap.WillSelectedMoveUseSeaTransport(destination);
             if (!gameplayMap.CanMoveSelectedPlayerUnit(
                 destination,
@@ -2477,11 +2499,7 @@ namespace Game.Presentation
                 ? $"{destination} 아군 항구로 해상 수송을 시작합니다. " +
                   "승선과 하선은 자동 처리됩니다."
                 : isMine
-                ? appendsWaypoint
-                    ? $"{destination} 광산을 마지막 경유지로 예약했습니다."
-                    : $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
-                : appendsWaypoint
-                    ? $"{destination}을(를) 마지막 경유지로 예약했습니다."
+                ? $"{destination} 광산으로 이동합니다. 도착하면 점령을 시작합니다."
                 : isReroute
                     ? $"이동 경로를 {destination}(으)로 변경했습니다. " +
                       "추가 체력은 소모하지 않습니다."
@@ -3045,10 +3063,7 @@ namespace Game.Presentation
                 hasSelectedUnit && !canSelect && !isMine &&
                 (!isCastle || isFriendlyCastle));
             moveButton.SetEnabled(canMove);
-            moveButton.text =
-                gameplayMap.CurrentMovementPreview?.AppendsWaypoint == true
-                ? "Shift 경유지 예약 확정 · 추가 체력 없음"
-                : usesSeaTransport
+            moveButton.text = usesSeaTransport
                     ? "아군 항구로 해상 이동 · 자동 승선/하선"
                 : gameplayMap.SelectedPlayerUnit?.IsMoving == true
                     ? "새 목적지로 변경 · 추가 체력 없음"
@@ -4371,6 +4386,15 @@ namespace Game.Presentation
             string commanderCandidateList = BuildCommanderCandidateList();
             GridCoordinate recruitOrigin = GetRecruitmentOrigin();
             string recruitmentStatus = "징병소 정보 없음";
+            MapCastleControlState recruitmentCastle =
+                gameplayMap?.FindCastleAt(recruitOrigin);
+            int requiredHorses = _pendingUnitArchetype ==
+                UnitArchetype.Cavalry
+                    ? gameplayMap?.GameplayService?
+                        .InitialSoldiersPerUnit ?? 100
+                    : 0;
+            bool hasRequiredHorses = requiredHorses == 0 ||
+                recruitmentCastle?.WarehouseHorseAmount >= requiredHorses;
             if (gameplayMap != null &&
                 gameplayMap.TryGetPlayerRecruitmentSite(
                     recruitOrigin,
@@ -4380,7 +4404,8 @@ namespace Game.Presentation
                     $"주둔 {recruitmentSite.GarrisonUnitCount}/" +
                     $"{recruitmentSite.GarrisonCapacity} · 징집 인력 " +
                     $"{recruitmentSite.AvailableRecruits}/" +
-                    recruitmentSite.RecruitmentCapacity;
+                    recruitmentSite.RecruitmentCapacity +
+                    $" · 말 {recruitmentCastle?.WarehouseHorseAmount ?? 0m:N0}";
             }
 
             _neutralNpcSelectionStatus.text =
@@ -4422,6 +4447,7 @@ namespace Game.Presentation
 
             bool canCreate = gameplayMap != null &&
                 gameplayMap.CanCreatePlayerUnitAt(recruitOrigin, out _) &&
+                hasRequiredHorses &&
                 singlePlayerSimulation != null &&
                 singlePlayerSimulation.CanAffordPlayerCash(recruitCost);
             bool sameEquipment = selectedUnit != null &&
@@ -4529,8 +4555,7 @@ namespace Game.Presentation
                 "확대·축소  마우스 휠\n" +
                 "본사 이동  L\n" +
                 "선택  좌클릭\n" +
-                "행동 메뉴  우클릭\n" +
-                "경유지 추가  Shift + 좌클릭");
+                "행동 메뉴  우클릭");
             AddButton(_keySettingsView, "뒤로", CloseKeySettings);
 
             root.Add(_pauseMenuOverlay);

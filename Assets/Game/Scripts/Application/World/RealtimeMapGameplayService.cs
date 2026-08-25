@@ -628,6 +628,11 @@ namespace Game.Application.World
                 decimal cavalryMobility =
                     UnitEquipmentCatalog.GetArchetypeMobilityModifier(
                         UnitArchetype.Cavalry);
+                if (Archetype == UnitArchetype.Cavalry)
+                {
+                    cavalryMobility = 1m +
+                        (cavalryMobility - 1m) * HorseSupplyRatio;
+                }
                 return Formation.FrontlineRatio * frontlineMobility +
                     Formation.RangedRatio * rangedMobility +
                     Formation.CavalryRatio * cavalryMobility;
@@ -665,12 +670,17 @@ namespace Game.Application.World
         public decimal FoodSupply { get; private set; }
         public decimal EquipmentSupply { get; private set; }
         public decimal MedicineSupply { get; private set; }
+        public decimal HorseSupply { get; private set; }
         public bool UsesSupplySystem { get; private set; }
         public MapSupplyMissionKind SupplyMissionKind { get; private set; }
         public GridCoordinate? SupplyMissionCoordinate { get; private set; }
         public decimal FoodSupplyCapacity => Soldiers * 0.21m;
         public decimal EquipmentSupplyCapacity => Soldiers * 0.028m;
         public decimal MedicineSupplyCapacity => Soldiers * 0.007m;
+        public int RequiredHorseCount => Archetype == UnitArchetype.Cavalry
+            ? Soldiers
+            : 0;
+        public decimal HorseSupplyCapacity => RequiredHorseCount;
         public decimal FoodSupplyRatio => GetSupplyRatio(
             FoodSupply,
             FoodSupplyCapacity);
@@ -680,6 +690,9 @@ namespace Game.Application.World
         public decimal MedicineSupplyRatio => GetSupplyRatio(
             MedicineSupply,
             MedicineSupplyCapacity);
+        public decimal HorseSupplyRatio => RequiredHorseCount <= 0
+            ? 1m
+            : GetSupplyRatio(HorseSupply, HorseSupplyCapacity);
         public decimal MovementSupplyModifier => UsesSupplySystem
             ? 0.50m + FoodSupplyRatio * 0.50m
             : 1m;
@@ -730,6 +743,7 @@ namespace Game.Application.World
             FoodSupply = 0m;
             EquipmentSupply = 0m;
             MedicineSupply = 0m;
+            HorseSupply = 0m;
             UsesSupplySystem = false;
             SupplyMissionKind = MapSupplyMissionKind.None;
             SupplyMissionCoordinate = null;
@@ -770,6 +784,7 @@ namespace Game.Application.World
             int applied = Math.Min(Soldiers, Math.Max(0, casualties));
             int previousSoldiers = Soldiers;
             Formation = Formation.ScaleTo(Soldiers - applied);
+            HorseSupply = Math.Min(HorseSupply, HorseSupplyCapacity);
             if (applied > 0)
             {
                 decimal casualtyRatio = applied /
@@ -795,6 +810,7 @@ namespace Game.Application.World
             decimal fatigue)
         {
             Formation = Formation.ScaleTo(Math.Max(0, soldiers));
+            HorseSupply = Math.Min(HorseSupply, HorseSupplyCapacity);
             Stamina = Math.Clamp(stamina, 0, MaxStamina);
             Morale = Math.Clamp(morale, 0m, 125m);
             Fatigue = Math.Clamp(fatigue, 0m, 100m);
@@ -854,6 +870,7 @@ namespace Game.Application.World
                 case MapSupplyKind.Food: return FoodSupply;
                 case MapSupplyKind.Equipment: return EquipmentSupply;
                 case MapSupplyKind.Medicine: return MedicineSupply;
+                case MapSupplyKind.Horse: return HorseSupply;
                 default: return 0m;
             }
         }
@@ -867,13 +884,16 @@ namespace Game.Application.World
                     return EquipmentSupplyCapacity;
                 case MapSupplyKind.Medicine:
                     return MedicineSupplyCapacity;
+                case MapSupplyKind.Horse:
+                    return HorseSupplyCapacity;
                 default: return 0m;
             }
         }
 
         internal decimal StoreSupply(MapSupplyKind kind, decimal amount)
         {
-            UsesSupplySystem = true;
+            if (kind != MapSupplyKind.Horse)
+                UsesSupplySystem = true;
             decimal stored = Math.Min(
                 Math.Max(0m, amount),
                 Math.Max(0m, GetSupplyCapacity(kind) - GetSupply(kind)));
@@ -887,6 +907,9 @@ namespace Game.Application.World
                     break;
                 case MapSupplyKind.Medicine:
                     MedicineSupply += stored;
+                    break;
+                case MapSupplyKind.Horse:
+                    HorseSupply += stored;
                     break;
             }
             return stored;
@@ -905,11 +928,13 @@ namespace Game.Application.World
             decimal foodNeed = Soldiers * 0.03m;
             decimal equipmentNeed = Soldiers * 0.004m;
             decimal medicineNeed = Soldiers * 0.001m;
+            decimal horseNeed = RequiredHorseCount * 0.01m;
             decimal foodConsumed = TakeSupply(
                 MapSupplyKind.Food,
                 foodNeed);
             TakeSupply(MapSupplyKind.Equipment, equipmentNeed);
             TakeSupply(MapSupplyKind.Medicine, medicineNeed);
+            TakeSupply(MapSupplyKind.Horse, horseNeed);
             decimal foodFulfillment = foodNeed <= 0m
                 ? 1m
                 : Math.Clamp(foodConsumed / foodNeed, 0m, 1m);
@@ -918,7 +943,8 @@ namespace Game.Application.World
                 AdjustMorale(-8m * (1m - foodFulfillment));
                 AdjustFatigue(4m * (1m - foodFulfillment));
             }
-            return foodNeed > 0m || equipmentNeed > 0m || medicineNeed > 0m;
+            return foodNeed > 0m || equipmentNeed > 0m ||
+                medicineNeed > 0m || horseNeed > 0m;
         }
 
         private decimal TakeSupply(MapSupplyKind kind, decimal amount)
@@ -935,8 +961,20 @@ namespace Game.Application.World
                 case MapSupplyKind.Medicine:
                     MedicineSupply -= taken;
                     break;
+                case MapSupplyKind.Horse:
+                    HorseSupply -= taken;
+                    break;
             }
             return taken;
+        }
+
+        internal decimal LoseHorses(decimal lossRate)
+        {
+            decimal lost = Math.Min(
+                HorseSupply,
+                HorseSupply * Math.Clamp(lossRate, 0m, 1m));
+            HorseSupply -= lost;
+            return lost;
         }
 
         internal void AssignSupplyMission(
@@ -1084,22 +1122,6 @@ namespace Game.Application.World
             AdjustFatigue(15m);
         }
 
-        internal bool AppendPath(IReadOnlyList<GridCoordinate> path)
-        {
-            if (_path.Count == 0 || path == null || path.Count == 0)
-                return false;
-
-            for (int i = 0; i < path.Count; i++)
-            {
-                _path.Enqueue(path[i]);
-                _plannedPath.Add(path[i]);
-            }
-
-            Destination = path[path.Count - 1];
-            TotalMovementTileCount += path.Count;
-            return true;
-        }
-
         internal bool TryAdvanceOneTile()
         {
             if (_path.Count == 0)
@@ -1107,6 +1129,9 @@ namespace Game.Application.World
 
             Coordinate = _path.Dequeue();
             AdjustFatigue(MovementFatiguePerTile);
+            TakeSupply(
+                MapSupplyKind.Horse,
+                RequiredHorseCount * 0.001m);
             CompletedMovementTileCount++;
             if (_plannedPath.Count > 0)
                 _plannedPath.RemoveAt(0);
@@ -1337,7 +1362,8 @@ namespace Game.Application.World
         {
             MapSupplyKind.Food,
             MapSupplyKind.Equipment,
-            MapSupplyKind.Medicine
+            MapSupplyKind.Medicine,
+            MapSupplyKind.Horse
         };
 
         private readonly GridMapLayout _layout;
@@ -1405,6 +1431,8 @@ namespace Game.Application.World
         public int FixedStepsToCapture => _tuning.FixedStepsToCapture;
         public int FixedStepsPerMove => _tuning.FixedStepsPerMove;
         public int UnitScoutingRange => _tuning.UnitScoutingRange;
+        public int InitialSoldiersPerUnit =>
+            _tuning.InitialSoldiersPerUnit;
         public int FixedStepsToCaptureCastle =>
             _tuning.FixedStepsToCaptureCastle;
         public int FixedStepsToSiegeUndefendedCastle =>
@@ -1500,7 +1528,7 @@ namespace Game.Application.World
             }
 
             BuildRoadNetwork();
-            SeedNeutralCommanders();
+            SeedInitialCommander();
         }
 
         public MapUnitState FindUnit(string unitId)
@@ -1625,44 +1653,8 @@ namespace Game.Application.World
             return true;
         }
 
-        private void SeedNeutralCommanders()
+        private void SeedInitialCommander()
         {
-            _commanders.Add(new MapCommanderState(
-                "commander_yoon_harin",
-                "윤하린",
-                72,
-                84,
-                48,
-                MapCommanderPersonality.Aggressive,
-                68,
-                35000m));
-            _commanders.Add(new MapCommanderState(
-                "commander_kang_doyoon",
-                "강도윤",
-                80,
-                65,
-                62,
-                MapCommanderPersonality.Cautious,
-                82,
-                40000m));
-            _commanders.Add(new MapCommanderState(
-                "commander_seo_mirae",
-                "서미래",
-                66,
-                74,
-                72,
-                MapCommanderPersonality.Opportunistic,
-                57,
-                30000m));
-            _commanders.Add(new MapCommanderState(
-                "commander_han_yujin",
-                "한유진",
-                70,
-                60,
-                90,
-                MapCommanderPersonality.Logistician,
-                76,
-                42000m));
             _commanders.Add(new MapCommanderState(
                 ProtagonistCommanderId,
                 "주인공",
@@ -2493,6 +2485,18 @@ namespace Game.Application.World
                 reason = "아군 성의 무기고에서만 부대를 편성할 수 있습니다.";
                 return false;
             }
+            int requiredHorses = archetype == UnitArchetype.Cavalry
+                ? _tuning.InitialSoldiersPerUnit
+                : 0;
+            if (requiredHorses > 0 &&
+                castle.GetWarehouseSupply(MapSupplyKind.Horse) <
+                    requiredHorses)
+            {
+                reason = $"기병 모집에 필요한 말이 부족합니다. 필요 " +
+                    $"{requiredHorses:N0}, 보유 " +
+                    $"{castle.WarehouseHorseAmount:N0}";
+                return false;
+            }
             if (!castle.TryConsumeLoadout(
                     weaponType,
                     weaponQuality,
@@ -2503,6 +2507,11 @@ namespace Game.Application.World
             {
                 return false;
             }
+            decimal recruitedHorses = requiredHorses > 0
+                ? castle.TakeWarehouseSupply(
+                    MapSupplyKind.Horse,
+                    requiredHorses)
+                : 0m;
 
             MapRecruitmentSiteState recruitmentSite =
                 _recruitmentSites[origin];
@@ -2516,6 +2525,9 @@ namespace Game.Application.World
                     _tuning.InitialSoldiersPerUnit,
                     1m,
                     1m);
+                castle.StoreWarehouseSupply(
+                    MapSupplyKind.Horse,
+                    recruitedHorses);
                 reason = "지역 징집 인력이 부족합니다.";
                 return false;
             }
@@ -2535,6 +2547,8 @@ namespace Game.Application.World
                 armorClass,
                 weaponQuality,
                 armorQuality);
+            if (recruitedHorses > 0m)
+                unit.StoreSupply(MapSupplyKind.Horse, recruitedHorses);
             if (_supplyEnabledFactionIds.Contains(ownerFactionId))
                 unit.EnableSupplySystem();
             _units.Add(unit);
@@ -3096,106 +3110,6 @@ namespace Game.Application.World
             if (cancelled)
                 ReturnWorldMissionCargo(mission);
             _worldMissionsByUnitId.Remove(unitId);
-            StateChanged?.Invoke();
-            return true;
-        }
-
-        public bool CanAppendWaypoint(
-            string ownerFactionId,
-            string unitId,
-            GridCoordinate destination,
-            out IReadOnlyList<GridCoordinate> path,
-            out string reason)
-        {
-            path = Array.Empty<GridCoordinate>();
-            MapUnitState unit = FindUnit(unitId);
-            if (unit == null)
-            {
-                reason = "선택한 유닛을 찾을 수 없습니다.";
-                return false;
-            }
-
-            if (!string.Equals(
-                unit.OwnerFactionId,
-                ownerFactionId,
-                StringComparison.Ordinal))
-            {
-                reason = "다른 세력의 유닛에는 명령할 수 없습니다.";
-                return false;
-            }
-
-            if (!unit.IsMoving || !unit.Destination.HasValue)
-            {
-                reason = "경유지는 이동 중인 유닛에만 추가할 수 있습니다.";
-                return false;
-            }
-
-            if (!_layout.TryNormalize(destination, out GridCoordinate normalized))
-            {
-                reason = "목적지가 지도 범위를 벗어났습니다.";
-                return false;
-            }
-
-            if (!_layout.IsLand(normalized))
-            {
-                reason = "지상 유닛은 바다로 이동할 수 없습니다.";
-                return false;
-            }
-
-            GridCoordinate pathOrigin = unit.Destination.Value;
-            if (pathOrigin.Equals(normalized))
-            {
-                reason = "이미 마지막 경유지로 예약된 지역입니다.";
-                return false;
-            }
-
-            if (!CanEnterFriendlySite(
-                ownerFactionId,
-                unit.Id,
-                normalized,
-                out reason))
-            {
-                return false;
-            }
-
-            List<GridCoordinate> route = FindShortestLandPath(
-                pathOrigin,
-                normalized);
-            if (route.Count == 0)
-            {
-                reason = "경유지까지 이동 가능한 육지 경로가 없습니다.";
-                return false;
-            }
-
-            path = route;
-            reason = string.Empty;
-            return true;
-        }
-
-        public bool TryAppendWaypoint(
-            string ownerFactionId,
-            string unitId,
-            GridCoordinate destination,
-            out string reason)
-        {
-            if (!CanAppendWaypoint(
-                ownerFactionId,
-                unitId,
-                destination,
-                out IReadOnlyList<GridCoordinate> path,
-                out reason))
-            {
-                return false;
-            }
-
-            MapUnitState unit = FindUnit(unitId);
-            if (!unit.AppendPath(path))
-            {
-                reason = "경유지를 이동 경로에 추가하지 못했습니다.";
-                return false;
-            }
-
-            reason = string.Empty;
             StateChanged?.Invoke();
             return true;
         }
@@ -4958,6 +4872,7 @@ namespace Game.Application.World
                 case MapSupplyKind.Food: return 250m;
                 case MapSupplyKind.Equipment: return 50m;
                 case MapSupplyKind.Medicine: return 25m;
+                case MapSupplyKind.Horse: return 100m;
                 default: return 0m;
             }
         }
@@ -5337,6 +5252,22 @@ namespace Game.Application.World
 
             if (defeatedCommanderUnits == null)
                 return;
+
+            for (int i = 0; i < defeatedCommanderUnits.Count; i++)
+            {
+                MapUnitState defeated = defeatedCommanderUnits[i];
+                if (defeated == null || defeated.RequiredHorseCount <= 0)
+                    continue;
+
+                int lossRoll = CreateBattleOutcomeRoll(
+                    "defeat_horse_loss",
+                    defeatedFactionId,
+                    coordinate,
+                    defeated.Id);
+                decimal lossRate = 0.05m +
+                    (lossRoll % 1001) / 10000m;
+                defeated.LoseHorses(lossRate);
+            }
 
             for (int i = 0; i < defeatedCommanderUnits.Count; i++)
             {

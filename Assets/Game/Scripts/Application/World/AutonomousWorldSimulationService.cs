@@ -853,6 +853,15 @@ namespace Game.Application.World
                         facility.InputPerTurn * ratio,
                         $"{facility.Kind} 원재료 수요");
                 }
+                if (facility.SecondaryInputResourceId.HasValue)
+                {
+                    AddFlowIfMarketExists(
+                        facility.RegionId,
+                        facility.SecondaryInputResourceId.Value,
+                        0m,
+                        facility.SecondaryInputPerTurn * ratio,
+                        $"{facility.Kind} 보조 원재료 수요");
+                }
                 if (facility.OutputResourceId.HasValue)
                 {
                     AddFlowIfMarketExists(

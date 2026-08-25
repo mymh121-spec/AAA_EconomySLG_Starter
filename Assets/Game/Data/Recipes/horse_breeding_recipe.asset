@@ -1,0 +1,27 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3e8f0c63db744735b5f3843b93af9101, type: 3}
+  m_Name: horse_breeding_recipe
+  m_EditorClassIdentifier:
+  id: horse_breeding_recipe
+  displayName: 목장 말 사육
+  inputs:
+  - resourceId: wood
+    amount: 1
+  - resourceId: food
+    amount: 3
+  outputs:
+  - resourceId: horse
+    amount: 1
+  laborRequired: 8
+  powerRequired: 2
+  daysPerCycle: 1

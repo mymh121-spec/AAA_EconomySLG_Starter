@@ -231,6 +231,11 @@ namespace Game.Application.World
                     "medicine",
                     StringComparison.OrdinalIgnoreCase))
                 return MapSupplyKind.Medicine;
+            if (string.Equals(
+                    id,
+                    "horse",
+                    StringComparison.OrdinalIgnoreCase))
+                return MapSupplyKind.Horse;
             return MapSupplyKind.Food;
         }
 

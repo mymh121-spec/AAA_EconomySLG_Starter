@@ -478,67 +478,6 @@ namespace Game.Tests
         }
 
         [Test]
-        public void RealtimeMapGameplay_AppendsWaypointAndKeepsCurrentProgress()
-        {
-            var terrain = new GridTerrainKind[9 * 3];
-            for (int i = 0; i < terrain.Length; i++)
-                terrain[i] = GridTerrainKind.Plains;
-            var layout = new GridMapLayout(
-                9,
-                3,
-                23,
-                new GridCoordinate(0, 1),
-                new GridCoordinate[0],
-                new MinePlacement[0],
-                true,
-                terrain);
-            var service = new RealtimeMapGameplayService(
-                layout,
-                "player",
-                tuning: new MapGameplayTuning(
-                    fixedStepsPerMove: 2,
-                    aiDecisionIntervalSteps: 100));
-
-            Assert.That(
-                service.TryCreateUnit("player", out MapUnitState unit, out _),
-                Is.True);
-            int initialStamina = unit.Stamina;
-            Assert.That(
-                service.TryIssueMove(
-                    "player",
-                    unit.Id,
-                    new GridCoordinate(2, 1),
-                    out _),
-                Is.True);
-            service.AdvanceFixedSteps(1);
-
-            Assert.That(
-                service.TryAppendWaypoint(
-                    "player",
-                    unit.Id,
-                    new GridCoordinate(4, 1),
-                    out _),
-                Is.True);
-            Assert.That(unit.Stamina, Is.EqualTo(initialStamina - 1));
-            Assert.That(unit.MovementProgress, Is.EqualTo(1));
-            Assert.That(unit.TotalMovementTileCount, Is.EqualTo(4));
-            Assert.That(unit.RemainingMovementTileCount, Is.EqualTo(4));
-            Assert.That(unit.PlannedPath.Count, Is.EqualTo(5));
-            Assert.That(
-                unit.Destination,
-                Is.EqualTo(new GridCoordinate(4, 1)));
-            Assert.That(
-                service.GetRemainingMovementFixedSteps(unit),
-                Is.EqualTo(7));
-
-            service.AdvanceFixedSteps(7);
-
-            Assert.That(unit.Coordinate, Is.EqualTo(new GridCoordinate(4, 1)));
-            Assert.That(unit.IsMoving, Is.False);
-            Assert.That(unit.PlannedPath, Is.Empty);
-        }
-
-        [Test]
         public void RealtimeMapGameplay_HidesEnemyPathOutsideScoutingRange()
         {
             var terrain = new GridTerrainKind[20 * 3];
@@ -803,18 +742,8 @@ namespace Game.Tests
                 "player",
                 tuning: new MapGameplayTuning(fixedStepsPerMove: 1000));
 
-            Assert.That(service.Commanders.Count, Is.EqualTo(5));
-            Assert.That(
-                service.Commanders
-                    .Where(candidate => !candidate.IsProtagonist)
-                    .Select(candidate => candidate.Personality),
-                Is.EquivalentTo(new[]
-                {
-                    MapCommanderPersonality.Aggressive,
-                    MapCommanderPersonality.Cautious,
-                    MapCommanderPersonality.Opportunistic,
-                    MapCommanderPersonality.Logistician
-                }));
+            Assert.That(service.Commanders.Count, Is.EqualTo(1));
+            Assert.That(service.Commanders[0].IsProtagonist, Is.True);
             Assert.That(
                 service.TryCreateUnit("player", out MapUnitState unit, out _),
                 Is.True);
@@ -840,19 +769,19 @@ namespace Game.Tests
             Assert.That(unit.AttackPower, Is.GreaterThan(attackWithoutCommander));
             Assert.That(unit.DefensePower, Is.GreaterThan(defenseWithoutCommander));
             Assert.That(unit.MobilityModifier,
-                Is.LessThan(mobilityWithoutCommander));
+                Is.GreaterThan(mobilityWithoutCommander));
             Assert.That(
                 service.GetRequiredMovementStepsPerTile(unit),
-                Is.GreaterThan(movementStepsWithoutCommander));
+                Is.LessThan(movementStepsWithoutCommander));
             Assert.That(unit.CommanderAttackModifier,
-                Is.EqualTo(1.088032m));
+                Is.EqualTo(1.0404m));
             Assert.That(unit.CommanderDefenseModifier,
-                Is.EqualTo(1.017808m));
+                Is.EqualTo(1.1116m));
 
             Assert.That(
                 service.TryHireCommander(
                     "player",
-                    service.Commanders[1].Id,
+                    commander.Id,
                     unit.Id,
                     out string occupiedReason),
                 Is.False);
@@ -1020,18 +949,18 @@ namespace Game.Tests
             Assert.That(upkeep.UnitId, Is.EqualTo(unit.Id));
             Assert.That(upkeep.CommanderId, Is.EqualTo(commander.Id));
             Assert.That(upkeep.Soldiers, Is.EqualTo(500));
-            Assert.That(upkeep.CommandCapacity, Is.EqualTo(244));
+            Assert.That(upkeep.CommandCapacity, Is.EqualTo(264));
             Assert.That(upkeep.BaseUpkeep, Is.EqualTo(1000m));
             Assert.That(
                 upkeep.ConcentrationSurcharge,
-                Is.EqualTo(165.1169m).Within(0.0001m));
+                Is.EqualTo(119.8691m).Within(0.0001m));
             Assert.That(
                 upkeep.TotalUpkeep,
-                Is.EqualTo(1165.1169m).Within(0.0001m));
+                Is.EqualTo(1119.8691m).Within(0.0001m));
         }
 
         [Test]
-        public void RealtimeMapGameplay_AiSummonsSharedCommanderAtFriendlyCastle()
+        public void RealtimeMapGameplay_AiStartsWithoutGeneratedCommander()
         {
             var terrain = Enumerable.Repeat(
                 GridTerrainKind.Plains,
@@ -1057,10 +986,9 @@ namespace Game.Tests
 
             MapUnitState aiUnit = service.Units.Single(unit =>
                 unit.OwnerFactionId == "ai_1");
-            Assert.That(aiUnit.Commander, Is.Not.Null);
-            Assert.That(aiUnit.Commander.IsProtagonist, Is.False);
-            Assert.That(aiUnit.Commander.EmployerFactionId, Is.EqualTo("ai_1"));
-            Assert.That(aiUnit.Commander.AssignedUnitId, Is.EqualTo(aiUnit.Id));
+            Assert.That(service.Commanders.Count, Is.EqualTo(1));
+            Assert.That(service.Commanders[0].IsProtagonist, Is.True);
+            Assert.That(aiUnit.Commander, Is.Null);
         }
 
         [Test]
@@ -1085,9 +1013,7 @@ namespace Game.Tests
             Assert.That(
                 service.TryCreateUnit("player", out MapUnitState unit, out _),
                 Is.True);
-            MapCommanderState commander = service.Commanders.Single(
-                candidate => candidate.Personality ==
-                    MapCommanderPersonality.Aggressive);
+            MapCommanderState commander = service.Commanders.Single();
             Assert.That(
                 service.TryHireCommander(
                     "player",
@@ -3038,6 +2964,113 @@ namespace Game.Tests
                 Is.True);
             Assert.That(unit.WeaponDisplayName, Is.EqualTo("장궁"));
             Assert.That(unit.ArmorDisplayName, Is.EqualTo("경갑"));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_CavalryConsumesHorsesAndNeedsStock()
+        {
+            var terrain = new GridTerrainKind[4 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var headquarters = new GridCoordinate(0, 0);
+            var layout = new GridMapLayout(
+                4,
+                2,
+                31,
+                headquarters,
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000,
+                    maxUnitsPerFaction: 12));
+            MapCastleControlState capital = service.FindCapital("player");
+
+            Assert.That(capital.WarehouseHorseAmount, Is.EqualTo(300m));
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out MapUnitState first,
+                    out _),
+                Is.True);
+            Assert.That(first.RequiredHorseCount, Is.EqualTo(100));
+            Assert.That(first.HorseSupply, Is.EqualTo(100m));
+            Assert.That(capital.WarehouseHorseAmount, Is.EqualTo(200m));
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out _,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out _,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out _,
+                    out string reason),
+                Is.False);
+            Assert.That(reason, Does.Contain("말이 부족"));
+        }
+
+        [Test]
+        public void RealtimeMapGameplay_CavalryHorseWearReducesMobility()
+        {
+            var terrain = new GridTerrainKind[3 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                3,
+                2,
+                37,
+                new GridCoordinate(0, 0),
+                new GridCoordinate[0],
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                tuning: new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000));
+            service.ConfigureFactionLogistics("player", 1);
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    UnitArchetype.Cavalry,
+                    out MapUnitState cavalry,
+                    out _),
+                Is.True);
+            decimal fullMobility = cavalry.MobilityModifier;
+
+            Assert.That(
+                service.TryIssueMove(
+                    "player",
+                    cavalry.Id,
+                    new GridCoordinate(1, 0),
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+            Assert.That(cavalry.HorseSupply, Is.EqualTo(99.9m));
+
+            service.AdvanceEconomicDay(out _);
+            Assert.That(cavalry.HorseSupply, Is.EqualTo(98.9m));
+            Assert.That(cavalry.MobilityModifier, Is.LessThan(fullMobility));
         }
 
         [Test]
