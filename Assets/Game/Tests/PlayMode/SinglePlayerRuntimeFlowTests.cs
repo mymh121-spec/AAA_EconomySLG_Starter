@@ -594,15 +594,44 @@ namespace Game.Tests.PlayMode
             }
             Assert.That(enemyCommanderUnit, Is.Not.Null,
                 "장수전 예상 승률을 확인할 적 장수 부대가 필요합니다.");
+            GridCoordinate? destinationBeforeEnemyClick =
+                map.SelectedPlayerUnit.Destination;
             Assert.That(
                 map.TrySelectMapCell(
                     enemyCommanderUnit.Coordinate,
-                    out _),
+                    out MapCellSelection enemySelection),
                 Is.True);
             yield return null;
             Assert.That(selectionStatus.text,
                 Does.Contain("장수전 예상 승률"),
                 "적 장수 선택 시 현재 전투력 기반 예상 승률을 보여야 합니다.");
+            InvokePrivate(
+                controller,
+                "HandleMapMoveRequested",
+                enemySelection);
+            Assert.That(
+                map.SelectedPlayerUnit.Destination,
+                Is.EqualTo(destinationBeforeEnemyClick),
+                "적 부대 클릭만으로는 이동·공격 명령이 발동하면 안 됩니다.");
+            Button attackButton = document.rootVisualElement.Q<Button>(
+                "single-attack-unit-button");
+            Assert.That(attackButton, Is.Not.Null,
+                "적 선택 시 별도의 추적·공격 액션이 있어야 합니다.");
+            Assert.That(attackButton.resolvedStyle.display,
+                Is.EqualTo(DisplayStyle.Flex));
+            Assert.That(attackButton.text, Does.Contain("추적·공격"));
+            Assert.That(attackButton.text, Does.Contain("예상"));
+            InvokePrivate(controller, "TrackAndAttackSelectedEnemyUnit");
+            yield return null;
+            Assert.That(
+                map.TryGetSelectedPlayerAttackTarget(
+                    out MapUnitState trackedEnemy),
+                Is.True,
+                "추적·공격을 눌러야 적 부대를 실제 목표로 지정해야 합니다.");
+            Assert.That(trackedEnemy.Id, Is.EqualTo(enemyCommanderUnit.Id));
+            Assert.That(
+                map.TryCancelSelectedPlayerUnitMove(out _),
+                Is.True);
             Assert.That(
                 map.TrySelectMapCell(
                     map.SelectedPlayerUnit.Coordinate,

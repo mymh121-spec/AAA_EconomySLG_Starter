@@ -874,6 +874,86 @@ namespace Game.Tests
         }
 
         [Test]
+        public void RealtimeMapGameplay_TracksMovingEnemyAndResolvesFieldBattle()
+        {
+            var terrain = new GridTerrainKind[6 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                6,
+                2,
+                361,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(5, 0) },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1,
+                    aiDecisionIntervalSteps: 1000));
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    out MapUnitState attacker,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit(
+                    "ai_1",
+                    out MapUnitState target,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryIssueAttackUnit(
+                    "player",
+                    attacker.Id,
+                    target.Id,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryGetAttackTarget(attacker.Id, out MapUnitState tracked),
+                Is.True);
+            Assert.That(tracked.Id, Is.EqualTo(target.Id));
+
+            Assert.That(
+                service.TryIssueMove(
+                    "ai_1",
+                    target.Id,
+                    new GridCoordinate(3, 0),
+                    out _),
+                Is.True);
+            MapFieldBattleResult? battle = null;
+            service.FieldBattleResolved += result => battle = result;
+
+            service.AdvanceFixedSteps(6);
+
+            Assert.That(battle.HasValue, Is.True,
+                "이동한 적을 자동 재추적해 접촉 전투를 해결해야 합니다.");
+            Assert.That(battle.Value.AttackerUnitId, Is.EqualTo(attacker.Id));
+            Assert.That(battle.Value.DefenderUnitId, Is.EqualTo(target.Id));
+            Assert.That(battle.Value.PredictedAttackerWinPercent,
+                Is.InRange(3, 97));
+            Assert.That(
+                battle.Value.AttackerCasualties +
+                battle.Value.DefenderCasualties,
+                Is.GreaterThan(0));
+            Assert.That(
+                service.TryGetAttackTarget(attacker.Id, out _),
+                Is.False,
+                "교전이 끝나면 추적 명령을 종료해야 합니다.");
+            Assert.That(
+                !attacker.Coordinate.Equals(target.Coordinate) ||
+                attacker.Soldiers <= 0 || target.Soldiers <= 0,
+                Is.True,
+                "패배 부대는 후퇴하거나 소멸해 같은 칸에 남지 않아야 합니다.");
+        }
+
+        [Test]
         public void CommanderBattleRules_UseThreeAndFivePercentAndProtectProtagonist()
         {
             Assert.That(
@@ -3158,7 +3238,8 @@ namespace Game.Tests
                     new GridCoordinate(1, 0),
                     out _),
                 Is.True);
-            service.AdvanceFixedSteps(1);
+            service.AdvanceFixedSteps(
+                service.GetRequiredMovementStepsPerTile(cavalry));
             Assert.That(cavalry.HorseSupply, Is.EqualTo(99.9m));
 
             service.AdvanceEconomicDay(out _);

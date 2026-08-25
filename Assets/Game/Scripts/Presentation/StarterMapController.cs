@@ -215,6 +215,7 @@ namespace Game.Presentation
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapFieldBattleResult> FieldBattleResolved;
         public event Action<MapCommanderGeneratedRecord> CommanderGenerated;
         public event Action<MapCommanderDeathRecord> CommanderDied;
         public event Action<MapSupplyInterdictionResult>
@@ -573,6 +574,51 @@ namespace Game.Presentation
                 RefreshGameplayMarkers();
             }
             return moved;
+        }
+
+        public bool CanAttackSelectedEnemyUnit(
+            string targetUnitId,
+            out string reason)
+        {
+            if (_gameplayService == null || SelectedPlayerUnit == null)
+            {
+                reason = "먼저 추적·공격할 아군 부대를 선택하세요.";
+                return false;
+            }
+
+            return _gameplayService.CanIssueAttackUnit(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                targetUnitId,
+                out reason);
+        }
+
+        public bool TryAttackSelectedEnemyUnit(
+            string targetUnitId,
+            out string reason)
+        {
+            if (!CanAttackSelectedEnemyUnit(targetUnitId, out reason))
+                return false;
+
+            bool ordered = _gameplayService.TryIssueAttackUnit(
+                _gameplayService.PlayerFactionId,
+                _selectedPlayerUnitId,
+                targetUnitId,
+                out reason);
+            if (ordered)
+                RefreshGameplayMarkers();
+            return ordered;
+        }
+
+        public bool TryGetSelectedPlayerAttackTarget(
+            out MapUnitState target)
+        {
+            target = null;
+            return _gameplayService != null &&
+                SelectedPlayerUnit != null &&
+                _gameplayService.TryGetAttackTarget(
+                    _selectedPlayerUnitId,
+                    out target);
         }
 
         public bool CanCancelSelectedPlayerUnitMove(out string reason)
@@ -1284,6 +1330,8 @@ namespace Game.Presentation
             _gameplayService.CapitalDestroyed += HandleCapitalDestroyed;
             _gameplayService.CastleRoleChanged += HandleCastleRoleChanged;
             _gameplayService.SiegeDayResolved += HandleSiegeDayResolved;
+            _gameplayService.FieldBattleResolved +=
+                HandleFieldBattleResolved;
             _gameplayService.CommanderGenerated += HandleCommanderGenerated;
             _gameplayService.CommanderDied += HandleCommanderDied;
             _gameplayService.SupplyInterdictionResolved +=
@@ -1304,6 +1352,8 @@ namespace Game.Presentation
                 _gameplayService.CapitalDestroyed -= HandleCapitalDestroyed;
                 _gameplayService.CastleRoleChanged -= HandleCastleRoleChanged;
                 _gameplayService.SiegeDayResolved -= HandleSiegeDayResolved;
+                _gameplayService.FieldBattleResolved -=
+                    HandleFieldBattleResolved;
                 _gameplayService.CommanderGenerated -= HandleCommanderGenerated;
                 _gameplayService.CommanderDied -= HandleCommanderDied;
                 _gameplayService.SupplyInterdictionResolved -=
@@ -1668,6 +1718,16 @@ namespace Game.Presentation
                 }
                 if (unit.Destination.HasValue)
                     detail += $" · 이동 중 → {unit.Destination.Value}";
+                if (_gameplayService != null &&
+                    _gameplayService.TryGetAttackTarget(
+                        unit.Id,
+                        out MapUnitState attackTarget))
+                {
+                    string targetName = attackTarget.Commander?.DisplayName ??
+                        attackTarget.ArchetypeDisplayName;
+                    detail += $" · 추적·공격 중 → {targetName} " +
+                              $"({attackTarget.Coordinate})";
+                }
                 if (_gameplayService != null &&
                     _gameplayService.IsUsingSeaTransport(unit))
                 {
@@ -2859,6 +2919,13 @@ namespace Game.Presentation
             SiegeDayResolved?.Invoke(result);
         }
 
+        private void HandleFieldBattleResolved(MapFieldBattleResult result)
+        {
+            RefreshGameplayMarkers();
+            RefreshCurrentSelection();
+            FieldBattleResolved?.Invoke(result);
+        }
+
         private void HandleCommanderGenerated(
             MapCommanderGeneratedRecord record)
         {
@@ -2888,7 +2955,8 @@ namespace Game.Presentation
             {
                 trackedEnemy = _gameplayService?.FindUnit(
                     _trackedEnemyUnitId);
-                if (trackedEnemy == null || string.Equals(
+                if (trackedEnemy == null || trackedEnemy.Soldiers <= 0 ||
+                    string.Equals(
                         trackedEnemy.OwnerFactionId,
                         _gameplayService?.PlayerFactionId,
                         StringComparison.Ordinal))

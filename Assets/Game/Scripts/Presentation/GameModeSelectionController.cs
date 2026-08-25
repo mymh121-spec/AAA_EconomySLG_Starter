@@ -70,6 +70,7 @@ namespace Game.Presentation
         private Button _unitTypeButton;
         private Button _selectUnitButton;
         private Button _inspectUnitButton;
+        private Button _attackUnitButton;
         private Button _moveUnitButton;
         private Button _cancelMoveButton;
         private VisualElement _mapContextMenu;
@@ -84,6 +85,7 @@ namespace Game.Presentation
         private Button _contextUnitTypeButton;
         private Button _contextSelectUnitButton;
         private Button _contextInspectUnitButton;
+        private Button _contextAttackUnitButton;
         private Button _contextMoveUnitButton;
         private Button _contextCancelMoveButton;
         private Button _contextCaptureMineButton;
@@ -365,6 +367,7 @@ namespace Game.Presentation
             gameplayMap.CapitalDestroyed += HandleCapitalDestroyed;
             gameplayMap.CastleRoleChanged += HandleCastleRoleChanged;
             gameplayMap.SiegeDayResolved += HandleSiegeDayResolved;
+            gameplayMap.FieldBattleResolved += HandleFieldBattleResolved;
             gameplayMap.CommanderGenerated += HandleCommanderGenerated;
             gameplayMap.CommanderDied += HandleCommanderDied;
             gameplayMap.SupplyInterdictionResolved +=
@@ -1705,7 +1708,14 @@ namespace Game.Presentation
                 return;
 
             MapUnitState selectedUnit = gameplayMap.SelectedPlayerUnit;
+            bool selectedHostileUnit =
+                !string.IsNullOrEmpty(selection.UnitId) &&
+                !string.Equals(
+                    selection.UnitOwnerFactionId,
+                    gameplayMap.GameplayService?.PlayerFactionId,
+                    StringComparison.Ordinal);
             if (selectedUnit == null ||
+                selectedHostileUnit ||
                 selectedUnit.Coordinate.Equals(selection.Coordinate) ||
                 gameplayMap.CanSelectPlayerUnitAt(selection.Coordinate, out _))
             {
@@ -1891,6 +1901,9 @@ namespace Game.Presentation
                 _contextCreateUnitButton,
                 _contextSelectUnitButton,
                 _contextMoveUnitButton);
+            ConfigureAttackUnitButton(
+                selection,
+                _contextAttackUnitButton);
             ConfigureCancelMoveButton(_contextCancelMoveButton);
             SetVisible(
                 _contextUnitTypeButton,
@@ -2067,6 +2080,50 @@ namespace Game.Presentation
                     : string.Empty) +
                 (result.CapitalDestroyed ? " · 수도 멸망" : string.Empty) +
                 (result.CastleCaptured ? " · 성 함락" : string.Empty));
+        }
+
+        private void HandleFieldBattleResolved(MapFieldBattleResult result)
+        {
+            if (!_selection.IsSinglePlayer || gameplayMap == null)
+                return;
+
+            string playerFactionId =
+                gameplayMap.GameplayService?.PlayerFactionId ?? "player";
+            bool playerAttacked = string.Equals(
+                result.AttackerFactionId,
+                playerFactionId,
+                StringComparison.Ordinal);
+            bool playerDefended = string.Equals(
+                result.DefenderFactionId,
+                playerFactionId,
+                StringComparison.Ordinal);
+            if (!playerAttacked && !playerDefended)
+                return;
+            bool playerWon = string.Equals(
+                result.WinnerFactionId,
+                playerFactionId,
+                StringComparison.Ordinal);
+            int playerForecast = playerAttacked
+                ? result.PredictedAttackerWinPercent
+                : 100 - result.PredictedAttackerWinPercent;
+            int playerCasualties = playerAttacked
+                ? result.AttackerCasualties
+                : result.DefenderCasualties;
+            int enemyCasualties = playerAttacked
+                ? result.DefenderCasualties
+                : result.AttackerCasualties;
+
+            SetMapActionFeedback(
+                $"{result.Coordinate} 야전 전투 · " +
+                $"{(playerWon ? "승리" : "패배")} · " +
+                $"예상 승률 {playerForecast}% · " +
+                $"아군 손실 {playerCasualties:N0} · " +
+                $"적 손실 {enemyCasualties:N0}" +
+                (result.LoserRetreated
+                    ? " · 패배 부대 후퇴"
+                    : " · 패배 부대 소멸"));
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
         }
 
         private void HandleCommanderGenerated(
@@ -2575,6 +2632,47 @@ namespace Game.Presentation
             RefreshSelectedMapActions();
         }
 
+        private void TrackAndAttackSelectedEnemyUnit()
+        {
+            if (gameplayMap == null ||
+                !gameplayMap.CurrentSelection.HasValue)
+            {
+                return;
+            }
+
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            if (string.IsNullOrEmpty(selection.UnitId))
+            {
+                SetMapActionFeedback("추적·공격할 적 부대를 선택하세요.");
+                return;
+            }
+
+            MapUnitState target =
+                gameplayMap.GameplayService?.FindUnit(selection.UnitId);
+            string targetName = target?.Commander?.DisplayName ??
+                target?.ArchetypeDisplayName ?? selection.DisplayName;
+            bool immediateContact = target != null &&
+                gameplayMap.SelectedPlayerUnit != null &&
+                gameplayMap.SelectedPlayerUnit.Coordinate.Equals(
+                    target.Coordinate);
+            if (!gameplayMap.TryAttackSelectedEnemyUnit(
+                    selection.UnitId,
+                    out string reason))
+            {
+                SetMapActionFeedback(reason);
+                return;
+            }
+
+            if (!immediateContact)
+            {
+                SetMapActionFeedback(
+                    $"{targetName} 부대에 추적·공격 명령을 내렸습니다. " +
+                    "적이 이동하면 경로를 자동으로 갱신하고 접촉 즉시 교전합니다.");
+            }
+            RefreshSinglePlayerStatus();
+            RefreshSelectedMapActions();
+        }
+
         private void CancelSelectedPlayerUnitMove()
         {
             if (gameplayMap == null)
@@ -2777,6 +2875,7 @@ namespace Game.Presentation
                 _createUnitButton,
                 _selectUnitButton,
                 _moveUnitButton);
+            ConfigureAttackUnitButton(selection, _attackUnitButton);
             ConfigureCancelMoveButton(_cancelMoveButton);
             bool atPlayerBase =
                 selection.Content == MapCellContent.PlayerBase;
@@ -2791,6 +2890,9 @@ namespace Game.Presentation
                     _contextCreateUnitButton,
                     _contextSelectUnitButton,
                     _contextMoveUnitButton);
+                ConfigureAttackUnitButton(
+                    selection,
+                    _contextAttackUnitButton);
                 ConfigureCancelMoveButton(_contextCancelMoveButton);
                 SetVisible(_contextUnitTypeButton, false);
                 SetVisible(_contextInspectUnitButton, hasUnit);
@@ -3114,6 +3216,12 @@ namespace Game.Presentation
                 selection.Coordinate,
                 out _);
             bool hasSelectedUnit = gameplayMap.SelectedPlayerUnit != null;
+            bool isHostileUnit =
+                !string.IsNullOrEmpty(selection.UnitId) &&
+                !string.Equals(
+                    selection.UnitOwnerFactionId,
+                    gameplayMap.GameplayService?.PlayerFactionId,
+                    StringComparison.Ordinal);
             bool isMine = selection.Content == MapCellContent.NormalMine ||
                           selection.Content == MapCellContent.GoldMine;
             bool isCastle =
@@ -3139,7 +3247,7 @@ namespace Game.Presentation
             // both buttons issue effectively the same order.
             SetVisible(
                 moveButton,
-                hasSelectedUnit && !canSelect && !isMine &&
+                hasSelectedUnit && !canSelect && !isHostileUnit && !isMine &&
                 (!isCastle || isFriendlyCastle));
             moveButton.SetEnabled(canMove);
             moveButton.text = usesSeaTransport
@@ -3158,7 +3266,56 @@ namespace Game.Presentation
                 out _);
             SetVisible(cancelButton, canCancel);
             cancelButton.SetEnabled(canCancel);
-            cancelButton.text = "현재 이동 명령 취소";
+            if (gameplayMap.TryGetSelectedPlayerAttackTarget(
+                    out MapUnitState attackTarget))
+            {
+                string targetName = attackTarget.Commander?.DisplayName ??
+                    attackTarget.ArchetypeDisplayName;
+                cancelButton.text = $"추적 명령 취소 · {targetName}";
+            }
+            else
+            {
+                cancelButton.text = "현재 이동 명령 취소";
+            }
+        }
+
+        private void ConfigureAttackUnitButton(
+            MapCellSelection selection,
+            Button attackButton)
+        {
+            if (attackButton == null || gameplayMap == null)
+                return;
+
+            RealtimeMapGameplayService service = gameplayMap.GameplayService;
+            MapUnitState attacker = gameplayMap.SelectedPlayerUnit;
+            MapUnitState target = string.IsNullOrEmpty(selection.UnitId)
+                ? null
+                : service?.FindUnit(selection.UnitId);
+            bool hostileTarget = attacker != null && target != null &&
+                target.Soldiers > 0 &&
+                !string.Equals(
+                    attacker.OwnerFactionId,
+                    target.OwnerFactionId,
+                    StringComparison.Ordinal);
+            SetVisible(attackButton, hostileTarget);
+            if (!hostileTarget)
+                return;
+
+            bool canAttack = gameplayMap.CanAttackSelectedEnemyUnit(
+                target.Id,
+                out _);
+            attackButton.SetEnabled(canAttack);
+            string targetName = target.Commander?.DisplayName ??
+                target.ArchetypeDisplayName;
+            string forecast = service.TryEstimateUnitBattle(
+                    attacker.Id,
+                    target.Id,
+                    out MapBattleEstimate estimate)
+                ? $" · 예상 {estimate.AttackerWinPercent}%"
+                : string.Empty;
+            attackButton.text = attacker.Coordinate.Equals(target.Coordinate)
+                ? $"즉시 교전: {targetName}{forecast}"
+                : $"추적·공격: {targetName}{forecast}";
         }
 
         private void CaptureOrSiegeSelectedCastle()
@@ -3498,6 +3655,10 @@ namespace Game.Presentation
             _inspectUnitButton = CreateMapActionButton(
                 "이 칸의 부대 자세히 보기",
                 InspectUnitAtCurrentSelection);
+            _attackUnitButton = CreateMapActionButton(
+                "적 부대 추적·공격",
+                TrackAndAttackSelectedEnemyUnit);
+            _attackUnitButton.name = "single-attack-unit-button";
             _moveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 MoveSelectedPlayerUnit);
@@ -3508,6 +3669,7 @@ namespace Game.Presentation
             _singleMapActionPanel.Add(_createUnitButton);
             _singleMapActionPanel.Add(_selectUnitButton);
             _singleMapActionPanel.Add(_inspectUnitButton);
+            _singleMapActionPanel.Add(_attackUnitButton);
             _singleMapActionPanel.Add(_moveUnitButton);
             _singleMapActionPanel.Add(_cancelMoveButton);
 
@@ -3526,6 +3688,7 @@ namespace Game.Presentation
             SetVisible(_unitTypeButton, false);
             SetVisible(_selectUnitButton, false);
             SetVisible(_inspectUnitButton, false);
+            SetVisible(_attackUnitButton, false);
             SetVisible(_moveUnitButton, false);
             SetVisible(_cancelMoveButton, false);
         }
@@ -3600,6 +3763,14 @@ namespace Game.Presentation
                     InspectUnitAtCurrentSelection();
                     HideMapContextMenu();
                 });
+            _contextAttackUnitButton = CreateMapActionButton(
+                "적 부대 추적·공격",
+                () =>
+                {
+                    TrackAndAttackSelectedEnemyUnit();
+                    HideMapContextMenu();
+                });
+            _contextAttackUnitButton.name = "context-attack-unit-button";
             _contextMoveUnitButton = CreateMapActionButton(
                 "이 칸으로 이동 · 체력 1",
                 () =>
@@ -3688,6 +3859,7 @@ namespace Game.Presentation
                 _contextCreateUnitButton,
                 _contextSelectUnitButton,
                 _contextInspectUnitButton,
+                _contextAttackUnitButton,
                 _contextMoveUnitButton,
                 _contextCancelMoveButton);
             _contextEconomySection = CreateContextMenuSection(
@@ -4907,6 +5079,7 @@ namespace Game.Presentation
                     _contextCreateUnitButton,
                     _contextSelectUnitButton,
                     _contextInspectUnitButton,
+                    _contextAttackUnitButton,
                     _contextMoveUnitButton,
                     _contextCancelMoveButton));
             SetVisible(
@@ -5456,6 +5629,7 @@ namespace Game.Presentation
                 gameplayMap.CapitalDestroyed -= HandleCapitalDestroyed;
                 gameplayMap.CastleRoleChanged -= HandleCastleRoleChanged;
                 gameplayMap.SiegeDayResolved -= HandleSiegeDayResolved;
+                gameplayMap.FieldBattleResolved -= HandleFieldBattleResolved;
                 gameplayMap.CommanderGenerated -= HandleCommanderGenerated;
                 gameplayMap.CommanderDied -= HandleCommanderDied;
                 gameplayMap.SupplyInterdictionResolved -=

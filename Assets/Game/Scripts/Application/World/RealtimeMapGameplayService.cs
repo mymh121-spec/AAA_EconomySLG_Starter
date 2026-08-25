@@ -286,6 +286,50 @@ namespace Game.Application.World
         }
     }
 
+    public readonly struct MapFieldBattleResult
+    {
+        public GridCoordinate Coordinate { get; }
+        public string AttackerUnitId { get; }
+        public string DefenderUnitId { get; }
+        public string AttackerFactionId { get; }
+        public string DefenderFactionId { get; }
+        public string WinnerFactionId { get; }
+        public int PredictedAttackerWinPercent { get; }
+        public bool AttackerWon { get; }
+        public int AttackerCasualties { get; }
+        public int DefenderCasualties { get; }
+        public bool LoserRetreated { get; }
+
+        public MapFieldBattleResult(
+            GridCoordinate coordinate,
+            string attackerUnitId,
+            string defenderUnitId,
+            string attackerFactionId,
+            string defenderFactionId,
+            string winnerFactionId,
+            int predictedAttackerWinPercent,
+            bool attackerWon,
+            int attackerCasualties,
+            int defenderCasualties,
+            bool loserRetreated)
+        {
+            Coordinate = coordinate;
+            AttackerUnitId = attackerUnitId ?? string.Empty;
+            DefenderUnitId = defenderUnitId ?? string.Empty;
+            AttackerFactionId = attackerFactionId ?? string.Empty;
+            DefenderFactionId = defenderFactionId ?? string.Empty;
+            WinnerFactionId = winnerFactionId ?? string.Empty;
+            PredictedAttackerWinPercent = Math.Clamp(
+                predictedAttackerWinPercent,
+                0,
+                100);
+            AttackerWon = attackerWon;
+            AttackerCasualties = Math.Max(0, attackerCasualties);
+            DefenderCasualties = Math.Max(0, defenderCasualties);
+            LoserRetreated = loserRetreated;
+        }
+    }
+
     public readonly struct MapMilitaryUpkeepSettlementReport
     {
         public decimal TotalAssessed { get; }
@@ -1421,6 +1465,8 @@ namespace Game.Application.World
         private readonly Dictionary<string, GridCoordinate>
             _aiLongTermTargets =
                 new Dictionary<string, GridCoordinate>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _attackTargetUnitIds =
+            new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly List<MapUnitState> _units = new List<MapUnitState>();
         private readonly List<MapCommanderState> _commanders =
             new List<MapCommanderState>();
@@ -1454,6 +1500,7 @@ namespace Game.Application.World
                 new List<MapSupplyInterdictionResult>();
         private int _unitSequence;
         private int _generatedCommanderSequence;
+        private int _fieldBattleSequence;
         private int _fixedStepSequence;
         private int _economicDaySequence;
         private readonly bool _enableAi;
@@ -1500,6 +1547,7 @@ namespace Game.Application.World
         public event Action<MapCapitalDestroyedRecord> CapitalDestroyed;
         public event Action<MapCastleRoleChangedRecord> CastleRoleChanged;
         public event Action<MapSiegeDayResult> SiegeDayResolved;
+        public event Action<MapFieldBattleResult> FieldBattleResolved;
         public event Action<MapCommanderGeneratedRecord> CommanderGenerated;
         public event Action<MapCommanderDeathRecord> CommanderDied;
         public event Action<MapSupplyInterdictionResult>
@@ -2046,6 +2094,110 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public bool TryGetAttackTarget(
+            string attackerUnitId,
+            out MapUnitState target)
+        {
+            target = null;
+            if (string.IsNullOrWhiteSpace(attackerUnitId) ||
+                !_attackTargetUnitIds.TryGetValue(
+                    attackerUnitId,
+                    out string targetUnitId))
+            {
+                return false;
+            }
+
+            target = FindUnit(targetUnitId);
+            return target != null && target.Soldiers > 0;
+        }
+
+        public bool CanIssueAttackUnit(
+            string ownerFactionId,
+            string attackerUnitId,
+            string targetUnitId,
+            out string reason)
+        {
+            MapUnitState attacker = FindUnit(attackerUnitId);
+            MapUnitState target = FindUnit(targetUnitId);
+            if (attacker == null || attacker.Soldiers <= 0)
+            {
+                reason = "추적·공격할 아군 부대를 찾을 수 없습니다.";
+                return false;
+            }
+            if (!string.Equals(
+                    attacker.OwnerFactionId,
+                    ownerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "다른 세력의 부대에는 공격 명령을 내릴 수 없습니다.";
+                return false;
+            }
+            if (target == null || target.Soldiers <= 0)
+            {
+                reason = "추적할 적 부대가 이미 사라졌습니다.";
+                return false;
+            }
+            if (string.Equals(
+                    attacker.OwnerFactionId,
+                    target.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                reason = "아군 부대는 추적·공격할 수 없습니다.";
+                return false;
+            }
+
+            if (attacker.Coordinate.Equals(target.Coordinate))
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            return CanIssueMove(
+                ownerFactionId,
+                attackerUnitId,
+                target.Coordinate,
+                out _,
+                out reason);
+        }
+
+        public bool TryIssueAttackUnit(
+            string ownerFactionId,
+            string attackerUnitId,
+            string targetUnitId,
+            out string reason)
+        {
+            if (!CanIssueAttackUnit(
+                    ownerFactionId,
+                    attackerUnitId,
+                    targetUnitId,
+                    out reason))
+            {
+                return false;
+            }
+
+            MapUnitState attacker = FindUnit(attackerUnitId);
+            MapUnitState target = FindUnit(targetUnitId);
+            if (!attacker.Coordinate.Equals(target.Coordinate) &&
+                !TryIssueMove(
+                    ownerFactionId,
+                    attackerUnitId,
+                    target.Coordinate,
+                    out reason))
+            {
+                return false;
+            }
+
+            _attackTargetUnitIds[attackerUnitId] = targetUnitId;
+            bool battleResolved = ResolvePursuitContact(
+                attackerUnitId,
+                targetUnitId);
+            reason = battleResolved
+                ? "적 부대와 즉시 교전했습니다."
+                : "적 부대 추적을 시작했습니다.";
+            StateChanged?.Invoke();
+            return true;
         }
 
         public bool TryEstimateUnitBattle(
@@ -3176,6 +3328,7 @@ namespace Game.Application.World
                 return false;
             }
 
+            _attackTargetUnitIds.Remove(unitId);
             unit.SetPath(path);
             StateChanged?.Invoke();
             return true;
@@ -3352,6 +3505,7 @@ namespace Game.Application.World
                 return false;
             }
 
+            _attackTargetUnitIds.Remove(unitId);
             reason = string.Empty;
             StateChanged?.Invoke();
             return true;
@@ -3719,7 +3873,9 @@ namespace Game.Application.World
                 if (_enableAi &&
                     _fixedStepSequence % _tuning.AiDecisionIntervalSteps == 0)
                     changed |= RunAiDecisions();
+                changed |= RefreshPursuitOrders();
                 changed |= MoveUnitsOneFixedStep();
+                changed |= ResolvePursuitContacts();
                 changed |= AdvanceCastleCaptures();
                 changed |= AdvanceMineCaptures();
                 changed |= AdvanceWorldMissions();
@@ -5436,6 +5592,245 @@ namespace Game.Application.World
             }
 
             return best;
+        }
+
+        private bool RefreshPursuitOrders()
+        {
+            if (_attackTargetUnitIds.Count == 0)
+                return false;
+
+            bool changed = false;
+            var orders = new List<KeyValuePair<string, string>>(
+                _attackTargetUnitIds);
+            for (int i = 0; i < orders.Count; i++)
+            {
+                string attackerUnitId = orders[i].Key;
+                string targetUnitId = orders[i].Value;
+                MapUnitState attacker = FindUnit(attackerUnitId);
+                MapUnitState target = FindUnit(targetUnitId);
+                if (attacker == null || target == null ||
+                    attacker.Soldiers <= 0 || target.Soldiers <= 0 ||
+                    string.Equals(
+                        attacker.OwnerFactionId,
+                        target.OwnerFactionId,
+                        StringComparison.Ordinal))
+                {
+                    _attackTargetUnitIds.Remove(attackerUnitId);
+                    attacker?.CancelMovement();
+                    changed = true;
+                    continue;
+                }
+
+                if (attacker.Coordinate.Equals(target.Coordinate) ||
+                    (attacker.IsMoving && attacker.Destination.HasValue &&
+                     attacker.Destination.Value.Equals(target.Coordinate)))
+                {
+                    continue;
+                }
+
+                List<GridCoordinate> landRoute = FindShortestLandPath(
+                    attacker.Coordinate,
+                    target.Coordinate);
+                List<GridCoordinate> seaRoute =
+                    FindShortestFriendlyPortSeaPath(
+                        attacker.OwnerFactionId,
+                        attacker.Coordinate,
+                        target.Coordinate);
+                List<GridCoordinate> route = seaRoute.Count > 0 &&
+                    (landRoute.Count == 0 || seaRoute.Count < landRoute.Count)
+                        ? seaRoute
+                        : landRoute;
+                if (route.Count == 0)
+                {
+                    _attackTargetUnitIds.Remove(attackerUnitId);
+                    attacker.CancelMovement();
+                    changed = true;
+                    continue;
+                }
+
+                attacker.SetPath(route);
+                changed = true;
+            }
+            return changed;
+        }
+
+        private bool ResolvePursuitContacts()
+        {
+            if (_attackTargetUnitIds.Count == 0)
+                return false;
+
+            bool changed = false;
+            var orders = new List<KeyValuePair<string, string>>(
+                _attackTargetUnitIds);
+            for (int i = 0; i < orders.Count; i++)
+            {
+                changed |= ResolvePursuitContact(
+                    orders[i].Key,
+                    orders[i].Value);
+            }
+            return changed;
+        }
+
+        private bool ResolvePursuitContact(
+            string attackerUnitId,
+            string targetUnitId)
+        {
+            MapUnitState attacker = FindUnit(attackerUnitId);
+            MapUnitState defender = FindUnit(targetUnitId);
+            if (attacker == null || defender == null ||
+                attacker.Soldiers <= 0 || defender.Soldiers <= 0 ||
+                !attacker.Coordinate.Equals(defender.Coordinate) ||
+                !TryEstimateUnitBattle(
+                    attackerUnitId,
+                    targetUnitId,
+                    out MapBattleEstimate estimate))
+            {
+                return false;
+            }
+
+            GridCoordinate battleCoordinate = attacker.Coordinate;
+            _fieldBattleSequence++;
+            int roll = CreateBattleOutcomeRoll(
+                $"field_battle_{_fieldBattleSequence}_{targetUnitId}",
+                attacker.OwnerFactionId,
+                battleCoordinate,
+                attacker.Commander?.Id ?? string.Empty);
+            int threshold = Math.Clamp(
+                (int)Math.Round(
+                    estimate.AttackerWinProbability *
+                    MapCommanderBattleRules.RollScale,
+                    0,
+                    MidpointRounding.AwayFromZero),
+                0,
+                MapCommanderBattleRules.RollScale);
+            bool attackerWon = roll < threshold;
+            MapUnitState winner = attackerWon ? attacker : defender;
+            MapUnitState loser = attackerWon ? defender : attacker;
+            decimal winnerForecast = attackerWon
+                ? estimate.AttackerWinProbability
+                : 1m - estimate.AttackerWinProbability;
+            decimal loserForecast = 1m - winnerForecast;
+            int attackerSoldiersBefore = attacker.Soldiers;
+            int defenderSoldiersBefore = defender.Soldiers;
+            int winnerCasualties = Math.Min(
+                Math.Max(0, winner.Soldiers - 1),
+                Math.Max(
+                    1,
+                    RoundToInt(
+                        winner.Soldiers *
+                        (0.08m + loserForecast * 0.22m))));
+            int loserCasualties = Math.Max(
+                1,
+                RoundToInt(
+                    loser.Soldiers *
+                    (0.35m + winnerForecast * 0.35m)));
+            winner.ApplyCasualties(winnerCasualties);
+            loser.ApplyCasualties(loserCasualties);
+            winner.CancelMovement();
+            winner.AdjustMorale(5m);
+            winner.AdjustFatigue(8m);
+
+            bool loserRetreated = false;
+            if (loser.Soldiers > 0)
+            {
+                if (TryFindRetreatDestination(
+                        loser.Coordinate,
+                        loser.OwnerFactionId,
+                        out GridCoordinate retreatDestination) ||
+                    TryFindEmergencyRetreatDestination(
+                        loser.Coordinate,
+                        winner.OwnerFactionId,
+                        out retreatDestination))
+                {
+                    loser.ForceRetreat(retreatDestination);
+                    loserRetreated = true;
+                }
+                else
+                {
+                    loser.ApplyCasualties(loser.Soldiers);
+                    loser.CancelMovement();
+                }
+            }
+            else
+            {
+                loser.CancelMovement();
+            }
+
+            _attackTargetUnitIds.Remove(attackerUnitId);
+            _attackTargetUnitIds.Remove(targetUnitId);
+            RemoveAttackOrdersTargetingDestroyedUnits();
+
+            var result = new MapFieldBattleResult(
+                battleCoordinate,
+                attacker.Id,
+                defender.Id,
+                attacker.OwnerFactionId,
+                defender.OwnerFactionId,
+                winner.OwnerFactionId,
+                estimate.AttackerWinPercent,
+                attackerWon,
+                attackerSoldiersBefore - attacker.Soldiers,
+                defenderSoldiersBefore - defender.Soldiers,
+                loserRetreated);
+            FieldBattleResolved?.Invoke(result);
+            ResolveDecisiveBattleCommanderOutcome(
+                winner.OwnerFactionId,
+                loser.OwnerFactionId,
+                result.Coordinate,
+                new[] { loser });
+            return true;
+        }
+
+        private bool TryFindEmergencyRetreatDestination(
+            GridCoordinate origin,
+            string winningFactionId,
+            out GridCoordinate destination)
+        {
+            for (int i = 0; i < NeighborOffsets.Length; i++)
+            {
+                GridCoordinate offset = NeighborOffsets[i];
+                var candidate = new GridCoordinate(
+                    origin.X + offset.X,
+                    origin.Y + offset.Y);
+                if (!_layout.TryNormalize(
+                        candidate,
+                        out GridCoordinate normalized) ||
+                    !_layout.IsLand(normalized))
+                {
+                    continue;
+                }
+
+                MapUnitState occupant = FindOwnedUnitAt(
+                    winningFactionId,
+                    normalized);
+                if (occupant != null && occupant.Soldiers > 0)
+                    continue;
+
+                destination = normalized;
+                return true;
+            }
+
+            destination = default;
+            return false;
+        }
+
+        private void RemoveAttackOrdersTargetingDestroyedUnits()
+        {
+            if (_attackTargetUnitIds.Count == 0)
+                return;
+
+            var orders = new List<KeyValuePair<string, string>>(
+                _attackTargetUnitIds);
+            for (int i = 0; i < orders.Count; i++)
+            {
+                MapUnitState attacker = FindUnit(orders[i].Key);
+                MapUnitState target = FindUnit(orders[i].Value);
+                if (attacker == null || target == null ||
+                    attacker.Soldiers <= 0 || target.Soldiers <= 0)
+                {
+                    _attackTargetUnitIds.Remove(orders[i].Key);
+                }
+            }
         }
 
         private bool MoveUnitsOneFixedStep()
