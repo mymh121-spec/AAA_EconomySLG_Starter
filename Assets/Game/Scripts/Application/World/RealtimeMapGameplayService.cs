@@ -253,6 +253,39 @@ namespace Game.Application.World
         }
     }
 
+    public readonly struct MapBattleEstimate
+    {
+        public decimal AttackerPower { get; }
+        public decimal DefenderPower { get; }
+        public decimal AttackerWinProbability { get; }
+        public int AttackerWinPercent => (int)Math.Round(
+            AttackerWinProbability * 100m,
+            0,
+            MidpointRounding.AwayFromZero);
+        public bool IsSiege { get; }
+        public bool IncludesCommanderDuel { get; }
+        public MapSiegeAction SiegeAction { get; }
+
+        public MapBattleEstimate(
+            decimal attackerPower,
+            decimal defenderPower,
+            decimal attackerWinProbability,
+            bool isSiege,
+            bool includesCommanderDuel,
+            MapSiegeAction siegeAction = MapSiegeAction.None)
+        {
+            AttackerPower = Math.Max(0m, attackerPower);
+            DefenderPower = Math.Max(0m, defenderPower);
+            AttackerWinProbability = Math.Clamp(
+                attackerWinProbability,
+                0m,
+                1m);
+            IsSiege = isSiege;
+            IncludesCommanderDuel = includesCommanderDuel;
+            SiegeAction = siegeAction;
+        }
+    }
+
     public readonly struct MapMilitaryUpkeepSettlementReport
     {
         public decimal TotalAssessed { get; }
@@ -2013,6 +2046,120 @@ namespace Game.Application.World
             }
 
             return null;
+        }
+
+        public bool TryEstimateUnitBattle(
+            string attackerUnitId,
+            string defenderUnitId,
+            out MapBattleEstimate estimate)
+        {
+            estimate = default;
+            MapUnitState attacker = FindUnit(attackerUnitId);
+            MapUnitState defender = FindUnit(defenderUnitId);
+            if (attacker == null || defender == null ||
+                attacker.Soldiers <= 0 || defender.Soldiers <= 0 ||
+                string.Equals(
+                    attacker.OwnerFactionId,
+                    defender.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            estimate = CreateBattleEstimate(
+                attacker.AttackPower,
+                defender.DefensePower,
+                false,
+                attacker.Commander != null && defender.Commander != null,
+                MapSiegeAction.None);
+            return true;
+        }
+
+        public bool TryEstimateSiegeBattle(
+            string attackerUnitId,
+            GridCoordinate coordinate,
+            MapSiegeAction action,
+            out MapBattleEstimate estimate)
+        {
+            estimate = default;
+            MapUnitState leadAttacker = FindUnit(attackerUnitId);
+            MapCastleControlState castle = FindCastle(coordinate);
+            if (leadAttacker == null || leadAttacker.Soldiers <= 0 ||
+                castle == null || castle.IsDestroyed || castle.IsNeutral ||
+                string.Equals(
+                    leadAttacker.OwnerFactionId,
+                    castle.OwnerFactionId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            MapSiegeAction resolvedAction = action == MapSiegeAction.None
+                ? castle.SiegeAction == MapSiegeAction.None
+                    ? MapSiegeAction.Encirclement
+                    : castle.SiegeAction
+                : action;
+            decimal attackerPower = SumCombatPowerAt(
+                coordinate,
+                leadAttacker.OwnerFactionId,
+                true);
+            if (!leadAttacker.Coordinate.Equals(coordinate))
+                attackerPower += leadAttacker.AttackPower;
+
+            decimal defenderPower = SumCombatPowerAt(
+                coordinate,
+                castle.OwnerFactionId,
+                false);
+            decimal wallRatio = castle.MaxWallDurability <= 0
+                ? 0m
+                : castle.WallDurability /
+                  (decimal)castle.MaxWallDurability;
+            decimal foodRatio = castle.MaxFoodSupply <= 0
+                ? 0m
+                : castle.FoodSupply /
+                  (decimal)castle.MaxFoodSupply;
+            decimal actionModifier;
+            switch (resolvedAction)
+            {
+                case MapSiegeAction.Assault:
+                    actionModifier = 1.12m;
+                    break;
+                case MapSiegeAction.Blockade:
+                    actionModifier = 0.92m +
+                        (1m - foodRatio) * 0.20m;
+                    break;
+                case MapSiegeAction.Negotiation:
+                    decimal moraleRatio = Math.Clamp(
+                        AverageMoraleAt(
+                            coordinate,
+                            castle.OwnerFactionId) / 100m,
+                        0m,
+                        1m);
+                    actionModifier = 0.65m +
+                        (1m - foodRatio) * 0.30m +
+                        (1m - moraleRatio) * 0.25m;
+                    break;
+                default:
+                    actionModifier = 1m +
+                        (1m - foodRatio) * 0.10m;
+                    break;
+            }
+
+            decimal fortificationPower = wallRatio *
+                (castle.IsCapital ? 100m : 60m);
+            decimal effectiveAttackerPower = attackerPower * actionModifier;
+            decimal effectiveDefenderPower =
+                defenderPower * (1m + castle.DefenseBonus) +
+                fortificationPower;
+            bool commanderDuel = leadAttacker.Commander != null &&
+                HasCommanderAt(coordinate, castle.OwnerFactionId);
+            estimate = CreateBattleEstimate(
+                effectiveAttackerPower,
+                effectiveDefenderPower,
+                true,
+                commanderDuel,
+                resolvedAction);
+            return true;
         }
 
         public bool CanSurveyEconomicSite(
@@ -4056,6 +4203,52 @@ namespace Game.Application.World
                 }
             }
             return total;
+        }
+
+        private bool HasCommanderAt(
+            GridCoordinate coordinate,
+            string factionId)
+        {
+            for (int i = 0; i < _units.Count; i++)
+            {
+                MapUnitState unit = _units[i];
+                if (unit.Commander != null && unit.Soldiers > 0 &&
+                    unit.Coordinate.Equals(coordinate) &&
+                    string.Equals(
+                        unit.OwnerFactionId,
+                        factionId,
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static MapBattleEstimate CreateBattleEstimate(
+            decimal attackerPower,
+            decimal defenderPower,
+            bool isSiege,
+            bool includesCommanderDuel,
+            MapSiegeAction siegeAction)
+        {
+            decimal safeAttackerPower = Math.Max(0m, attackerPower);
+            decimal safeDefenderPower = Math.Max(0m, defenderPower);
+            decimal totalPower = safeAttackerPower + safeDefenderPower;
+            decimal probability = totalPower <= 0m
+                ? 0.50m
+                : safeAttackerPower / totalPower;
+            probability = Math.Round(
+                Math.Clamp(probability, 0.03m, 0.97m),
+                4,
+                MidpointRounding.AwayFromZero);
+            return new MapBattleEstimate(
+                safeAttackerPower,
+                safeDefenderPower,
+                probability,
+                isSiege,
+                includesCommanderDuel,
+                siegeAction);
         }
 
         private bool RetreatFactionUnitsAt(

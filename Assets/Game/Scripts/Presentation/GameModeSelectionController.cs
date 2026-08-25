@@ -1740,24 +1740,111 @@ namespace Game.Presentation
 
         private string BuildMapInteractionDetails(MapCellSelection selection)
         {
-            if (!_selection.IsSinglePlayer ||
-                selection.Content != MapCellContent.PlayerBase ||
-                singlePlayerSimulation == null)
+            var builder = new StringBuilder(192)
+                .Append(selection.InteractionHint);
+            if (_selection.IsSinglePlayer &&
+                selection.Content == MapCellContent.PlayerBase &&
+                singlePlayerSimulation != null)
             {
-                return selection.InteractionHint;
+                HeadquartersInventorySnapshot inventory =
+                    singlePlayerSimulation.GetPlayerHeadquartersInventory();
+                builder.Append("\n창고 ")
+                    .Append(inventory.UsedCapacity.ToString("N2"))
+                    .Append(" / ")
+                    .Append(inventory.Capacity.ToString("N2"))
+                    .Append(" · 품목 ")
+                    .Append(inventory.Items.Count);
             }
 
-            HeadquartersInventorySnapshot inventory =
-                singlePlayerSimulation.GetPlayerHeadquartersInventory();
-            var builder = new StringBuilder(96);
-            builder.Append(selection.InteractionHint)
-                .Append("\n창고 ")
-                .Append(inventory.UsedCapacity.ToString("N2"))
-                .Append(" / ")
-                .Append(inventory.Capacity.ToString("N2"))
-                .Append(" · 품목 ")
-                .Append(inventory.Items.Count);
+            builder.Append(BuildBattleForecast(selection));
             return builder.ToString();
+        }
+
+        private string BuildBattleForecast(MapCellSelection selection)
+        {
+            RealtimeMapGameplayService service = gameplayMap?.GameplayService;
+            MapUnitState attacker = gameplayMap?.SelectedPlayerUnit;
+            if (service == null || attacker == null || attacker.Soldiers <= 0)
+                return string.Empty;
+
+            var builder = new StringBuilder(160);
+            MapUnitState defender = string.IsNullOrWhiteSpace(selection.UnitId)
+                ? null
+                : service.FindUnit(selection.UnitId);
+            if (defender != null &&
+                defender.Commander != null &&
+                attacker.Commander != null &&
+                !string.Equals(
+                    attacker.OwnerFactionId,
+                    defender.OwnerFactionId,
+                    StringComparison.Ordinal) &&
+                service.TryEstimateUnitBattle(
+                    attacker.Id,
+                    defender.Id,
+                    out MapBattleEstimate commanderEstimate))
+            {
+                AppendBattleForecast(
+                    builder,
+                    "장수전",
+                    commanderEstimate);
+            }
+
+            bool enemyCastle = selection.Content ==
+                    MapCellContent.EnemyCastle ||
+                selection.Content == MapCellContent.EnemyBase;
+            if (enemyCastle)
+            {
+                MapCastleControlState castle = service.FindCastle(
+                    selection.Coordinate);
+                MapSiegeAction action = castle?.SiegeAction ??
+                    MapSiegeAction.None;
+                if (service.TryEstimateSiegeBattle(
+                        attacker.Id,
+                        selection.Coordinate,
+                        action,
+                        out MapBattleEstimate siegeEstimate))
+                {
+                    AppendBattleForecast(
+                        builder,
+                        "공성",
+                        siegeEstimate);
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static void AppendBattleForecast(
+            StringBuilder builder,
+            string battleName,
+            MapBattleEstimate estimate)
+        {
+            builder.Append('\n')
+                .Append(battleName)
+                .Append(" 예상 승률 ")
+                .Append(estimate.AttackerWinPercent)
+                .Append("% · ")
+                .Append(GetBattleOutlook(estimate.AttackerWinPercent))
+                .Append(" (공격 ")
+                .Append(estimate.AttackerPower.ToString("N0"))
+                .Append(" / 방어 ")
+                .Append(estimate.DefenderPower.ToString("N0"))
+                .Append(')');
+            if (estimate.IsSiege)
+            {
+                builder.Append(" · ")
+                    .Append(MapSiegeActionNames.GetKoreanName(
+                        estimate.SiegeAction));
+            }
+        }
+
+        private static string GetBattleOutlook(int winPercent)
+        {
+            if (winPercent >= 75) return "매우 우세";
+            if (winPercent >= 60) return "우세";
+            if (winPercent >= 40) return "백중세";
+            if (winPercent >= 25) return "열세";
+            return "매우 열세";
         }
 
         private void RefreshSelectedHeadquartersInventory()
@@ -2390,8 +2477,10 @@ namespace Game.Presentation
             if (gameplayMap == null || !gameplayMap.CurrentSelection.HasValue)
                 return;
 
-            MapUnitState unit = gameplayMap.FindUnitAt(
-                gameplayMap.CurrentSelection.Value.Coordinate);
+            MapCellSelection selection = gameplayMap.CurrentSelection.Value;
+            MapUnitState unit = string.IsNullOrWhiteSpace(selection.UnitId)
+                ? gameplayMap.FindUnitAt(selection.Coordinate)
+                : gameplayMap.GameplayService?.FindUnit(selection.UnitId);
             if (unit == null)
             {
                 SetMapActionFeedback("이 칸에는 확인할 부대가 없습니다.");
@@ -2400,7 +2489,7 @@ namespace Game.Presentation
 
             string owner = string.Equals(
                 unit.OwnerFactionId,
-                "player",
+                gameplayMap.GameplayService?.PlayerFactionId,
                 StringComparison.Ordinal)
                 ? "플레이어"
                 : "경쟁 세력 " + unit.OwnerFactionId;
@@ -2418,7 +2507,8 @@ namespace Game.Presentation
                 $"능력 배율: 공격 x{unit.EffectiveAttackModifier:F2} · " +
                 $"방어 x{unit.EffectiveDefenseModifier:F2} · " +
                 $"기동 x{unit.MobilityModifier:F2}\n" +
-                $"{commander} · {unit.Coordinate} · {movement}");
+                $"{commander} · {unit.Coordinate} · {movement}" +
+                BuildBattleForecast(selection));
         }
 
         private void SelectPlayerUnit()
@@ -2825,6 +2915,17 @@ namespace Game.Presentation
 
             MapCastleControlState castle = gameplayMap.FindCastleAt(
                 selection.Coordinate);
+            string siegeForecast = string.Empty;
+            if ((isEnemyCastle || isEnemyCapital) && selectedUnit != null &&
+                gameplayMap.GameplayService.TryEstimateSiegeBattle(
+                    selectedUnit.Id,
+                    selection.Coordinate,
+                    castle?.SiegeAction ?? MapSiegeAction.None,
+                    out MapBattleEstimate estimate))
+            {
+                siegeForecast = $" · 예상 {estimate.AttackerWinPercent}%";
+                _contextCastleActionButton.text += siegeForecast;
+            }
             bool canChooseSiegeAction = castle != null &&
                 castle.IsUnderSiege &&
                 selectedUnit != null &&
@@ -2838,6 +2939,7 @@ namespace Game.Presentation
             _contextSiegeActionButton.text = canChooseSiegeAction
                 ? "공성 행동: " +
                   MapSiegeActionNames.GetKoreanName(castle.SiegeAction) +
+                  siegeForecast +
                   " · 클릭해 변경"
                 : "공성 행동 선택";
 

@@ -577,6 +577,38 @@ namespace Game.Tests.PlayMode
                 Is.EqualTo(map.GetFactionDisplayColor(
                     map.SelectedPlayerUnit.OwnerFactionId)),
                 "선택 정보창 테두리는 현재 소유자 색을 보여야 합니다.");
+            map.AdvanceGameplayFixedSteps(20);
+            MapUnitState enemyCommanderUnit = null;
+            for (int i = 0; i < map.GameplayService.Units.Count; i++)
+            {
+                MapUnitState candidate = map.GameplayService.Units[i];
+                if (!string.Equals(
+                        candidate.OwnerFactionId,
+                        map.GameplayService.PlayerFactionId,
+                        StringComparison.Ordinal) &&
+                    candidate.Commander != null)
+                {
+                    enemyCommanderUnit = candidate;
+                    break;
+                }
+            }
+            Assert.That(enemyCommanderUnit, Is.Not.Null,
+                "장수전 예상 승률을 확인할 적 장수 부대가 필요합니다.");
+            Assert.That(
+                map.TrySelectMapCell(
+                    enemyCommanderUnit.Coordinate,
+                    out _),
+                Is.True);
+            yield return null;
+            Assert.That(selectionStatus.text,
+                Does.Contain("장수전 예상 승률"),
+                "적 장수 선택 시 현재 전투력 기반 예상 승률을 보여야 합니다.");
+            Assert.That(
+                map.TrySelectMapCell(
+                    map.SelectedPlayerUnit.Coordinate,
+                    out _),
+                Is.True);
+            yield return null;
             Assert.That(mapActionPanel, Is.Not.Null);
             Assert.That(mapActionPanel.parent, Is.SameAs(statusContent),
                 "파란 지도 행동 패널도 상태 정보와 함께 접혀야 합니다.");

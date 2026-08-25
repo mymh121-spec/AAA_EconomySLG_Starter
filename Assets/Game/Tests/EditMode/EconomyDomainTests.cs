@@ -812,6 +812,68 @@ namespace Game.Tests
         }
 
         [Test]
+        public void BattleForecast_IncludesCurrentCommanderCombatPower()
+        {
+            var terrain = new GridTerrainKind[5 * 2];
+            for (int i = 0; i < terrain.Length; i++)
+                terrain[i] = GridTerrainKind.Plains;
+            var layout = new GridMapLayout(
+                5,
+                2,
+                360,
+                new GridCoordinate(0, 0),
+                new[] { new GridCoordinate(4, 0) },
+                new MinePlacement[0],
+                false,
+                terrain);
+            var service = new RealtimeMapGameplayService(
+                layout,
+                "player",
+                new[] { "ai_1" },
+                new MapGameplayTuning(
+                    fixedStepsPerMove: 1000,
+                    aiDecisionIntervalSteps: 1));
+
+            Assert.That(
+                service.TryCreateUnit(
+                    "player",
+                    out MapUnitState attacker,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryCreateUnit(
+                    "ai_1",
+                    out MapUnitState defender,
+                    out _),
+                Is.True);
+            Assert.That(
+                service.TryHireCommander(
+                    "player",
+                    RealtimeMapGameplayService.ProtagonistCommanderId,
+                    attacker.Id,
+                    out _),
+                Is.True);
+            service.AdvanceFixedSteps(1);
+
+            Assert.That(attacker.Commander, Is.Not.Null);
+            Assert.That(defender.Commander, Is.Not.Null);
+            Assert.That(
+                service.TryEstimateUnitBattle(
+                    attacker.Id,
+                    defender.Id,
+                    out MapBattleEstimate estimate),
+                Is.True);
+            Assert.That(estimate.IsSiege, Is.False);
+            Assert.That(estimate.IncludesCommanderDuel, Is.True);
+            Assert.That(estimate.AttackerPower,
+                Is.EqualTo(attacker.AttackPower));
+            Assert.That(estimate.DefenderPower,
+                Is.EqualTo(defender.DefensePower));
+            Assert.That(estimate.AttackerWinPercent,
+                Is.InRange(3, 97));
+        }
+
+        [Test]
         public void CommanderBattleRules_UseThreeAndFivePercentAndProtectProtagonist()
         {
             Assert.That(
@@ -1908,6 +1970,22 @@ namespace Game.Tests
                 castle.SiegeAction,
                 Is.EqualTo(MapSiegeAction.Encirclement));
             Assert.That(
+                service.TryEstimateSiegeBattle(
+                    attacker.Id,
+                    castleCoordinate,
+                    castle.SiegeAction,
+                    out MapBattleEstimate encirclementEstimate),
+                Is.True);
+            Assert.That(encirclementEstimate.IsSiege, Is.True);
+            Assert.That(encirclementEstimate.SiegeAction,
+                Is.EqualTo(MapSiegeAction.Encirclement));
+            Assert.That(encirclementEstimate.AttackerPower,
+                Is.GreaterThan(0m));
+            Assert.That(encirclementEstimate.DefenderPower,
+                Is.GreaterThan(0m));
+            Assert.That(encirclementEstimate.AttackerWinPercent,
+                Is.InRange(3, 97));
+            Assert.That(
                 service.TrySetSiegeAction(
                     "player",
                     attacker.Id,
@@ -1916,6 +1994,15 @@ namespace Game.Tests
                     out _),
                 Is.True);
             Assert.That(castle.SiegeAction, Is.EqualTo(MapSiegeAction.Assault));
+            Assert.That(
+                service.TryEstimateSiegeBattle(
+                    attacker.Id,
+                    castleCoordinate,
+                    castle.SiegeAction,
+                    out MapBattleEstimate assaultEstimate),
+                Is.True);
+            Assert.That(assaultEstimate.AttackerPower,
+                Is.GreaterThan(encirclementEstimate.AttackerPower));
             Assert.That(
                 service.TrySetSiegeAction(
                     "player",
