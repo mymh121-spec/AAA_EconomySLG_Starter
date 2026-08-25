@@ -142,6 +142,12 @@ namespace Game.Presentation
         [SerializeField, Min(0f)] private float mineUnitElevation = 0.52f;
         [SerializeField] private Color playerUnitHighlightColor =
             new Color(1.00f, 0.82f, 0.08f, 1f);
+        [SerializeField, Min(0.5f)] private float protagonistPortraitWidth =
+            1.55f;
+        [SerializeField, Min(0.5f)] private float aiCommanderPortraitWidth =
+            1.25f;
+        [SerializeField, Min(0f)] private float commanderPortraitHeight =
+            2.05f;
 
         [Header("세력과 거점 색상")]
         [SerializeField] private Color playerFactionColor =
@@ -184,6 +190,8 @@ namespace Game.Presentation
         private Camera _mapCamera;
         private Sprite _normalMineSprite;
         private Sprite _goldMineSprite;
+        private Sprite _protagonistCommanderSprite;
+        private Sprite _aiCommanderSprite;
         private Texture2D _mapTexture;
         private Texture2D _movementPathTexture;
         private Material _mapMaterial;
@@ -2138,6 +2146,8 @@ namespace Game.Presentation
 
             if (_gameplayMarkerRoot != null)
             {
+                _iconBillboards.RemoveAll(icon =>
+                    icon == null || icon.IsChildOf(_gameplayMarkerRoot));
                 GameObject previous = _gameplayMarkerRoot.gameObject;
                 _gameplayMarkerRoot = null;
                 if (UnityEngine.Application.isPlaying)
@@ -2660,6 +2670,42 @@ namespace Game.Presentation
                     markerRoot,
                     false);
             }
+
+            if (unit.Commander != null)
+            {
+                CreateCommanderPortrait(
+                    unit,
+                    position,
+                    markerRoot);
+            }
+        }
+
+        private void CreateCommanderPortrait(
+            MapUnitState unit,
+            Vector3 position,
+            Transform markerRoot)
+        {
+            MapCommanderState commander = unit.Commander;
+            Sprite portrait = commander.IsProtagonist
+                ? _protagonistCommanderSprite
+                : _aiCommanderSprite;
+            if (portrait == null)
+                return;
+
+            var portraitObject = new GameObject(
+                $"{unit.Id}_{commander.DisplayName}_장수초상");
+            portraitObject.transform.SetParent(markerRoot, false);
+            portraitObject.transform.position = position +
+                new Vector3(
+                    0f,
+                    commanderPortraitHeight +
+                    (commander.IsProtagonist ? 0.14f : 0f),
+                    0f);
+
+            var renderer = portraitObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = portrait;
+            renderer.sortingOrder = commander.IsProtagonist ? 60 : 50;
+            _iconBillboards.Add(portraitObject.transform);
         }
 
         private float GetUnitSiteElevation(GridCoordinate coordinate)
@@ -2947,14 +2993,33 @@ namespace Game.Presentation
                 _goldMineSprite = CreateRuntimeSprite(
                     Resources.Load<Texture2D>("MapIcons/gold_coins"));
             }
+
+            if (_protagonistCommanderSprite == null)
+            {
+                _protagonistCommanderSprite = CreateRuntimeSprite(
+                    Resources.Load<Texture2D>(
+                        "CommanderPortraits/protagonist_commander"),
+                    protagonistPortraitWidth);
+            }
+
+            if (_aiCommanderSprite == null)
+            {
+                _aiCommanderSprite = CreateRuntimeSprite(
+                    Resources.Load<Texture2D>(
+                        "CommanderPortraits/ai_commander"),
+                    aiCommanderPortraitWidth);
+            }
         }
 
-        private Sprite CreateRuntimeSprite(Texture2D texture)
+        private Sprite CreateRuntimeSprite(
+            Texture2D texture,
+            float widthInTiles = 0.90f)
         {
             if (texture == null)
                 return null;
 
-            float pixelsPerUnit = texture.width / (tileSize * 0.90f);
+            float pixelsPerUnit = texture.width /
+                (tileSize * Mathf.Max(0.1f, widthInTiles));
             return Sprite.Create(
                 texture,
                 new Rect(0f, 0f, texture.width, texture.height),

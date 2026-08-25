@@ -134,7 +134,7 @@
       </section>
     </main>
 
-    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+    <script src="Build/{{{ LOADER_FILENAME }}}?v=__BUILD_VERSION__"></script>
     <script>
       const canvas = document.querySelector("#unity-canvas");
       const loading = document.querySelector("#loading");
@@ -153,16 +153,16 @@
 
       createUnityInstance(canvas, {
         arguments: [],
-        dataUrl: "Build/{{{ DATA_FILENAME }}}",
-        frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+        dataUrl: "Build/{{{ DATA_FILENAME }}}?v=__BUILD_VERSION__",
+        frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}?v=__BUILD_VERSION__",
 #if USE_THREADS
-        workerUrl: "Build/{{{ WORKER_FILENAME }}}",
+        workerUrl: "Build/{{{ WORKER_FILENAME }}}?v=__BUILD_VERSION__",
 #endif
 #if USE_WASM
-        codeUrl: "Build/{{{ CODE_FILENAME }}}",
+        codeUrl: "Build/{{{ CODE_FILENAME }}}?v=__BUILD_VERSION__",
 #endif
 #if SYMBOLS_FILENAME
-        symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+        symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}?v=__BUILD_VERSION__",
 #endif
         streamingAssetsUrl: "StreamingAssets",
         companyName: {{{ JSON.stringify(COMPANY_NAME) }}},

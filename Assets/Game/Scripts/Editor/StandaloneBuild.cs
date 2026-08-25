@@ -113,6 +113,7 @@ namespace Game.Editor
                     $"오류 {summary.totalErrors}개");
             }
 
+            ApplyWebGlCacheVersion(stagingPath);
             File.WriteAllText(Path.Combine(stagingPath, ".nojekyll"), string.Empty);
             if (Directory.Exists(outputPath))
             {
@@ -123,6 +124,24 @@ namespace Game.Editor
             Debug.Log(
                 $"Track 1 WebGL 빌드 완료: {outputPath} " +
                 $"({summary.totalSize / (1024f * 1024f):F1} MB)");
+        }
+
+        private static void ApplyWebGlCacheVersion(string stagingPath)
+        {
+            const string placeholder = "__BUILD_VERSION__";
+            string indexPath = Path.Combine(stagingPath, "index.html");
+            string html = File.ReadAllText(indexPath);
+            if (!html.Contains(placeholder))
+            {
+                throw new InvalidOperationException(
+                    "WebGL 템플릿에 캐시 버전 자리표시자가 없습니다.");
+            }
+
+            string buildVersion = DateTime.UtcNow.ToString(
+                "yyyyMMddHHmmss");
+            File.WriteAllText(
+                indexPath,
+                html.Replace(placeholder, buildVersion));
         }
 
         private static string ResolveOutputPath()

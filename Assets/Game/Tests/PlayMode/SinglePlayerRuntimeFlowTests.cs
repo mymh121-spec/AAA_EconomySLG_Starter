@@ -428,6 +428,18 @@ namespace Game.Tests.PlayMode
             Assert.That(playerVisual, Is.Not.Null);
             Assert.That(playerVisual.transform.position.y, Is.GreaterThan(1.5f),
                 "성에 주둔한 플레이어 유닛은 성채 위로 올라와 보여야 합니다.");
+            GameObject protagonistPortrait = GameObject.Find(
+                map.SelectedPlayerUnit.Id + "_주인공_장수초상");
+            Assert.That(protagonistPortrait, Is.Not.Null,
+                "주인공 장수는 부대 위에 전용 초상 배지로 보여야 합니다.");
+            SpriteRenderer portraitRenderer =
+                protagonistPortrait.GetComponent<SpriteRenderer>();
+            Assert.That(portraitRenderer, Is.Not.Null);
+            Assert.That(portraitRenderer.sprite, Is.Not.Null,
+                "주인공 초상 리소스가 지도 배지에 연결되어야 합니다.");
+            Assert.That(protagonistPortrait.transform.position.y,
+                Is.GreaterThan(playerVisual.transform.position.y),
+                "장수 초상은 부대 블록에 가려지지 않도록 위에 배치되어야 합니다.");
             Assert.That(simulation.CurrentCampaignState.Participants.Count,
                 Is.EqualTo(4));
             Assert.That(simulation.CurrentWorldEconomy.Markets.Count,

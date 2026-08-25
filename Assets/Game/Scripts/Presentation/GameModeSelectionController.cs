@@ -96,6 +96,7 @@ namespace Game.Presentation
         private Button _contextSupplyEscortButton;
         private Button _neutralNpcTopButton;
         private VisualElement _neutralNpcView;
+        private VisualElement _npcCommanderPortrait;
         private Label _neutralNpcSelectionStatus;
         private Label _neutralNpcFeedback;
         private Button _npcArchetypeButton;
@@ -3653,6 +3654,16 @@ namespace Game.Presentation
             _neutralNpcView.style.backgroundColor =
                 new Color(0.075f, 0.085f, 0.105f, 0.98f);
 
+            _npcCommanderPortrait = new VisualElement
+            {
+                name = "npc-commander-portrait"
+            };
+            _npcCommanderPortrait.style.width = 118;
+            _npcCommanderPortrait.style.height = 118;
+            _npcCommanderPortrait.style.alignSelf = Align.Center;
+            _npcCommanderPortrait.style.marginBottom = 8;
+            _neutralNpcView.Add(_npcCommanderPortrait);
+
             _neutralNpcSelectionStatus = AddStatus(_neutralNpcView);
             _neutralNpcSelectionStatus.name =
                 "neutral-npc-selection-status";
@@ -4383,6 +4394,31 @@ namespace Game.Presentation
                     _pendingArmorClass);
             MapUnitState selectedUnit = gameplayMap?.SelectedPlayerUnit;
             MapCommanderState pendingCommander = GetPendingCommander();
+            MapCommanderState portraitCommander =
+                selectedUnit?.Commander ?? pendingCommander;
+            if (_npcCommanderPortrait != null)
+            {
+                if (portraitCommander == null)
+                {
+                    _npcCommanderPortrait.style.display = DisplayStyle.None;
+                    _npcCommanderPortrait.tooltip = string.Empty;
+                }
+                else
+                {
+                    string portraitPath = portraitCommander.IsProtagonist
+                        ? "CommanderPortraits/protagonist_commander"
+                        : "CommanderPortraits/ai_commander";
+                    Texture2D portraitTexture =
+                        Resources.Load<Texture2D>(portraitPath);
+                    _npcCommanderPortrait.style.backgroundImage =
+                        new StyleBackground(portraitTexture);
+                    _npcCommanderPortrait.style.display = DisplayStyle.Flex;
+                    _npcCommanderPortrait.tooltip =
+                        portraitCommander.DisplayName + " · " +
+                        MapCommanderPersonalityNames.GetKoreanName(
+                            portraitCommander.Personality);
+                }
+            }
             string commanderCandidateList = BuildCommanderCandidateList();
             GridCoordinate recruitOrigin = GetRecruitmentOrigin();
             string recruitmentStatus = "징병소 정보 없음";
