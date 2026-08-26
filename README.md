@@ -43,7 +43,7 @@ Unity C# architecture for a real-time economy and strategy game.
 - Install Unity's Web Build Support module for `6000.3.21f1`.
 - Use Unity menu `게임 > SYNDICATES & EMPIRES WebGL 제출 빌드`, or run Unity in batch mode with `-buildTarget WebGL -executeMethod Game.Editor.StandaloneBuild.BuildWebGlSubmission`.
 - The command writes a GitHub Pages-ready build to `docs/`, including `.nojekyll` and a responsive Korean loading page.
-- See `SUBMISSION_TRACK1_KO.md` for the final title, short description, controls, and Codex collaboration notes.
+- See `SUBMISSION_TRACK1_KO.txt` for the final title, short description, controls, and Codex collaboration notes.
 
 ## Optional local Windows build
 
